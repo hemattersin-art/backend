@@ -14,9 +14,9 @@ router.get('/users/:userId', adminController.getUserDetails);
 router.put('/users/:userId/role', adminController.updateUserRole);
 router.put('/users/:userId/deactivate', adminController.deactivateUser);
 
-// Platform statistics (with caching)
-router.get('/stats/platform', withCache(adminController.getPlatformStats, 'platform_stats', 2 * 60 * 1000));
-router.get('/stats/dashboard', withCache(adminController.getPlatformStats, 'platform_stats', 2 * 60 * 1000)); // Alias for dashboard
+// Platform statistics (with optimized caching for 2GB plan)
+router.get('/stats/platform', withCache(adminController.getPlatformStats, 'platform_stats', 3 * 60 * 1000));
+router.get('/stats/dashboard', withCache(adminController.getPlatformStats, 'platform_stats', 3 * 60 * 1000)); // Alias for dashboard
 
 // User search
 router.get('/search/users', adminController.searchUsers);

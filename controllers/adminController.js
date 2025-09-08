@@ -659,34 +659,62 @@ const getPlatformStats = async (req, res) => {
       totalUsers,
       totalPsychologists,
       totalSessions,
-      totalClients
+      totalClients,
+      memoryUsage: process.memoryUsage(),
+      timestamp: new Date().toISOString()
     });
 
-    // Calculate basic statistics (much faster)
+    // Get detailed statistics with 2GB plan (more accurate data)
+    const { data: userRoles, error: userRolesError } = await supabase
+      .from('users')
+      .select('role')
+      .limit(1000); // Reasonable limit for 2GB plan
+
+    const { data: sessionStatuses, error: sessionStatusError } = await supabase
+      .from('sessions')
+      .select('status, price')
+      .limit(1000); // Reasonable limit for 2GB plan
+
+    // Calculate accurate statistics
     const stats = {
       totalUsers: totalUsers || 0,
       totalDoctors: totalPsychologists || 0,
       totalBookings: totalSessions || 0,
       totalClients: totalClients || 0,
-      totalRevenue: 0, // Will be calculated separately if needed
+      totalRevenue: 0,
       users: {
         total: totalUsers || 0,
         by_role: {
-          client: Math.floor((totalUsers || 0) * 0.7), // Estimate
-          psychologist: totalPsychologists || 0,
-          admin: Math.floor((totalUsers || 0) * 0.05) // Estimate
+          client: 0,
+          psychologist: 0,
+          admin: 0
         }
       },
       sessions: {
         total: totalSessions || 0,
         by_status: {
-          booked: Math.floor((totalSessions || 0) * 0.4),
-          completed: Math.floor((totalSessions || 0) * 0.3),
-          cancelled: Math.floor((totalSessions || 0) * 0.2),
-          rescheduled: Math.floor((totalSessions || 0) * 0.1)
+          booked: 0,
+          completed: 0,
+          cancelled: 0,
+          rescheduled: 0
         }
       }
     };
+
+    // Calculate accurate user role distribution
+    if (userRoles && !userRolesError) {
+      userRoles.forEach(user => {
+        stats.users.by_role[user.role] = (stats.users.by_role[user.role] || 0) + 1;
+      });
+    }
+
+    // Calculate accurate session status distribution and revenue
+    if (sessionStatuses && !sessionStatusError) {
+      sessionStatuses.forEach(session => {
+        stats.sessions.by_status[session.status] = (stats.sessions.by_status[session.status] || 0) + 1;
+        stats.totalRevenue += parseFloat(session.price || 0);
+      });
+    }
 
     res.json(
       successResponse(stats, 'Platform statistics retrieved successfully')
