@@ -26,15 +26,27 @@ const PAYU_CONFIG = {
 
 // Get current environment config
 const getPayUConfig = () => {
-  // Use production mode when NODE_ENV is production
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Use production mode when NODE_ENV is production AND production credentials are available
+  const isProduction = process.env.NODE_ENV === 'production' && 
+                      process.env.PAYU_PROD_MERCHANT_ID && 
+                      process.env.PAYU_PROD_SALT;
   const config = isProduction ? PAYU_CONFIG.production : PAYU_CONFIG.test;
   
   console.log('🔧 PayU Environment:', isProduction ? 'PRODUCTION' : 'TEST');
   console.log('🔧 NODE_ENV:', process.env.NODE_ENV);
-  console.log('🔧 PAYU_FORCE_PRODUCTION:', process.env.PAYU_FORCE_PRODUCTION);
+  console.log('🔧 PAYU_PROD_MERCHANT_ID:', process.env.PAYU_PROD_MERCHANT_ID ? 'SET' : 'NOT SET');
+  console.log('🔧 PAYU_PROD_SALT:', process.env.PAYU_PROD_SALT ? 'SET' : 'NOT SET');
   console.log('🔧 Success URL:', config.successUrl);
   console.log('🔧 Failure URL:', config.failureUrl);
+  
+  // Validate that we have the required credentials
+  if (!config.merchantId || !config.salt) {
+    console.error('❌ PayU credentials missing! Using test credentials as fallback.');
+    console.error('❌ Missing:', {
+      merchantId: !config.merchantId,
+      salt: !config.salt
+    });
+  }
   
   return config;
 };
