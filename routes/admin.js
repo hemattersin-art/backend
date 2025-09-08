@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { withCache } = require('../utils/cache');
 
 // All routes require authentication and admin role
 router.use(authenticateToken);
@@ -13,9 +14,9 @@ router.get('/users/:userId', adminController.getUserDetails);
 router.put('/users/:userId/role', adminController.updateUserRole);
 router.put('/users/:userId/deactivate', adminController.deactivateUser);
 
-// Platform statistics
-router.get('/stats/platform', adminController.getPlatformStats);
-router.get('/stats/dashboard', adminController.getPlatformStats); // Alias for dashboard
+// Platform statistics (with caching)
+router.get('/stats/platform', withCache(adminController.getPlatformStats, 'platform_stats', 2 * 60 * 1000));
+router.get('/stats/dashboard', withCache(adminController.getPlatformStats, 'platform_stats', 2 * 60 * 1000)); // Alias for dashboard
 
 // User search
 router.get('/search/users', adminController.searchUsers);

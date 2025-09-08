@@ -26,8 +26,8 @@ const PAYU_CONFIG = {
 
 // Get current environment config
 const getPayUConfig = () => {
-  // Force test mode for local development
-  const isProduction = false; // process.env.NODE_ENV === 'production' && process.env.PAYU_FORCE_PRODUCTION !== 'true';
+  // Use production mode when NODE_ENV is production
+  const isProduction = process.env.NODE_ENV === 'production';
   const config = isProduction ? PAYU_CONFIG.production : PAYU_CONFIG.test;
   
   console.log('🔧 PayU Environment:', isProduction ? 'PRODUCTION' : 'TEST');
