@@ -15,7 +15,7 @@ const getAvailabilityRange = async (req, res) => {
     console.log('🔍 Getting availability range for admin:', startDate, 'to', endDate);
 
     // Get all active free assessment timeslots
-    const { data: timeslots, error: timeslotsError } = await supabase.supabaseAdmin
+    const { data: timeslots, error: timeslotsError } = await supabase
       .from('free_assessment_timeslots')
       .select('time_slot, is_active, max_bookings_per_slot')
       .eq('is_active', true);
@@ -57,7 +57,7 @@ const getAvailabilityRange = async (req, res) => {
     }
 
     // Get existing bookings for the date range
-    const { data: existingBookings, error: bookingsError } = await supabase.supabaseAdmin
+    const { data: existingBookings, error: bookingsError } = await supabase
       .from('free_assessments')
       .select('scheduled_date, scheduled_time')
       .gte('scheduled_date', startDate)
@@ -136,7 +136,7 @@ const getFreeAssessmentTimeslots = async (req, res) => {
   try {
     console.log('🔍 Getting all free assessment timeslots');
 
-    const { data: timeslots, error } = await supabase.supabaseAdmin
+    const { data: timeslots, error } = await supabase
       .from('free_assessment_timeslots')
       .select('*')
       .order('time_slot', { ascending: true });
@@ -185,7 +185,7 @@ const addMultipleTimeslots = async (req, res) => {
 
     // Check for existing timeslots to avoid duplicates
     const timeSlotsToCheck = timeslots.map(slot => slot.time_slot);
-    const { data: existingTimeslots, error: checkError } = await supabase.supabaseAdmin
+    const { data: existingTimeslots, error: checkError } = await supabase
       .from('free_assessment_timeslots')
       .select('time_slot')
       .in('time_slot', timeSlotsToCheck);
@@ -214,7 +214,7 @@ const addMultipleTimeslots = async (req, res) => {
       max_bookings_per_slot: slot.max_bookings_per_slot || 3
     }));
 
-    const { data: insertedTimeslots, error } = await supabase.supabaseAdmin
+    const { data: insertedTimeslots, error } = await supabase
       .from('free_assessment_timeslots')
       .insert(timeslotsToInsert)
       .select();
@@ -259,7 +259,7 @@ const addTimeslot = async (req, res) => {
 
     console.log('🔍 Adding new timeslot:', timeSlot);
 
-    const { data: timeslot, error } = await supabase.supabaseAdmin
+    const { data: timeslot, error } = await supabase
       .from('free_assessment_timeslots')
       .insert({
         time_slot: timeSlot,
@@ -315,7 +315,7 @@ const updateTimeslot = async (req, res) => {
     if (isActive !== undefined) updateData.is_active = isActive;
     if (maxBookingsPerSlot !== undefined) updateData.max_bookings_per_slot = maxBookingsPerSlot;
 
-    const { data: timeslot, error } = await supabase.supabaseAdmin
+    const { data: timeslot, error } = await supabase
       .from('free_assessment_timeslots')
       .update(updateData)
       .eq('id', id)
@@ -360,7 +360,7 @@ const deleteTimeslot = async (req, res) => {
     console.log('🔍 Deleting timeslot:', id);
 
     // Check if timeslot exists
-    const { data: existingTimeslot, error: checkError } = await supabase.supabaseAdmin
+    const { data: existingTimeslot, error: checkError } = await supabase
       .from('free_assessment_timeslots')
       .select('id, time_slot')
       .eq('id', id)
@@ -373,7 +373,7 @@ const deleteTimeslot = async (req, res) => {
     }
 
     // Check if there are any active bookings for this timeslot
-    const { data: activeBookings, error: bookingError } = await supabase.supabaseAdmin
+    const { data: activeBookings, error: bookingError } = await supabase
       .from('free_assessments')
       .select('id')
       .eq('scheduled_time', existingTimeslot.time_slot)
@@ -393,7 +393,7 @@ const deleteTimeslot = async (req, res) => {
     }
 
     // Delete the timeslot
-    const { error } = await supabase.supabaseAdmin
+    const { error } = await supabase
       .from('free_assessment_timeslots')
       .delete()
       .eq('id', id);
@@ -436,7 +436,7 @@ const bulkUpdateTimeslots = async (req, res) => {
 
     console.log('🔍 Bulk updating timeslots:', timeslotIds, 'to active:', isActive);
 
-    const { data: updatedTimeslots, error } = await supabase.supabaseAdmin
+    const { data: updatedTimeslots, error } = await supabase
       .from('free_assessment_timeslots')
       .update({ is_active: isActive })
       .in('id', timeslotIds)
@@ -494,7 +494,7 @@ const saveDateConfig = async (req, res) => {
     }
 
     // Upsert the date configuration
-    const { data: config, error } = await supabase.supabaseAdmin
+    const { data: config, error } = await supabase
       .from('free_assessment_date_configs')
       .upsert({
         date: date,
@@ -538,7 +538,7 @@ const getDateConfig = async (req, res) => {
 
     console.log('🔍 Getting date config for:', date);
 
-    const { data: config, error } = await supabase.supabaseAdmin
+    const { data: config, error } = await supabase
       .from('free_assessment_date_configs')
       .select('*')
       .eq('date', date)
@@ -577,7 +577,7 @@ const deleteDateConfig = async (req, res) => {
 
     console.log('🔍 Deleting date config for:', date);
 
-    const { error } = await supabase.supabaseAdmin
+    const { error } = await supabase
       .from('free_assessment_date_configs')
       .delete()
       .eq('date', date);
@@ -614,7 +614,7 @@ const getDateConfigsRange = async (req, res) => {
 
     console.log('🔍 Getting date configs range:', startDate, 'to', endDate);
 
-    const { data: configs, error } = await supabase.supabaseAdmin
+    const { data: configs, error } = await supabase
       .from('free_assessment_date_configs')
       .select('*')
       .gte('date', startDate)
