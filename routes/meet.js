@@ -1,5 +1,6 @@
 const express = require('express');
 const { createMeetEvent } = require('../utils/meetEventHelper');
+const meetLinkService = require('../utils/meetLinkService'); // New Meet Link Service
 const router = express.Router();
 
 /**
@@ -75,31 +76,50 @@ router.post('/events/meet', async (req, res, next) => {
     
     console.log('✅ Validation passed, creating Meet event...');
     
-    // Create the Meet event
-    const result = await createMeetEvent({
+    // Create the Meet event using the new Meet Link Service
+    const sessionData = {
       summary,
       description,
-      startISO,
-      endISO,
-      attendees,
-      location
-    });
+      startDate: startISO.split('T')[0], // Extract date part
+      startTime: startISO.split('T')[1].split('+')[0], // Extract time part
+      endTime: endISO.split('T')[1].split('+')[0] // Extract end time part
+    };
     
-    console.log('🎉 Meet event created successfully via API!');
+    const result = await meetLinkService.generateSessionMeetLink(sessionData);
     
-    res.json({
-      success: true,
-      message: 'Meet event created successfully',
-      data: {
-        eventId: result.eventId,
-        meetLink: result.meetLink,
-        calendarLink: result.calendarLink,
-        summary: result.event.summary,
-        start: result.event.start,
-        end: result.event.end,
-        attendees: result.event.attendees
-      }
-    });
+    if (result.success) {
+      console.log('🎉 Meet event created successfully via API!');
+      
+      res.json({
+        success: true,
+        message: 'Meet event created successfully',
+        data: {
+          eventId: result.eventId,
+          meetLink: result.meetLink,
+          calendarLink: result.eventLink,
+          method: result.method,
+          summary: sessionData.summary,
+          start: startISO,
+          end: endISO
+        }
+      });
+    } else {
+      console.log('⚠️ Meet event creation failed, using fallback');
+      
+      res.json({
+        success: false,
+        message: 'Meet event creation failed, using fallback',
+        data: {
+          eventId: null,
+          meetLink: result.meetLink,
+          calendarLink: null,
+          method: 'fallback',
+          summary: sessionData.summary,
+          start: startISO,
+          end: endISO
+        }
+      });
+    }
     
   } catch (error) {
     console.error('❌ Error in Meet event creation API:', error);
@@ -166,6 +186,7 @@ router.get('/events/meet/status', async (req, res, next) => {
 });
 
 module.exports = router;
+
 
 
 

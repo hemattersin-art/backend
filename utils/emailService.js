@@ -817,7 +817,7 @@ The Kuttikal Team
       }
 
       const mailOptions = {
-        from: process.env.EMAIL_USER,
+        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
         to: to,
         subject: subject,
         html: html,

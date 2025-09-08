@@ -1,6 +1,7 @@
 const supabase = require('../config/supabase');
-const { successResponse, errorResponse } = require('../utils/helpers');
-const { createMeetEvent } = require('../utils/meetEventHelper');
+const { successResponse, errorResponse, addMinutesToTime } = require('../utils/helpers');
+const { createRealMeetLink } = require('../utils/meetEventHelper'); // Use real Meet link creation
+const meetLinkService = require('../utils/meetLinkService'); // New Meet Link Service
 const emailService = require('../utils/emailService');
 
 // Get client's free assessment status
@@ -889,29 +890,36 @@ const bookFreeAssessment = async (req, res) => {
 
     console.log('📋 Session data:', sessionData);
 
-    // Create Google Meet for free assessment
+    // Create real Google Meet link for free assessment
     try {
-      const startDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-      const endDateTime = new Date(startDateTime.getTime() + 20 * 60000); // 20 minutes
-
-      const meetData = await createMeetEvent({
+      console.log('🔄 Creating real Google Meet link for free assessment...');
+      
+      // Prepare session data for Meet link creation
+      const meetSessionData = {
         summary: `Free Assessment - ${client.first_name || 'Client'} with ${availablePsychologist.psychologist.first_name}`,
         description: `Free 20-minute assessment session`,
-        startISO: startDateTime.toISOString(),
-        endISO: endDateTime.toISOString(),
-        attendees: [
-          { email: client.email, displayName: `${client.first_name} ${client.last_name}` },
-          { email: availablePsychologist.psychologist.email, displayName: `${availablePsychologist.psychologist.first_name} ${availablePsychologist.psychologist.last_name}` }
-        ],
-        location: 'Online via Google Meet'
-      });
-
-      sessionData.google_calendar_event_id = meetData.eventId;
-      sessionData.google_meet_link = meetData.meetLink;
-      sessionData.google_meet_join_url = meetData.meetLink;
-      sessionData.google_meet_start_url = meetData.meetLink;
-
-      console.log('✅ Google Meet created for free assessment');
+        startDate: scheduledDate,
+        startTime: scheduledTime,
+        endTime: addMinutesToTime(scheduledTime, 20) // 20-minute assessment
+      };
+      
+      // Use the new Meet Link Service for real Meet link creation
+      const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData);
+      
+      if (meetResult.success) {
+        sessionData.google_calendar_event_id = meetResult.eventId;
+        sessionData.google_meet_link = meetResult.meetLink;
+        sessionData.google_meet_join_url = meetResult.meetLink;
+        sessionData.google_meet_start_url = meetResult.meetLink;
+        
+        console.log('✅ Real Google Meet link created for free assessment!');
+        console.log('   Method:', meetResult.method);
+        console.log('   Meet Link:', meetResult.meetLink);
+        console.log('   Event ID:', meetResult.eventId);
+      } else {
+        console.log('⚠️ Meet link creation failed, using fallback');
+        sessionData.google_meet_link = meetResult.meetLink; // Fallback link
+      }
     } catch (meetError) {
       console.error('❌ Error creating Google Meet:', meetError);
       // Continue without meet link

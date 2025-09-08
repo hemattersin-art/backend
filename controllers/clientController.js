@@ -3,10 +3,11 @@ const {
   successResponse, 
   errorResponse,
   formatDate,
-  formatTime
+  formatTime,
+  addMinutesToTime
 } = require('../utils/helpers');
 const availabilityService = require('../utils/availabilityCalendarService');
-const { createMeetEvent } = require('../utils/meetEventHelper');
+const meetLinkService = require('../utils/meetLinkService');
 
 // Get client profile
 const getProfile = async (req, res) => {
@@ -311,29 +312,41 @@ const bookSession = async (req, res) => {
     console.log('🔍 Step 5: Creating Google Calendar event...');
     let meetData = null;
     try {
-      meetData = await createMeetEvent({
+      const sessionData = {
         summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
         description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
-        endTime: addMinutesToTime(scheduled_time, 50), // 50-minute session
-        attendees: [
-          { email: clientDetails.user?.email || 'client@placeholder.com' },
-          { email: psychologistDetails?.email || 'psychologist@placeholder.com' }
-        ]
-      });
+        endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
+      };
 
-      console.log('✅ Google Calendar event created successfully');
-      console.log('   - Meet Link:', meetData.meetLink);
-      console.log('   - Event ID:', meetData.eventId);
-      console.log('   - Calendar Link:', meetData.calendarLink);
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
+        console.log('✅ Real Meet link created successfully:', meetResult);
+      } else {
+        meetData = {
+          meetLink: meetResult.meetLink, // Fallback link
+          eventId: null,
+          calendarLink: null,
+          method: 'fallback'
+        };
+        console.log('⚠️ Using fallback Meet link:', meetResult.meetLink);
+      }
     } catch (meetError) {
-      console.error('❌ Google Calendar event creation failed:', meetError);
+      console.error('❌ Meet link creation failed:', meetError);
       // Continue without Meet link if it fails
       meetData = {
-        meetLink: null,
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
         eventId: null,
-        calendarLink: null
+        calendarLink: null,
+        method: 'error'
       };
     }
 
@@ -793,15 +806,6 @@ const rescheduleSession = async (req, res) => {
       errorResponse('Internal server error while rescheduling session')
     );
   }
-};
-
-// Helper function to add minutes to time
-const addMinutesToTime = (time, minutes) => {
-  const [hours, mins] = time.split(':').map(Number);
-  const totalMinutes = hours * 60 + mins + minutes;
-  const newHours = Math.floor(totalMinutes / 60);
-  const newMins = totalMinutes % 60;
-  return `${newHours.toString().padStart(2, '0')}:${newMins.toString().padStart(2, '0')}`;
 };
 
 // Helper function to get reschedule count for a session
@@ -1354,26 +1358,45 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
-    // Create Google Calendar event
+    // Create Google Calendar event with real Meet link
     let meetData = null;
     try {
-      meetData = await createMeetEvent({
+      console.log('🔄 Creating real Google Meet link for package session...');
+      
+      const sessionData = {
         summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
         description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
-        endTime: addMinutesToTime(scheduled_time, 50), // 50-minute session
-        attendees: [
-          { email: clientDetails.user?.email || 'client@placeholder.com' },
-          { email: psychologistDetails?.email || 'psychologist@placeholder.com' }
-        ]
-      });
+        endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
+      };
+
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
+        console.log('✅ Real Meet link created successfully:', meetResult);
+      } else {
+        meetData = {
+          meetLink: meetResult.meetLink, // Fallback link
+          eventId: null,
+          calendarLink: null,
+          method: 'fallback'
+        };
+        console.log('⚠️ Using fallback Meet link:', meetResult.meetLink);
+      }
     } catch (meetError) {
-      console.error('Google Calendar event creation failed:', meetError);
+      console.error('❌ Meet link creation failed:', meetError);
       meetData = {
-        meetLink: null,
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
         eventId: null,
-        calendarLink: null
+        calendarLink: null,
+        method: 'error'
       };
     }
 

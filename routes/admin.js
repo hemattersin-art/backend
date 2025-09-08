@@ -41,4 +41,8 @@ router.post('/users', adminController.createUser);
 router.put('/users/:userId', adminController.updateUser);
 router.delete('/users/:userId', adminController.deleteUser);
 
+// Session rescheduling
+router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);
+router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
+
 module.exports = router;

@@ -5,7 +5,8 @@ const {
   generateTransactionId, 
   validatePayUResponse 
 } = require('../config/payu');
-const { createMeetEvent } = require('../utils/meetEventHelper');
+const meetLinkService = require('../utils/meetLinkService');
+const { addMinutesToTime } = require('../utils/helpers');
 const emailService = require('../utils/emailService');
 
 // Generate and store PDF receipt in Supabase storage
@@ -362,20 +363,35 @@ const handlePaymentSuccess = async (req, res) => {
         endDateTime: endDateTime.toISOString()
       });
       
-      meetData = await createMeetEvent({
+      // Create Meet link using the new meetLinkService
+      const sessionData = {
         summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
         description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-        startISO: startDateTime.toISOString(),
-        endISO: endDateTime.toISOString(),
-        attendees: [
-          { email: clientDetails.user?.email, displayName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}` },
-          { email: psychologistDetails.email, displayName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}` }
-        ],
-        location: 'Online via Google Meet'
-      });
+        startDate: scheduledDate,
+        startTime: scheduledTime,
+        endTime: addMinutesToTime(scheduledTime, 50) // Add 50 minutes to start time
+      };
       
-      console.log('✅ OAuth2 Google Meet meeting created successfully:', meetData);
-      console.log('✅ Real Meet link generated:', meetData.meetLink);
+      
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
+        console.log('✅ Real Meet link created successfully:', meetResult);
+      } else {
+        meetData = {
+          meetLink: meetResult.meetLink, // Fallback link
+          eventId: null,
+          calendarLink: null,
+          method: 'fallback'
+        };
+        console.log('⚠️ Using fallback Meet link:', meetResult.meetLink);
+      }
       
     } catch (meetError) {
       console.error('❌ Error creating OAuth2 meeting:', meetError);

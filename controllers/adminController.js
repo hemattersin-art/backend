@@ -2,7 +2,10 @@ const supabase = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
-  hashPassword
+  hashPassword,
+  formatDate,
+  formatTime,
+  addMinutesToTime
 } = require('../utils/helpers');
 
 // Helper function to get availability dates for a day of the week
@@ -1779,6 +1782,354 @@ const createPsychologistPackages = async (req, res) => {
   }
 };
 
+// Admin reschedule session
+const rescheduleSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { new_date, new_time, reason } = req.body;
+
+    console.log('🔄 Admin reschedule request:', {
+      sessionId,
+      new_date,
+      new_time,
+      reason
+    });
+
+    // Validate input
+    if (!new_date || !new_time) {
+      return res.status(400).json(
+        errorResponse('New date and time are required')
+      );
+    }
+
+    // Get session details
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .select(`
+        *,
+        clients!inner(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          user_id,
+          users!inner(email)
+        ),
+        psychologists!inner(
+          id,
+          first_name,
+          last_name,
+          email
+        )
+      `)
+      .eq('id', sessionId)
+      .single();
+
+    if (sessionError || !session) {
+      return res.status(404).json(
+        errorResponse('Session not found')
+      );
+    }
+
+    // Check if session can be rescheduled
+    if (['completed', 'cancelled', 'no_show'].includes(session.status)) {
+      return res.status(400).json(
+        errorResponse('Cannot reschedule completed, cancelled, or no-show sessions')
+      );
+    }
+
+    // Check if new time slot is available
+    const { data: conflictingSessions } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('psychologist_id', session.psychologist_id)
+      .eq('scheduled_date', formatDate(new_date))
+      .eq('scheduled_time', formatTime(new_time))
+      .in('status', ['booked', 'rescheduled', 'confirmed'])
+      .neq('id', sessionId);
+
+    if (conflictingSessions && conflictingSessions.length > 0) {
+      return res.status(400).json(
+        errorResponse('Selected time slot is already booked')
+      );
+    }
+
+    // Store old session data for notifications
+    const oldSessionData = {
+      date: session.scheduled_date,
+      time: session.scheduled_time
+    };
+
+    // Update session with new date/time
+    const { data: updatedSession, error: updateError } = await supabase
+      .from('sessions')
+      .update({
+        scheduled_date: formatDate(new_date),
+        scheduled_time: formatTime(new_time),
+        status: 'rescheduled',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', sessionId)
+      .select(`
+        *,
+        clients!inner(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          user_id,
+          users!inner(email)
+        ),
+        psychologists!inner(
+          id,
+          first_name,
+          last_name,
+          email
+        )
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('Error updating session:', updateError);
+      console.error('Update query details:', {
+        sessionId,
+        new_date,
+        new_time,
+        formatted_date: formatDate(new_date),
+        formatted_time: formatTime(new_time)
+      });
+      return res.status(500).json(
+        errorResponse('Failed to reschedule session')
+      );
+    }
+
+    // Update Meet link if session has one
+    if (session.meet_link && session.meet_link !== 'https://meet.google.com/new?hs=122&authuser=0') {
+      try {
+        const meetLinkService = require('../utils/meetLinkService');
+        
+        // Create new session data for Meet link update
+        const sessionData = {
+          summary: `Therapy Session - ${session.clients.child_name || session.clients.first_name} with ${session.psychologists.first_name}`,
+          description: `Online therapy session between ${session.clients.child_name || session.clients.first_name} and ${session.psychologists.first_name} ${session.psychologists.last_name}`,
+          startDate: formatDate(new_date),
+          startTime: formatTime(new_time),
+          endTime: addMinutesToTime(formatTime(new_time), 50)
+        };
+
+        // Generate new Meet link
+        const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+        
+        if (meetResult.success) {
+          // Update session with new Meet link
+          await supabase
+            .from('sessions')
+            .update({
+              meet_link: meetResult.meetLink,
+              google_calendar_event_id: meetResult.eventId,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', sessionId);
+
+          console.log('✅ Meet link updated for rescheduled session:', meetResult.meetLink);
+        } else {
+          console.log('⚠️ Failed to update Meet link, keeping original:', meetResult.note);
+        }
+      } catch (meetError) {
+        console.error('Error updating Meet link:', meetError);
+        // Continue with reschedule even if Meet link update fails
+      }
+    }
+
+    // Send reschedule notification emails
+    try {
+      const emailService = require('../utils/emailService');
+      
+      await emailService.sendRescheduleNotification({
+        clientName: session.clients.child_name || `${session.clients.first_name} ${session.clients.last_name}`,
+        psychologistName: `${session.psychologists.first_name} ${session.psychologists.last_name}`,
+        clientEmail: session.clients.users.email,
+        psychologistEmail: session.psychologists.email,
+        scheduledDate: new_date,
+        scheduledTime: new_time,
+        sessionId: session.id,
+        reason: reason || 'Admin rescheduled'
+      }, oldSessionData.date, oldSessionData.time);
+      
+      console.log('✅ Reschedule notification emails sent successfully');
+    } catch (emailError) {
+      console.error('Error sending reschedule notification emails:', emailError);
+      // Continue even if email sending fails
+    }
+
+    // Create notification for client
+    await supabase
+      .from('notifications')
+      .insert({
+        user_id: session.clients.user_id,
+        type: 'session_rescheduled',
+        title: 'Session Rescheduled',
+        message: `Your session has been rescheduled to ${formatDate(new_date)} at ${formatTime(new_time)}`,
+        metadata: {
+          session_id: session.id,
+          old_date: oldSessionData.date,
+          old_time: oldSessionData.time,
+          new_date: formatDate(new_date),
+          new_time: formatTime(new_time),
+          reason: reason || 'Admin rescheduled'
+        }
+      });
+
+    // Create notification for psychologist
+    await supabase
+      .from('notifications')
+      .insert({
+        user_id: session.psychologists.user_id,
+        type: 'session_rescheduled',
+        title: 'Session Rescheduled',
+        message: `Session with ${session.clients.child_name || session.clients.first_name} has been rescheduled to ${formatDate(new_date)} at ${formatTime(new_time)}`,
+        metadata: {
+          session_id: session.id,
+          old_date: oldSessionData.date,
+          old_time: oldSessionData.time,
+          new_date: formatDate(new_date),
+          new_time: formatTime(new_time),
+          reason: reason || 'Admin rescheduled'
+        }
+      });
+
+    console.log('✅ Session rescheduled successfully by admin');
+
+    res.json(
+      successResponse(updatedSession, 'Session rescheduled successfully')
+    );
+
+  } catch (error) {
+    console.error('Admin reschedule session error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while rescheduling session')
+    );
+  }
+};
+
+// Get psychologist availability for admin reschedule
+const getPsychologistAvailabilityForReschedule = async (req, res) => {
+  try {
+    const { psychologistId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json(
+        errorResponse('Start date and end date are required')
+      );
+    }
+
+    // Get psychologist details
+    const { data: psychologist, error: psychologistError } = await supabase
+      .from('psychologists')
+      .select('id, first_name, last_name')
+      .eq('id', psychologistId)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    // Get psychologist availability
+    const { data: availability, error: availabilityError } = await supabase
+      .from('availability')
+      .select('*')
+      .eq('psychologist_id', psychologistId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: true });
+
+    if (availabilityError) {
+      console.error('Error fetching availability:', availabilityError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch psychologist availability')
+      );
+    }
+
+    // Get existing sessions in the date range
+    const { data: existingSessions, error: sessionsError } = await supabase
+      .from('sessions')
+      .select('scheduled_date, scheduled_time, status')
+      .eq('psychologist_id', psychologistId)
+      .gte('scheduled_date', startDate)
+      .lte('scheduled_date', endDate)
+      .in('status', ['booked', 'rescheduled', 'confirmed']);
+
+    if (sessionsError) {
+      console.error('Error fetching existing sessions:', sessionsError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch existing sessions')
+      );
+    }
+
+    // Helper function to convert 24-hour format to 12-hour format
+    const convertTo12Hour = (time24) => {
+      if (!time24) return '';
+      const [hours, minutes] = time24.split(':');
+      const hour = parseInt(hours);
+      const minute = minutes || '00';
+      
+      if (hour === 0) {
+        return `12:${minute} AM`;
+      } else if (hour < 12) {
+        return `${hour}:${minute} AM`;
+      } else if (hour === 12) {
+        return `12:${minute} PM`;
+      } else {
+        return `${hour - 12}:${minute} PM`;
+      }
+    };
+
+    // Process availability data
+    const processedAvailability = availability.map(day => {
+      const daySessions = existingSessions?.filter(session => 
+        session.scheduled_date === day.date
+      ) || [];
+
+      // Convert booked times from 24-hour to 12-hour format for comparison
+      const bookedTimes = daySessions.map(session => convertTo12Hour(session.scheduled_time));
+      const timeSlots = day.time_slots || [];
+
+      console.log(`📅 Processing availability for ${day.date}:`, {
+        timeSlots,
+        bookedTimes,
+        availableSlots: timeSlots.filter(slot => !bookedTimes.includes(slot))
+      });
+
+      return {
+        date: day.date,
+        is_available: day.is_available,
+        time_slots: timeSlots,
+        booked_times: bookedTimes,
+        available_slots: day.is_available ? 
+          timeSlots.filter(slot => 
+            !bookedTimes.includes(slot)
+          ) : []
+      };
+    });
+
+    res.json(
+      successResponse({
+        psychologist,
+        availability: processedAvailability
+      }, 'Availability fetched successfully')
+    );
+
+  } catch (error) {
+    console.error('Get psychologist availability error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching availability')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -1796,5 +2147,7 @@ module.exports = {
   deleteUser,
   getRecentActivities,
   getRecentUsers,
-  getRecentBookings
+  getRecentBookings,
+  rescheduleSession,
+  getPsychologistAvailabilityForReschedule
 };

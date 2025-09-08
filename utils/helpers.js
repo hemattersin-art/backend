@@ -151,6 +151,26 @@ const errorResponse = (message, error = null, statusCode = 400) => {
   };
 };
 
+// Add minutes to time string (HH:MM format)
+const addMinutesToTime = (timeString, minutes) => {
+  try {
+    // Handle both HH:MM and HH:MM:SS formats
+    const timeParts = timeString.split(':');
+    const hours = parseInt(timeParts[0]);
+    const mins = parseInt(timeParts[1]);
+    
+    const totalMinutes = hours * 60 + mins + minutes;
+    const newHours = Math.floor(totalMinutes / 60);
+    const newMins = totalMinutes % 60;
+    
+    // Always return HH:MM:SS format for Google Calendar API
+    return `${newHours.toString().padStart(2, '0')}:${newMins.toString().padStart(2, '0')}:00`;
+  } catch (error) {
+    console.error('Error adding minutes to time:', error);
+    return timeString; // Return original if error
+  }
+};
+
 module.exports = {
   generateToken,
   hashPassword,
@@ -170,5 +190,6 @@ module.exports = {
   generateRandomString,
   getPaginationParams,
   successResponse,
-  errorResponse
+  errorResponse,
+  addMinutesToTime
 };

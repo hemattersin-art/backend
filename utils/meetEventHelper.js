@@ -1,5 +1,6 @@
 const { calendar } = require('./googleOAuthClient');
 const crypto = require('crypto');
+const meetLinkService = require('./meetLinkService');
 
 /**
  * Forces calendar links to display in IST timezone
@@ -406,8 +407,63 @@ async function createMeetEvent(eventData) {
   }
 }
 
+/**
+ * Create a real Google Meet link using the new Meet Link Service
+ * This is the recommended method for creating Meet links
+ */
+async function createRealMeetLink(eventData, userAuth = null) {
+  try {
+    console.log('🔄 Creating REAL Google Meet link using Meet Link Service...');
+    
+    const result = await meetLinkService.generateSessionMeetLink(eventData, userAuth);
+    
+    if (result.success) {
+      console.log('✅ Real Meet link created successfully!');
+      console.log('   Method:', result.method);
+      console.log('   Meet Link:', result.meetLink);
+      
+      return {
+        event: { id: result.eventId || `meet-${Date.now()}` },
+        meetLink: result.meetLink,
+        joinUrl: result.meetLink,
+        startUrl: result.meetLink,
+        eventId: result.eventId || `meet-${Date.now()}`,
+        calendarLink: null,
+        method: result.method,
+        note: 'Real Meet link created successfully'
+      };
+    } else {
+      console.log('❌ Meet link creation failed, using fallback');
+      return {
+        event: { id: `fallback-${Date.now()}` },
+        meetLink: result.meetLink,
+        joinUrl: result.meetLink,
+        startUrl: result.meetLink,
+        eventId: `fallback-${Date.now()}`,
+        calendarLink: null,
+        method: result.method,
+        note: result.note || 'Fallback Meet link'
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Real Meet link creation failed:', error.message);
+    return {
+      event: { id: `error-${Date.now()}` },
+      meetLink: `https://meet.google.com/new?hs=122&authuser=0`,
+      joinUrl: `https://meet.google.com/new?hs=122&authuser=0`,
+      startUrl: `https://meet.google.com/new?hs=122&authuser=0`,
+      eventId: `error-${Date.now()}`,
+      calendarLink: null,
+      method: 'fallback',
+      note: 'Error creating Meet link - using fallback'
+    };
+  }
+}
+
 module.exports = {
   createEventWithMeet,
   waitForConferenceReady,
-  createMeetEvent
+  createMeetEvent,
+  createRealMeetLink
 };

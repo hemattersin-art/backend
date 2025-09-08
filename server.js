@@ -59,6 +59,214 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Test OAuth Meet endpoint
+app.post('/api/test-oauth-meet', async (req, res) => {
+  try {
+    const { summary, description } = req.body;
+    
+    const { google } = require('googleapis');
+    
+    // Create OAuth2 client
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.GOOGLE_REDIRECT_URI
+    );
+
+    // Generate OAuth URL for user to authorize
+           const authUrl = oauth2Client.generateAuthUrl({
+             access_type: 'offline',
+             scope: [
+               'https://www.googleapis.com/auth/calendar',
+               'https://www.googleapis.com/auth/calendar.events'
+             ]
+           });
+
+    res.json({
+      success: true,
+      message: 'OAuth URL generated successfully',
+      authUrl: authUrl,
+      instructions: [
+        '1. User clicks the OAuth URL',
+        '2. User authorizes Meet permissions',
+        '3. User gets access token',
+        '4. Use access token to create Meet links'
+      ]
+    });
+  } catch (error) {
+    console.error('OAuth Meet test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test OAuth with local redirect URI
+// GET endpoint for easier browser access
+app.get('/api/test-oauth-local', async (req, res) => {
+  try {
+    const { google } = require('googleapis');
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      'http://localhost:5001/api/oauth2/callback' // Local redirect URI
+    );
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent', // Force consent screen to get refresh token
+      scope: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events'
+      ]
+    });
+
+    res.json({
+      success: true,
+      message: 'OAuth authorization URL generated',
+      authUrl: authUrl,
+      instructions: [
+        '1. Click the authUrl above',
+        '2. Grant permissions to your Google account',
+        '3. OAuth tokens will be stored automatically',
+        '4. Real Meet links will be created after this setup'
+      ]
+    });
+  } catch (error) {
+    console.error('❌ OAuth URL generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/test-oauth-local', async (req, res) => {
+  try {
+    const { google } = require('googleapis');
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      'http://localhost:5001/api/oauth2/callback' // Local redirect URI
+    );
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent', // Force consent screen to get refresh token
+      scope: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.events'
+      ]
+    });
+    res.json({
+      success: true,
+      message: 'OAuth URL generated for local testing',
+      authUrl: authUrl,
+      instructions: [
+        '1. Click the OAuth URL (uses localhost redirect)',
+        '2. Authorize Meet permissions',
+        '3. Get redirected to localhost callback',
+        '4. Test real Meet link creation'
+      ]
+    });
+  } catch (error) {
+    console.error('OAuth local test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// OAuth callback handler for Google Meet integration
+app.get('/api/oauth2/callback', async (req, res) => {
+  try {
+    console.log('🔄 OAuth callback received');
+    console.log('Query params:', req.query);
+    
+    const { code, error } = req.query;
+    
+    if (error) {
+      console.log('❌ OAuth error:', error);
+      return res.status(400).json({
+        success: false,
+        error: 'OAuth authorization failed',
+        details: error
+      });
+    }
+    
+    if (!code) {
+      console.log('❌ No authorization code received');
+      return res.status(400).json({
+        success: false,
+        error: 'No authorization code received'
+      });
+    }
+    
+    console.log('✅ Authorization code received:', code);
+    
+    // Exchange code for tokens
+    const { google } = require('googleapis');
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      'http://localhost:5001/api/oauth2/callback' // Use local redirect URI
+    );
+    
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+    
+    console.log('✅ OAuth tokens obtained successfully');
+    console.log('Access token:', tokens.access_token ? 'Present' : 'Missing');
+    console.log('Refresh token:', tokens.refresh_token ? 'Present' : 'Missing');
+    
+    // Store OAuth tokens for future use
+    const meetLinkService = require('./utils/meetLinkService');
+    await meetLinkService.storeOAuthTokens(tokens);
+    
+    // Test creating a Meet link with the OAuth token
+    
+    const testSessionData = {
+      summary: 'Test OAuth Meet Link',
+      description: 'Testing real Meet link creation with OAuth token',
+      startDate: '2024-09-07',
+      startTime: '20:00:00',
+      endTime: '21:00:00'
+    };
+    
+    console.log('🔄 Testing Meet link creation with OAuth token...');
+    const result = await meetLinkService.createMeetLinkWithOAuth(tokens.access_token, testSessionData);
+    
+    res.json({
+      success: true,
+      message: 'OAuth authorization successful!',
+      tokens: {
+        access_token: tokens.access_token ? 'Present' : 'Missing',
+        refresh_token: tokens.refresh_token ? 'Present' : 'Missing',
+        expires_in: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : 'Unknown'
+      },
+      meetLinkTest: result,
+      instructions: [
+        '✅ OAuth authorization completed successfully',
+        '✅ Access token obtained for Google Meet API',
+        '✅ Meet link creation tested',
+        '🎉 Real Google Meet links can now be created!'
+      ]
+    });
+    
+  } catch (error) {
+    console.error('❌ OAuth callback error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'OAuth callback failed',
+      details: error.message
+    });
+  }
+});
+
+
+
+
+
 // TEMPORARY TEST ENDPOINT - Create test psychologist
 app.post('/api/test/create-psychologist', async (req, res) => {
   try {

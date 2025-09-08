@@ -3,9 +3,11 @@ const {
   successResponse, 
   errorResponse,
   formatDate,
-  formatTime
+  formatTime,
+  addMinutesToTime
 } = require('../utils/helpers');
-const { createMeetEvent } = require('../utils/meetEventHelper'); // Use OAuth2 approach for real Meet links
+const { createRealMeetLink } = require('../utils/meetEventHelper'); // Use real Meet link creation
+const meetLinkService = require('../utils/meetLinkService'); // New Meet Link Service
 const emailService = require('../utils/emailService');
 const availabilityService = require('../utils/availabilityCalendarService');
 
@@ -96,35 +98,49 @@ const bookSession = async (req, res) => {
       );
     }
 
-                // Create Google Calendar event with OAuth2 Meet service
-            let meetData = null;
-            try {
-              console.log('🔄 Creating Google Meet meeting via OAuth2...');
-              
-              // Convert date and time to ISO format for Meet service
-              const startDateTime = new Date(`${scheduled_date}T${scheduled_time}`);
-              const endDateTime = new Date(startDateTime.getTime() + 60 * 60000); // 60 minutes
-              
-              meetData = await createMeetEvent({
-                summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
-                description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-                startISO: startDateTime.toISOString(),
-                endISO: endDateTime.toISOString(),
-                attendees: [
-                  { email: clientDetails.user?.email, displayName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}` },
-                  { email: psychologistDetails.email, displayName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}` }
-                ],
-                location: 'Online via Google Meet'
-              });
-              
-              console.log('✅ OAuth2 Google Meet meeting created successfully:', meetData);
-              console.log('✅ Real Meet link generated:', meetData.meetLink);
-              
-            } catch (meetError) {
-              console.error('❌ Error creating OAuth2 meeting:', meetError);
-              console.log('⚠️ Continuing with session creation without meet link...');
-              // Continue with session creation even if meet creation fails
-            }
+    // Create real Google Meet link using Meet Link Service
+    let meetData = null;
+    try {
+      console.log('🔄 Creating real Google Meet link...');
+      
+      // Prepare session data for Meet link creation
+      const sessionData = {
+        summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
+        description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+        startDate: scheduled_date,
+        startTime: scheduled_time,
+        endTime: addMinutesToTime(scheduled_time, 60) // 60-minute session
+      };
+      
+      // Use the new Meet Link Service for real Meet link creation
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
+        
+        console.log('✅ Real Google Meet link created successfully!');
+        console.log('   Method:', meetResult.method);
+        console.log('   Meet Link:', meetResult.meetLink);
+        console.log('   Event ID:', meetResult.eventId);
+      } else {
+        console.log('⚠️ Meet link creation failed, using fallback');
+        meetData = {
+          meetLink: meetResult.meetLink, // Fallback link
+          eventId: null,
+          calendarLink: null,
+          method: 'fallback'
+        };
+      }
+    } catch (meetError) {
+      console.error('❌ Meet link creation failed:', meetError);
+      console.log('   Continuing with session creation without Meet link...');
+      // Continue with session creation even if meet creation fails
+    }
 
     // Create the session with Google Calendar data
     const sessionData = {
