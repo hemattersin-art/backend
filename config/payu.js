@@ -5,7 +5,7 @@ const PAYU_CONFIG = {
   // Test Environment (for development)
   test: {
     merchantId: process.env.PAYU_TEST_MERCHANT_ID || 'gtKFFx',
-    salt: process.env.PAYU_TEST_SALT || 'eCwWELxi',
+    salt: process.env.PAYU_TEST_SALT || '4R38IvwiV57FwVpsgOvTXBdLE4tHUXFW',
     baseUrl: 'https://test.payu.in',
     successUrl: process.env.NODE_ENV === 'development' 
       ? 'http://localhost:3000/api/payment/result' 
@@ -46,8 +46,9 @@ const getPayUConfig = () => {
   return config;
 };
 
-// Generate PayU hash
+// Generate PayU hash (updated formula)
 const generatePayUHash = (params, salt) => {
+  // Updated PayU hash sequence as per their documentation
   const hashSequence = [
     'key', 'txnid', 'amount', 'productinfo', 'firstname', 'email',
     'udf1', 'udf2', 'udf3', 'udf4', 'udf5', 'udf6', 'udf7', 'udf8',
@@ -60,7 +61,13 @@ const generatePayUHash = (params, salt) => {
   });
   hashString += salt;
   
-  return crypto.SHA512(hashString).toString();
+  console.log('🔐 Hash String:', hashString);
+  console.log('🔐 Salt:', salt);
+  
+  const hash = crypto.SHA512(hashString).toString();
+  console.log('🔐 Generated Hash:', hash);
+  
+  return hash;
 };
 
 // Generate transaction ID
