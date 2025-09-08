@@ -26,26 +26,21 @@ const PAYU_CONFIG = {
 
 // Get current environment config
 const getPayUConfig = () => {
-  // Use production mode when NODE_ENV is production AND production credentials are available
-  const isProduction = process.env.NODE_ENV === 'production' && 
-                      process.env.PAYU_PROD_MERCHANT_ID && 
-                      process.env.PAYU_PROD_SALT;
+  // Always use TEST mode for now (even in production)
+  // Change this to production when you're ready for live payments
+  const isProduction = false; // Set to true when ready for live payments
   const config = isProduction ? PAYU_CONFIG.production : PAYU_CONFIG.test;
   
-  console.log('🔧 PayU Environment:', isProduction ? 'PRODUCTION' : 'TEST');
+  console.log('🔧 PayU Environment:', isProduction ? 'PRODUCTION (LIVE PAYMENTS)' : 'TEST MODE (SAFE FOR TESTING)');
   console.log('🔧 NODE_ENV:', process.env.NODE_ENV);
-  console.log('🔧 PAYU_PROD_MERCHANT_ID:', process.env.PAYU_PROD_MERCHANT_ID ? 'SET' : 'NOT SET');
-  console.log('🔧 PAYU_PROD_SALT:', process.env.PAYU_PROD_SALT ? 'SET' : 'NOT SET');
+  console.log('🔧 Using Test Credentials:', !isProduction);
   console.log('🔧 Success URL:', config.successUrl);
   console.log('🔧 Failure URL:', config.failureUrl);
   
-  // Validate that we have the required credentials
-  if (!config.merchantId || !config.salt) {
-    console.error('❌ PayU credentials missing! Using test credentials as fallback.');
-    console.error('❌ Missing:', {
-      merchantId: !config.merchantId,
-      salt: !config.salt
-    });
+  if (!isProduction) {
+    console.log('✅ Using PayU TEST mode - payments will not be charged');
+  } else {
+    console.log('⚠️  Using PayU PRODUCTION mode - REAL MONEY will be charged!');
   }
   
   return config;
