@@ -49,13 +49,19 @@ const ensureServiceAccountCalendarIsIST = async (calendarClient) => {
 
 /**
  * Creates and returns a Google Calendar client using service account or OAuth2
+ * @param {boolean} requireMeet - If true, forces OAuth2 authentication for Meet conferences
  * @returns {Object} Google Calendar client instance
  */
-const calendar = async () => {
+const calendar = async (requireMeet = false) => {
   try {
-    // Try service account first (production)
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    // Skip service account if Meet conferences are required
+    if (requireMeet) {
+      console.log('🎥 Meet conference required - skipping service account, using OAuth2');
+    } else if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
       console.log('🔑 Using service account from environment variable');
+      console.log('⚠️ WARNING: Service accounts cannot create Meet conferences - only calendar events');
+      console.log('⚠️ For Meet links, OAuth2 user authentication is required');
+      
       const serviceAccountKey = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
       
       const auth = new google.auth.JWT({

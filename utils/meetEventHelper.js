@@ -62,7 +62,7 @@ async function createEventWithMeet({
     console.log('   🕐 End:', endISO);
     console.log('   👥 Attendees:', attendees.length);
     
-    const cal = await calendar();
+    const cal = await calendar(true); // Force OAuth2 for Meet conferences
     const timezone = process.env.TIMEZONE || 'Asia/Kolkata';
     const allowAttendees = String(process.env.GOOGLE_ALLOW_ATTENDEES || 'false').toLowerCase() === 'true';
     
