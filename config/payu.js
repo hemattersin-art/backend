@@ -7,20 +7,20 @@ const PAYU_CONFIG = {
     merchantId: process.env.PAYU_TEST_MERCHANT_ID || 'gtKFFx',
     salt: process.env.PAYU_TEST_SALT || '4R38IvwiV57FwVpsgOvTXBdLE4tHUXFW',
     baseUrl: 'https://test.payu.in',
-    successUrl: process.env.NODE_ENV === 'development' 
-      ? 'http://localhost:3000/api/payment/result' 
-      : 'https://kuttikal.vercel.app/api/payment/result',
-    failureUrl: process.env.NODE_ENV === 'development' 
-      ? 'http://localhost:3000/api/payment/result' 
-      : 'https://kuttikal.vercel.app/api/payment/result'
+    successUrl: process.env.PAYU_SUCCESS_URL || (process.env.NODE_ENV === 'development' 
+      ? 'http://localhost:3000/payment/success' 
+      : 'https://kuttikal.vercel.app/payment/success'),
+    failureUrl: process.env.PAYU_FAILURE_URL || (process.env.NODE_ENV === 'development' 
+      ? 'http://localhost:3000/payment/failure' 
+      : 'https://kuttikal.vercel.app/payment/failure')
   },
   // Production Environment (for live payments)
   production: {
     merchantId: process.env.PAYU_PROD_MERCHANT_ID,
     salt: process.env.PAYU_PROD_SALT,
     baseUrl: 'https://secure.payu.in',
-    successUrl: 'https://kuttikal.vercel.app/api/payment/result',
-    failureUrl: 'https://kuttikal.vercel.app/api/payment/result'
+    successUrl: process.env.PAYU_SUCCESS_URL || 'https://kuttikal.vercel.app/payment/success',
+    failureUrl: process.env.PAYU_FAILURE_URL || 'https://kuttikal.vercel.app/payment/failure'
   }
 };
 

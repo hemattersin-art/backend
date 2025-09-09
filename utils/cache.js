@@ -92,3 +92,4 @@ module.exports = {
   withCache,
   SimpleCache
 };
+
