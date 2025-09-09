@@ -8,7 +8,7 @@ const getClientReceipts = async (req, res) => {
     console.log('🔍 Fetching receipts for user:', userId);
 
     // Get client ID from clients table
-    const { data: clientData, error: clientDataError } = await supabase
+    const { data: clientData, error: clientDataError } = await supabase.supabaseAdmin
       .from('clients')
       .select('id')
       .eq('user_id', userId)
@@ -25,7 +25,7 @@ const getClientReceipts = async (req, res) => {
     console.log('🔍 Fetching receipts for client:', clientId);
 
     // 1) Fetch sessions for this client
-    const { data: clientSessions, error: sessionsError } = await supabase
+    const { data: clientSessions, error: sessionsError } = await supabase.supabaseAdmin
       .from('sessions')
       .select('id, client_id, scheduled_date, scheduled_time, status, psychologist_id')
       .eq('client_id', clientId);
@@ -44,7 +44,7 @@ const getClientReceipts = async (req, res) => {
     const sessionMap = new Map(clientSessions.map(s => [s.id, s]));
 
     // 2) Fetch receipts for those sessions
-    const { data: receipts, error: receiptsError } = await supabase
+    const { data: receipts, error: receiptsError } = await supabase.supabaseAdmin
       .from('receipts')
       .select('id, receipt_number, file_url, file_size, created_at, session_id, payment_id')
       .in('session_id', sessionIdList)
@@ -64,7 +64,7 @@ const getClientReceipts = async (req, res) => {
     const paymentIdList = receipts.map(r => r.payment_id).filter(Boolean);
     let payments = [];
     if (paymentIdList.length > 0) {
-      const { data: paymentsData, error: paymentsError } = await supabase
+      const { data: paymentsData, error: paymentsError } = await supabase.supabaseAdmin
         .from('payments')
         .select('id, transaction_id, amount, status, completed_at')
         .in('id', paymentIdList);
@@ -80,7 +80,7 @@ const getClientReceipts = async (req, res) => {
     const psychologistIdList = Array.from(new Set(clientSessions.map(s => s.psychologist_id).filter(Boolean)));
     let psychologists = [];
     if (psychologistIdList.length > 0) {
-      const { data: psychologistsData, error: psychologistsError } = await supabase
+      const { data: psychologistsData, error: psychologistsError } = await supabase.supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name')
         .in('id', psychologistIdList);
