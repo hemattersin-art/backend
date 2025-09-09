@@ -93,7 +93,10 @@ async function createEventWithMeet({
         ...(allowAttendees ? { visibility: 'public', guestsCanInviteOthers: true, guestsCanSeeOtherGuests: true, guestsCanModify: false, anyoneCanAddSelf: true } : {}),
         conferenceData: {
           createRequest: { 
-            requestId: crypto.randomUUID() // Let Google choose the conference type
+            requestId: crypto.randomUUID(),
+            conferenceSolutionKey: {
+              type: 'hangoutsMeet' // Force Google Meet instead of letting Google choose
+            }
           }
         },
         reminders: {
@@ -148,7 +151,7 @@ async function createEventWithMeet({
  * Wait for conference to be ready (poll until success)
  * This fixes the "pending forever" issue
  */
-async function waitForConferenceReady(eventId, timeoutMs = 30000, intervalMs = 2000) {
+async function waitForConferenceReady(eventId, timeoutMs = 10000, intervalMs = 1000) {
   try {
     console.log('⏳ Waiting for conference to be ready...');
     
@@ -248,6 +251,27 @@ async function waitForConferenceReady(eventId, timeoutMs = 30000, intervalMs = 2
       await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
     
+    console.log(`⏰ Conference still pending after ${timeoutMs}ms, trying alternative approach...`);
+    
+    // Try to get the event again without conferenceDataVersion to see if Meet link is available
+    try {
+      const { data: eventData } = await cal.events.get({ 
+        calendarId: 'primary', 
+        eventId
+      });
+      
+      if (eventData.hangoutLink) {
+        console.log('🎉 Found Meet link in hangoutLink after timeout!');
+        return {
+          event: eventData,
+          meetLink: eventData.hangoutLink,
+          note: 'Meet link found after timeout'
+        };
+      }
+    } catch (error) {
+      console.log('⚠️ Could not retrieve event after timeout:', error.message);
+    }
+    
     throw new Error(`Timed out waiting for conference after ${timeoutMs}ms`);
     
   } catch (error) {
@@ -303,8 +327,25 @@ async function createMeetEvent(eventData) {
     } else {
       // Wait for conference to be ready if not immediately available
       console.log('📅 Meet link not immediately available, waiting...');
-      const result = await waitForConferenceReady(event.id);
-      meetLink = result.meetLink;
+      try {
+        const result = await waitForConferenceReady(event.id);
+        meetLink = result.meetLink;
+      } catch (waitError) {
+        console.log('⚠️ Conference wait failed, trying direct event retrieval...');
+        // Try to get the event directly to see if Meet link is available
+        const cal = await calendar();
+        const { data: eventData } = await cal.events.get({ 
+          calendarId: 'primary', 
+          eventId: event.id
+        });
+        
+        if (eventData.hangoutLink) {
+          meetLink = eventData.hangoutLink;
+          console.log('🎉 Found Meet link in direct retrieval!');
+        } else {
+          throw new Error('No Meet link available after all attempts');
+        }
+      }
     }
     
     console.log('✅ Real Google Meet link created:', meetLink);
