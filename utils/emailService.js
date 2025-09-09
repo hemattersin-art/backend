@@ -28,6 +28,9 @@ class EmailService {
 
   async sendSessionConfirmation(sessionData) {
     try {
+      console.log('📧 Email Service - Starting session confirmation email...');
+      console.log('📧 Email Service - Session data:', JSON.stringify(sessionData, null, 2));
+      
       const {
         clientName,
         psychologistName,
@@ -47,6 +50,24 @@ class EmailService {
       const finalSessionDate = sessionDate || scheduledDate;
       const finalSessionTime = sessionTime || scheduledTime;
       const finalMeetLink = meetLink || googleMeetLink;
+      
+      console.log('📧 Email Service - Final values:', {
+        clientName,
+        psychologistName,
+        clientEmail,
+        psychologistEmail,
+        finalSessionDate,
+        finalSessionTime,
+        finalMeetLink,
+        sessionId,
+        price
+      });
+      
+      // Check if transporter is available
+      if (!this.transporter) {
+        console.error('📧 Email Service - Transporter not initialized');
+        throw new Error('Email service not properly initialized');
+      }
       
       // Parse date and time in IST (UTC+5:30)
       const sessionDateTime = new Date(`${finalSessionDate}T${finalSessionTime}+05:30`);
