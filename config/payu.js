@@ -9,18 +9,18 @@ const PAYU_CONFIG = {
     baseUrl: 'https://test.payu.in',
     successUrl: process.env.PAYU_SUCCESS_URL || (process.env.NODE_ENV === 'development' 
       ? 'http://localhost:3000/api/payment/result' 
-      : 'https://kuttikal.vercel.app/api/payment/result'),
+      : 'https://kutikkal-one.vercel.app/api/payment/result'),
     failureUrl: process.env.PAYU_FAILURE_URL || (process.env.NODE_ENV === 'development' 
       ? 'http://localhost:3000/api/payment/result' 
-      : 'https://kuttikal.vercel.app/api/payment/result')
+      : 'https://kutikkal-one.vercel.app/api/payment/result')
   },
   // Production Environment (for live payments)
   production: {
     merchantId: process.env.PAYU_PROD_MERCHANT_ID,
     salt: process.env.PAYU_PROD_SALT,
     baseUrl: 'https://secure.payu.in',
-    successUrl: process.env.PAYU_SUCCESS_URL || 'https://kuttikal.vercel.app/api/payment/result',
-    failureUrl: process.env.PAYU_FAILURE_URL || 'https://kuttikal.vercel.app/api/payment/result'
+    successUrl: process.env.PAYU_SUCCESS_URL || 'https://kutikkal-one.vercel.app/api/payment/result',
+    failureUrl: process.env.PAYU_FAILURE_URL || 'https://kutikkal-one.vercel.app/api/payment/result'
   }
 };
 
