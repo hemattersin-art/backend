@@ -138,7 +138,7 @@ const downloadReceipt = async (req, res) => {
     const userId = req.user.id;
 
     // Get client ID from clients table
-    const { data: clientData, error: clientDataError } = await supabase
+    const { data: clientData, error: clientDataError } = await supabase.supabaseAdmin
       .from('clients')
       .select('id')
       .eq('user_id', userId)
@@ -153,34 +153,40 @@ const downloadReceipt = async (req, res) => {
 
     const clientId = clientData.id;
 
-    // Get the receipt data from receipts table
-    const { data: receipt, error } = await supabase
+    // Get receipt by session_id
+    const { data: receipt, error: receiptError } = await supabase.supabaseAdmin
       .from('receipts')
-      .select(`
-        id,
-        receipt_number,
-        file_url,
-        file_path,
-        session:sessions(
-          id,
-          client_id
-        )
-      `)
-      .eq('session.id', receiptId)
-      .eq('session.client_id', clientId)
+      .select('id, receipt_number, file_url, file_path, session_id')
+      .eq('session_id', receiptId)
       .single();
 
-    if (error || !receipt) {
-      console.log('❌ Receipt not found:', error);
+    if (receiptError || !receipt) {
+      console.log('❌ Receipt not found for session:', receiptId, receiptError);
       return res.status(404).json(
         errorResponse('Receipt not found')
       );
     }
 
-    console.log('✅ Receipt found, redirecting to stored PDF:', receipt.file_url);
+    // Verify the session belongs to this client
+    const { data: session, error: sessionError } = await supabase.supabaseAdmin
+      .from('sessions')
+      .select('id, client_id')
+      .eq('id', receipt.session_id)
+      .single();
 
-    // Redirect to the stored PDF URL
-    res.redirect(receipt.file_url);
+    if (sessionError || !session || session.client_id !== clientId) {
+      console.log('❌ Unauthorized receipt access or session not found');
+      return res.status(404).json(
+        errorResponse('Receipt not found')
+      );
+    }
+
+    console.log('✅ Receipt found, returning download URL:', receipt.file_url);
+
+    // Return JSON with the download URL to match frontend expectations
+    return res.json(
+      successResponse({ downloadUrl: receipt.file_url }, 'Download URL generated')
+    );
 
   } catch (error) {
     console.error('Download receipt error:', error);
