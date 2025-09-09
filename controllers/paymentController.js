@@ -284,7 +284,7 @@ const handlePaymentSuccess = async (req, res) => {
     //   });
     // }
 
-    const { txnid, status, amount, udf1: scheduledDate, udf2: psychologistId, udf3: clientId, udf4: packageId, udf5: scheduledTime } = params;
+    const { txnid, status, amount, udf1: scheduledDate, udf2: psychologistId, udf3: clientIdFromPayU, udf4: packageId, udf5: scheduledTime } = params;
 
     // Find payment record
     const { data: paymentRecord, error: paymentError } = await supabase
@@ -300,6 +300,13 @@ const handlePaymentSuccess = async (req, res) => {
         message: 'Payment record not found'
       });
     }
+
+    // Use clientId from payment record instead of PayU response (which might be "undefined")
+    const clientId = paymentRecord.client_id;
+    const actualPsychologistId = paymentRecord.psychologist_id;
+    const actualScheduledDate = paymentRecord.payu_params?.udf1 || scheduledDate;
+    const actualScheduledTime = paymentRecord.payu_params?.udf5 || scheduledTime;
+    const actualPackageId = paymentRecord.package_id;
 
     // Check if already processed
     if (paymentRecord.status === 'success') {
@@ -332,7 +339,7 @@ const handlePaymentSuccess = async (req, res) => {
     const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
       .from('psychologists')
       .select('first_name, last_name, email')
-      .eq('id', psychologistId)
+      .eq('id', actualPsychologistId)
       .single();
 
     if (psychologistDetailsError || !psychologistDetails) {
@@ -350,15 +357,15 @@ const handlePaymentSuccess = async (req, res) => {
       
       // Convert date and time to ISO format for Meet service
       // Ensure proper date formatting
-      const [year, month, day] = scheduledDate.split('-').map(Number);
-      const [hour, minute, second] = scheduledTime.split(':').map(Number);
+      const [year, month, day] = actualScheduledDate.split('-').map(Number);
+      const [hour, minute, second] = actualScheduledTime.split(':').map(Number);
       
       const startDateTime = new Date(year, month - 1, day, hour, minute, second);
       const endDateTime = new Date(startDateTime.getTime() + 60 * 60000); // 60 minutes
       
       console.log('📅 Date/Time Debug:', {
-        scheduledDate,
-        scheduledTime,
+        actualScheduledDate,
+        actualScheduledTime,
         startDateTime: startDateTime.toISOString(),
         endDateTime: endDateTime.toISOString()
       });
@@ -367,9 +374,9 @@ const handlePaymentSuccess = async (req, res) => {
       const sessionData = {
         summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
         description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-        startDate: scheduledDate,
-        startTime: scheduledTime,
-        endTime: addMinutesToTime(scheduledTime, 50) // Add 50 minutes to start time
+        startDate: actualScheduledDate,
+        startTime: actualScheduledTime,
+        endTime: addMinutesToTime(actualScheduledTime, 50) // Add 50 minutes to start time
       };
       
       
@@ -402,17 +409,17 @@ const handlePaymentSuccess = async (req, res) => {
     // Create the actual session after successful payment
     const sessionData = {
       client_id: clientId,
-      psychologist_id: psychologistId,
-      scheduled_date: scheduledDate,
-      scheduled_time: scheduledTime,
+      psychologist_id: actualPsychologistId,
+      scheduled_date: actualScheduledDate,
+      scheduled_time: actualScheduledTime,
       status: 'booked',
       price: amount,
       payment_id: paymentRecord.id
     };
 
     // Only add package_id if it's provided and valid (not individual)
-    if (packageId && packageId !== 'null' && packageId !== 'undefined' && packageId !== 'individual') {
-      sessionData.package_id = packageId;
+    if (actualPackageId && actualPackageId !== 'null' && actualPackageId !== 'undefined' && actualPackageId !== 'individual') {
+      sessionData.package_id = actualPackageId;
     }
 
     // Add meet data if available
@@ -446,8 +453,8 @@ const handlePaymentSuccess = async (req, res) => {
       await emailService.sendSessionConfirmation({
         clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
         psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-        sessionDate: scheduledDate,
-        sessionTime: scheduledTime,
+        sessionDate: actualScheduledDate,
+        sessionTime: actualScheduledTime,
         sessionDuration: '60 minutes',
         clientEmail: clientDetails.user?.email,
         psychologistEmail: psychologistDetails.email,
