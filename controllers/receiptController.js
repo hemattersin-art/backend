@@ -24,6 +24,28 @@ const getClientReceipts = async (req, res) => {
     const clientId = clientData.id;
     console.log('🔍 Fetching receipts for client:', clientId);
 
+    // First, let's check if there are any receipts at all
+    const { data: allReceipts, error: allReceiptsError } = await supabase
+      .from('receipts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    console.log('📊 All receipts in database:', allReceipts?.length || 0);
+    if (allReceipts && allReceipts.length > 0) {
+      console.log('📊 Sample receipt:', allReceipts[0]);
+    }
+
+    // Now let's check sessions for this client
+    const { data: clientSessions, error: sessionsError } = await supabase
+      .from('sessions')
+      .select('id, client_id, scheduled_date, scheduled_time, status')
+      .eq('client_id', clientId);
+
+    console.log('📊 Sessions for client:', clientSessions?.length || 0);
+    if (clientSessions && clientSessions.length > 0) {
+      console.log('📊 Sample session:', clientSessions[0]);
+    }
+
     // First, get all receipts for sessions belonging to this client
     const { data: receipts, error } = await supabase
       .from('receipts')

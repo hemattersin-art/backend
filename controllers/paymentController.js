@@ -52,23 +52,41 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
         console.log('✅ Receipt uploaded successfully:', urlData.publicUrl);
 
         // Store receipt metadata in database using admin client
+        const receiptData = {
+          session_id: sessionData.id,
+          payment_id: paymentData.id,
+          receipt_number: receiptNumber,
+          file_path: filename,
+          file_url: urlData.publicUrl,
+          file_size: pdfBuffer.length,
+          created_at: new Date().toISOString()
+        };
+        
+        console.log('📄 Storing receipt data:', receiptData);
+        
         const { error: receiptError } = await supabase.supabaseAdmin
           .from('receipts')
-          .insert({
-            session_id: sessionData.id,
-            payment_id: paymentData.id,
-            receipt_number: receiptNumber,
-            file_path: filename,
-            file_url: urlData.publicUrl,
-            file_size: pdfBuffer.length,
-            created_at: new Date().toISOString()
-          });
+          .insert(receiptData);
 
         if (receiptError) {
           console.error('❌ Error storing receipt metadata:', receiptError);
           reject(receiptError);
         } else {
           console.log('✅ Receipt metadata stored successfully');
+          
+          // Verify the receipt was stored by querying it back
+          const { data: verifyReceipt, error: verifyError } = await supabase.supabaseAdmin
+            .from('receipts')
+            .select('*')
+            .eq('session_id', sessionData.id)
+            .single();
+            
+          if (verifyError) {
+            console.error('❌ Error verifying receipt storage:', verifyError);
+          } else {
+            console.log('✅ Receipt verification successful:', verifyReceipt);
+          }
+          
           resolve({ success: true, receiptNumber, fileUrl: urlData.publicUrl });
         }
 
