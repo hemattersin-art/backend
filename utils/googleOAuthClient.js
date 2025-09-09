@@ -129,6 +129,11 @@ function getOAuth2Client() {
   }
   
   // Fallback: Try to load tokens from environment variables
+  console.log('🔍 Checking OAuth environment variables...');
+  console.log('   GOOGLE_OAUTH_ACCESS_TOKEN exists:', !!process.env.GOOGLE_OAUTH_ACCESS_TOKEN);
+  console.log('   GOOGLE_OAUTH_REFRESH_TOKEN exists:', !!process.env.GOOGLE_OAUTH_REFRESH_TOKEN);
+  console.log('   GOOGLE_OAUTH_EXPIRY_DATE exists:', !!process.env.GOOGLE_OAUTH_EXPIRY_DATE);
+  
   if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN && process.env.GOOGLE_OAUTH_REFRESH_TOKEN) {
     try {
       const envTokens = {
@@ -138,9 +143,14 @@ function getOAuth2Client() {
       };
       oAuth2Client.setCredentials(envTokens);
       console.log('✅ OAuth tokens loaded from environment variables');
+      console.log('   Access token length:', envTokens.access_token.length);
+      console.log('   Refresh token length:', envTokens.refresh_token.length);
+      console.log('   Expiry date:', new Date(envTokens.expiry_date).toISOString());
     } catch (error) {
       console.log('⚠️ Error loading tokens from environment:', error.message);
     }
+  } else {
+    console.log('⚠️ OAuth environment variables not found or incomplete');
   }
   
   oAuth2Client.on('tokens', (tokens) => {
