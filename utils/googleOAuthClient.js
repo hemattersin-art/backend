@@ -142,9 +142,21 @@ function getOAuth2Client() {
   
   if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN && process.env.GOOGLE_OAUTH_REFRESH_TOKEN) {
     try {
+      const accessToken = process.env.GOOGLE_OAUTH_ACCESS_TOKEN;
+      const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+      
+      // Check if token appears truncated (OAuth tokens are usually 200+ characters)
+      if (accessToken.length < 150) {
+        console.log('⚠️ WARNING: Access token appears truncated!');
+        console.log('   Token length:', accessToken.length);
+        console.log('   Expected length: 200+ characters');
+        console.log('   Token ends with:', accessToken.slice(-20));
+        console.log('   💡 Solution: Use Render Secret Files instead of environment variables');
+      }
+      
       const envTokens = {
-        access_token: process.env.GOOGLE_OAUTH_ACCESS_TOKEN,
-        refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         expiry_date: parseInt(process.env.GOOGLE_OAUTH_EXPIRY_DATE) || Date.now() + 3600000
       };
       oAuth2Client.setCredentials(envTokens);
