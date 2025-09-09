@@ -24,7 +24,7 @@ const getClientReceipts = async (req, res) => {
     const clientId = clientData.id;
     console.log('🔍 Fetching receipts for client:', clientId);
 
-    // Get receipts from receipts table with session and payment details
+    // First, get all receipts for sessions belonging to this client
     const { data: receipts, error } = await supabase
       .from('receipts')
       .select(`
@@ -33,11 +33,14 @@ const getClientReceipts = async (req, res) => {
         file_url,
         file_size,
         created_at,
+        session_id,
+        payment_id,
         session:sessions(
           id,
           scheduled_date,
           scheduled_time,
           status,
+          client_id,
           psychologist:psychologists(
             first_name,
             last_name
@@ -51,8 +54,6 @@ const getClientReceipts = async (req, res) => {
           completed_at
         )
       `)
-      .eq('session.client_id', clientId)
-      .eq('payment.status', 'success')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -65,8 +66,18 @@ const getClientReceipts = async (req, res) => {
 
     console.log('📊 Raw receipts data:', receipts);
 
+    // Filter receipts to only include those for this client with successful payments
+    const filteredReceipts = receipts.filter(receipt => 
+      receipt.session && 
+      receipt.session.client_id === clientId && 
+      receipt.payment && 
+      receipt.payment.status === 'success'
+    );
+
+    console.log('📊 Filtered receipts for client:', filteredReceipts.length);
+
     // Format the receipts data
-    const formattedReceipts = receipts.map(receipt => ({
+    const formattedReceipts = filteredReceipts.map(receipt => ({
       id: receipt.session.id,
       receipt_number: receipt.receipt_number,
       session_date: receipt.session.scheduled_date,

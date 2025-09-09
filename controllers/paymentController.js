@@ -11,17 +11,18 @@ const emailService = require('../utils/emailService');
 
 // Generate and store PDF receipt in Supabase storage
 const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psychologistData) => {
-  try {
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({
-      size: 'A4',
-      margin: 50
-    });
+  return new Promise((resolve, reject) => {
+    try {
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50
+      });
 
-    const chunks = [];
-    
-    doc.on('data', chunk => chunks.push(chunk));
-    doc.on('end', async () => {
+      const chunks = [];
+      
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', async () => {
       try {
         const pdfBuffer = Buffer.concat(chunks);
         console.log('✅ PDF generated successfully, size:', pdfBuffer.length, 'bytes');
@@ -65,14 +66,17 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
 
         if (receiptError) {
           console.error('❌ Error storing receipt metadata:', receiptError);
+          reject(receiptError);
         } else {
           console.log('✅ Receipt metadata stored successfully');
+          resolve({ success: true, receiptNumber, fileUrl: urlData.publicUrl });
         }
 
         // Note: pdfBuffer is automatically garbage collected - no local file cleanup needed
 
       } catch (error) {
         console.error('❌ Error in PDF upload process:', error);
+        reject(error);
       }
     });
 
@@ -131,9 +135,16 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
 
     doc.end();
 
+    doc.on('error', (error) => {
+      console.error('❌ PDF generation error:', error);
+      reject(error);
+    });
+
   } catch (error) {
     console.error('❌ Error generating receipt PDF:', error);
+    reject(error);
   }
+  });
 };
 
 // Create PayU payment order
