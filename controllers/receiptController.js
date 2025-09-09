@@ -24,99 +24,102 @@ const getClientReceipts = async (req, res) => {
     const clientId = clientData.id;
     console.log('🔍 Fetching receipts for client:', clientId);
 
-    // First, let's check if there are any receipts at all
-    const { data: allReceipts, error: allReceiptsError } = await supabase
-      .from('receipts')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    console.log('📊 All receipts in database:', allReceipts?.length || 0);
-    if (allReceipts && allReceipts.length > 0) {
-      console.log('📊 Sample receipt:', allReceipts[0]);
-    }
-
-    // Now let's check sessions for this client
+    // 1) Fetch sessions for this client
     const { data: clientSessions, error: sessionsError } = await supabase
       .from('sessions')
-      .select('id, client_id, scheduled_date, scheduled_time, status')
+      .select('id, client_id, scheduled_date, scheduled_time, status, psychologist_id')
       .eq('client_id', clientId);
 
-    console.log('📊 Sessions for client:', clientSessions?.length || 0);
-    if (clientSessions && clientSessions.length > 0) {
-      console.log('📊 Sample session:', clientSessions[0]);
+    if (sessionsError) {
+      console.error('❌ Error fetching client sessions:', sessionsError);
+      return res.json(successResponse([], 'No receipts found'));
     }
 
-    // First, get all receipts for sessions belonging to this client
-    const { data: receipts, error } = await supabase
+    console.log('📊 Sessions for client:', clientSessions?.length || 0);
+    if (!clientSessions || clientSessions.length === 0) {
+      return res.json(successResponse([], 'No receipts found'));
+    }
+
+    const sessionIdList = clientSessions.map(s => s.id);
+    const sessionMap = new Map(clientSessions.map(s => [s.id, s]));
+
+    // 2) Fetch receipts for those sessions
+    const { data: receipts, error: receiptsError } = await supabase
       .from('receipts')
-      .select(`
-        id,
-        receipt_number,
-        file_url,
-        file_size,
-        created_at,
-        session_id,
-        payment_id,
-        session:sessions(
-          id,
-          scheduled_date,
-          scheduled_time,
-          status,
-          client_id,
-          psychologist:psychologists(
-            first_name,
-            last_name
-          )
-        ),
-        payment:payments(
-          id,
-          transaction_id,
-          amount,
-          status,
-          completed_at
-        )
-      `)
+      .select('id, receipt_number, file_url, file_size, created_at, session_id, payment_id')
+      .in('session_id', sessionIdList)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching receipts:', error);
-      // Return empty array instead of error
-      return res.json(
-        successResponse([], 'No receipts found')
-      );
+    if (receiptsError) {
+      console.error('❌ Error fetching receipts:', receiptsError);
+      return res.json(successResponse([], 'No receipts found'));
     }
 
-    console.log('📊 Raw receipts data:', receipts);
+    console.log('📊 Receipts found for client sessions:', receipts?.length || 0);
+    if (!receipts || receipts.length === 0) {
+      return res.json(successResponse([], 'No receipts found'));
+    }
 
-    // Filter receipts to only include those for this client with successful payments
-    const filteredReceipts = receipts.filter(receipt => 
-      receipt.session && 
-      receipt.session.client_id === clientId && 
-      receipt.payment && 
-      receipt.payment.status === 'success'
-    );
+    // 3) Fetch payments for those receipts
+    const paymentIdList = receipts.map(r => r.payment_id).filter(Boolean);
+    let payments = [];
+    if (paymentIdList.length > 0) {
+      const { data: paymentsData, error: paymentsError } = await supabase
+        .from('payments')
+        .select('id, transaction_id, amount, status, completed_at')
+        .in('id', paymentIdList);
+      if (paymentsError) {
+        console.error('❌ Error fetching payments:', paymentsError);
+      } else {
+        payments = paymentsData || [];
+      }
+    }
+    const paymentMap = new Map(payments.map(p => [p.id, p]));
 
-    console.log('📊 Filtered receipts for client:', filteredReceipts.length);
+    // 4) Fetch psychologists for display names
+    const psychologistIdList = Array.from(new Set(clientSessions.map(s => s.psychologist_id).filter(Boolean)));
+    let psychologists = [];
+    if (psychologistIdList.length > 0) {
+      const { data: psychologistsData, error: psychologistsError } = await supabase
+        .from('psychologists')
+        .select('id, first_name, last_name')
+        .in('id', psychologistIdList);
+      if (psychologistsError) {
+        console.error('❌ Error fetching psychologists:', psychologistsError);
+      } else {
+        psychologists = psychologistsData || [];
+      }
+    }
+    const psychologistMap = new Map(psychologists.map(p => [p.id, p]));
 
-    // Format the receipts data
-    const formattedReceipts = filteredReceipts.map(receipt => ({
-      id: receipt.session.id,
-      receipt_number: receipt.receipt_number,
-      session_date: receipt.session.scheduled_date,
-      session_time: receipt.session.scheduled_time,
-      psychologist_name: receipt.session.psychologist ? `${receipt.session.psychologist.first_name} ${receipt.session.psychologist.last_name}` : 'Unknown',
-      amount: receipt.payment?.amount || 0,
-      transaction_id: receipt.payment?.transaction_id || 'N/A',
-      payment_date: receipt.payment?.completed_at || receipt.created_at,
-      status: receipt.session.status,
-      file_url: receipt.file_url,
-      file_size: receipt.file_size
-    }));
+    // 5) Compose and filter only successful payments
+    const composed = receipts
+      .map(r => {
+        const session = sessionMap.get(r.session_id);
+        const payment = paymentMap.get(r.payment_id);
+        if (!session || !payment) return null;
+        if ((payment.status || '').toLowerCase() !== 'success') return null;
+        const psych = session.psychologist_id ? psychologistMap.get(session.psychologist_id) : null;
+        return {
+          id: session.id,
+          receipt_number: r.receipt_number,
+          session_date: session.scheduled_date,
+          session_time: session.scheduled_time,
+          psychologist_name: psych ? `${psych.first_name} ${psych.last_name}` : 'Unknown',
+          amount: payment.amount || 0,
+          transaction_id: payment.transaction_id || 'N/A',
+          payment_date: payment.completed_at || r.created_at,
+          status: session.status,
+          file_url: r.file_url,
+          file_size: r.file_size
+        };
+      })
+      .filter(Boolean);
 
-    console.log('📊 Formatted receipts:', formattedReceipts);
+    console.log('📊 Composed receipts count:', composed.length);
 
     res.json(
-      successResponse(formattedReceipts, 'Receipts fetched successfully')
+      successResponse(composed, 'Receipts fetched successfully')
     );
 
   } catch (error) {
