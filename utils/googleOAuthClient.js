@@ -117,12 +117,29 @@ function getOAuth2Client() {
     process.env.GOOGLE_REDIRECT_URI
   );
   
+  // Try to load tokens from file first
   if (existsSync(TOKENS_PATH)) {
     try {
       const tokens = JSON.parse(readFileSync(TOKENS_PATH, 'utf8'));
       oAuth2Client.setCredentials(tokens);
+      console.log('✅ OAuth tokens loaded from file');
     } catch (error) {
       console.log('⚠️ Error reading tokens file:', error.message);
+    }
+  }
+  
+  // Fallback: Try to load tokens from environment variables
+  if (process.env.GOOGLE_OAUTH_ACCESS_TOKEN && process.env.GOOGLE_OAUTH_REFRESH_TOKEN) {
+    try {
+      const envTokens = {
+        access_token: process.env.GOOGLE_OAUTH_ACCESS_TOKEN,
+        refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
+        expiry_date: parseInt(process.env.GOOGLE_OAUTH_EXPIRY_DATE) || Date.now() + 3600000
+      };
+      oAuth2Client.setCredentials(envTokens);
+      console.log('✅ OAuth tokens loaded from environment variables');
+    } catch (error) {
+      console.log('⚠️ Error loading tokens from environment:', error.message);
     }
   }
   
