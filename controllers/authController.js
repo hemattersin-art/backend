@@ -514,9 +514,6 @@ const resetPassword = async (req, res) => {
       );
     }
 
-    // Mark OTP as used
-    await emailVerificationService.markOTPAsUsed(email, otp, 'password_reset');
-
     res.json(
       successResponse(null, 'Password reset successfully')
     );
