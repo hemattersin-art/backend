@@ -3,6 +3,9 @@ const router = express.Router();
 const adminController = require('../controllers/adminController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { withCache } = require('../utils/cache');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 // All routes require authentication and admin role
 router.use(authenticateToken);
@@ -47,3 +50,36 @@ router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession)
 router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
 
 module.exports = router;
+
+// File uploads (admin only)
+// Store under /uploads/psychologists and return public URL
+const uploadsBaseDir = path.join(process.cwd(), 'uploads');
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const targetDir = path.join(uploadsBaseDir, 'psychologists');
+    fs.mkdirSync(targetDir, { recursive: true });
+    cb(null, targetDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9-_]/g, '_');
+    cb(null, `${base}-${Date.now()}${ext}`);
+  }
+});
+const upload = multer({ storage });
+
+// Note: keep route definitions after middleware so auth applies
+router.post('/upload/image', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    const publicBase = process.env.BACKEND_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+    const relativePath = `/uploads/psychologists/${req.file.filename}`;
+    const url = `${publicBase}${relativePath}`;
+    return res.json({ success: true, url, path: relativePath, filename: req.file.filename });
+  } catch (error) {
+    console.error('Upload error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to upload file' });
+  }
+});
