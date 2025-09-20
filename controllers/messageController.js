@@ -9,16 +9,8 @@ const getConversations = async (req, res) => {
 
     let conversations;
     if (userRole === 'client') {
-      // Get client conversations
-      const { data: client } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-
-      if (!client) {
-        return res.status(404).json(errorResponse('Client profile not found'));
-      }
+      // req.user.id is already the client ID, no need to lookup
+      const clientId = userId;
 
       const { data, error } = await supabase
         .from('conversations')
@@ -28,7 +20,7 @@ const getConversations = async (req, res) => {
           session:sessions(scheduled_date, scheduled_time, status),
           messages:messages(count)
         `)
-        .eq('client_id', client.id)
+        .eq('client_id', clientId)
         .eq('is_active', true)
         .order('last_message_at', { ascending: false });
 
@@ -79,13 +71,7 @@ const getMessages = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      const { data: client } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-
-      if (!client || conversation.client_id !== client.id) {
+      if (conversation.client_id !== userId) {
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -135,13 +121,7 @@ const sendMessage = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      const { data: client } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-
-      if (!client || conversation.client_id !== client.id) {
+      if (conversation.client_id !== userId) {
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -198,13 +178,7 @@ const markAsRead = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      const { data: client } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('user_id', userId)
-        .single();
-
-      if (!client || conversation.client_id !== client.id) {
+      if (conversation.client_id !== userId) {
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -264,7 +238,7 @@ const createConversation = async (req, res) => {
       const { data: client, error: clientError } = await supabase
         .from('clients')
         .select('id')
-        .eq('user_id', userId)
+        .eq('id', userId)
         .single();
 
       console.log('Client data:', client);

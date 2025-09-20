@@ -5,7 +5,7 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { withCache } = require('../utils/cache');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const supabase = require('../config/supabase');
 
 // All routes require authentication and admin role
 router.use(authenticateToken);
@@ -52,32 +52,63 @@ router.get('/psychologists/:psychologistId/availability', adminController.getPsy
 module.exports = router;
 
 // File uploads (admin only)
-// Store under /uploads/psychologists and return public URL
-const uploadsBaseDir = path.join(process.cwd(), 'uploads');
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const targetDir = path.join(uploadsBaseDir, 'psychologists');
-    fs.mkdirSync(targetDir, { recursive: true });
-    cb(null, targetDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9-_]/g, '_');
-    cb(null, `${base}-${Date.now()}${ext}`);
+// Store in Supabase Storage bucket 'psychologists' and return public URL
+const memoryStorage = multer.memoryStorage();
+const upload = multer({
+  storage: memoryStorage,
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB to accommodate high‑res formats
+  fileFilter: (req, file, cb) => {
+    // Accept any image/* mimetype (jpg, jpeg, png, webp, gif, heic, heif, bmp, tiff, svg, etc.)
+    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only image files are allowed'));
+    }
+    cb(null, true);
   }
 });
-const upload = multer({ storage });
 
 // Note: keep route definitions after middleware so auth applies
-router.post('/upload/image', upload.single('file'), (req, res) => {
+router.post('/upload/image', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
-    const publicBase = process.env.BACKEND_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
-    const relativePath = `/uploads/psychologists/${req.file.filename}`;
-    const url = `${publicBase}${relativePath}`;
-    return res.json({ success: true, url, path: relativePath, filename: req.file.filename });
+
+    const bucket = 'profile-pictures';
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    const base = path
+      .basename(req.file.originalname, ext)
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .toLowerCase();
+    const filename = `${base}-${Date.now()}${ext}`;
+    const objectPath = `${filename}`; // flat path; change to folders if needed
+
+    // Upload to Supabase Storage
+    const { error: uploadError } = await supabase.storage
+      .from(bucket)
+      .upload(objectPath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false
+      });
+
+    if (uploadError) {
+      console.error('Supabase Storage upload error:', uploadError);
+      return res.status(500).json({ success: false, error: 'Failed to upload to storage' });
+    }
+
+    // Get public URL (assumes bucket has public policy)
+    const { data: publicData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(objectPath);
+
+    const publicUrl = publicData?.publicUrl;
+
+    return res.json({
+      success: true,
+      url: publicUrl,
+      bucket,
+      path: objectPath,
+      filename
+    });
   } catch (error) {
     console.error('Upload error:', error);
     return res.status(500).json({ success: false, error: 'Failed to upload file' });

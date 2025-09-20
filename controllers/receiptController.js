@@ -7,21 +7,8 @@ const getClientReceipts = async (req, res) => {
     const userId = req.user.id;
     console.log('🔍 Fetching receipts for user:', userId);
 
-    // Get client ID from clients table
-    const { data: clientData, error: clientDataError } = await supabase.supabaseAdmin
-      .from('clients')
-      .select('id')
-      .eq('user_id', userId)
-      .single();
-
-    if (clientDataError || !clientData) {
-      console.log('📝 No client profile found, returning empty receipts');
-      return res.json(
-        successResponse([], 'No receipts found')
-      );
-    }
-
-    const clientId = clientData.id;
+    // req.user.id is already the client ID, no need to lookup
+    const clientId = userId;
     console.log('🔍 Fetching receipts for client:', clientId);
 
     // 1) Fetch sessions for this client
@@ -141,7 +128,7 @@ const downloadReceipt = async (req, res) => {
     const { data: clientData, error: clientDataError } = await supabase.supabaseAdmin
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientDataError || !clientData) {

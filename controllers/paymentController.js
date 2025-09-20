@@ -203,6 +203,22 @@ const createPaymentOrder = async (req, res) => {
 
     const payuConfig = getPayUConfig();
     
+    // Validate PayU config
+    if (!payuConfig || !payuConfig.baseUrl) {
+      console.error('❌ Invalid PayU configuration:', payuConfig);
+      return res.status(500).json({
+        success: false,
+        message: 'Payment gateway configuration error'
+      });
+    }
+    
+    console.log('🔧 PayU Config:', {
+      baseUrl: payuConfig.baseUrl,
+      merchantId: payuConfig.merchantId,
+      successUrl: payuConfig.successUrl,
+      failureUrl: payuConfig.failureUrl
+    });
+    
     // Generate transaction ID
     const txnid = generateTransactionId();
     
@@ -270,14 +286,33 @@ const createPaymentOrder = async (req, res) => {
 
     console.log('✅ Payment record created successfully:', paymentRecord.id);
 
+    // Construct redirect URL with validation
+    const redirectUrl = `${payuConfig.baseUrl}/_payment`;
+    
+    // Validate redirect URL
+    try {
+      new URL(redirectUrl);
+    } catch (urlError) {
+      console.error('❌ Invalid redirect URL:', redirectUrl, urlError);
+      return res.status(500).json({
+        success: false,
+        message: 'Invalid payment gateway URL'
+      });
+    }
+    
     console.log('📤 Sending payment response to frontend...');
+    console.log('🔗 Redirect URL:', redirectUrl);
+    console.log('🔗 Redirect URL type:', typeof redirectUrl);
+    console.log('🔗 Redirect URL length:', redirectUrl?.length);
+    console.log('🔗 PayU Config:', payuConfig);
+    
     res.json({
       success: true,
       data: {
         paymentId: paymentRecord.id,
         transactionId: txnid,
         payuParams: payuParams,
-        redirectUrl: `${payuConfig.baseUrl}/_payment`
+        redirectUrl: redirectUrl
       }
     });
 

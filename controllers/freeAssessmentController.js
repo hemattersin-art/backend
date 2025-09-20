@@ -14,7 +14,7 @@ const getFreeAssessmentStatus = async (req, res) => {
     let { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -65,7 +65,7 @@ const getFreeAssessmentStatus = async (req, res) => {
           last_name
         )
       `)
-      .eq('user_id', userId)
+      .eq('id', userId)
       .order('assessment_number', { ascending: true });
 
     if (assessmentsError) {
@@ -619,7 +619,7 @@ const bookFreeAssessment = async (req, res) => {
     let { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -667,7 +667,7 @@ const bookFreeAssessment = async (req, res) => {
     const { data: existingAssessments, error: existingError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .select('assessment_number')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .order('assessment_number', { ascending: true });
 
     if (existingError) {
@@ -857,7 +857,7 @@ const bookFreeAssessment = async (req, res) => {
       .from('free_assessments')
       .insert({
         user_id: userId,
-        client_id: client.id,
+        client_id: userId,
         assessment_number: nextAssessmentNumber,
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
@@ -879,7 +879,7 @@ const bookFreeAssessment = async (req, res) => {
     // Create session record for the free assessment
     console.log('🔄 Creating session record...');
     const sessionData = {
-      client_id: client.id,
+      client_id: userId,
       psychologist_id: availablePsychologist.psychologist_id,
       scheduled_date: scheduledDate,
       scheduled_time: scheduledTime,
@@ -954,7 +954,7 @@ const bookFreeAssessment = async (req, res) => {
       .update({ 
         free_assessment_count: nextAssessmentNumber
       })
-      .eq('id', client.id);
+      .eq('id', userId);
 
     // Fetch user details for email (clients table may not have name/email columns)
     const { data: userRowForEmail, error: userEmailError } = await supabase
@@ -1024,7 +1024,7 @@ const cancelFreeAssessment = async (req, res) => {
       .from('free_assessments')
       .select('*')
       .eq('id', assessmentId)
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (assessmentError || !assessment) {
@@ -1057,7 +1057,7 @@ const cancelFreeAssessment = async (req, res) => {
     const { data: client } = await supabase
       .from('clients')
       .select('free_assessment_count')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (client) {
@@ -1067,7 +1067,7 @@ const cancelFreeAssessment = async (req, res) => {
           .update({ 
             free_assessment_count: newCount
           })
-          .eq('user_id', userId);
+          .eq('id', userId);
     }
 
     res.json(

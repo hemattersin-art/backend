@@ -14,20 +14,19 @@ const register = async (req, res) => {
     const { email, password, role } = req.body;
 
     // Check if user already exists
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email)
-      .single();
+    if (role === 'client') {
+      const { data: existingClient } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('email', email)
+        .single();
 
-    if (existingUser) {
-      return res.status(400).json(
-        errorResponse('User with this email already exists')
-      );
-    }
-
-    // Check if psychologist already exists with this email
-    if (role === 'psychologist') {
+      if (existingClient) {
+        return res.status(400).json(
+          errorResponse('Client with this email already exists')
+        );
+      }
+    } else if (role === 'psychologist') {
       const { data: existingPsychologist } = await supabase
         .from('psychologists')
         .select('id')
@@ -39,6 +38,19 @@ const register = async (req, res) => {
           errorResponse('Psychologist with this email already exists')
         );
       }
+    } else {
+      // For admin roles, check users table
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        return res.status(400).json(
+          errorResponse('User with this email already exists')
+        );
+      }
     }
 
     // Hash password
@@ -47,31 +59,12 @@ const register = async (req, res) => {
     let user, profileData;
 
     if (role === 'client') {
-      // Create user for client
-      const { data: newUser, error: userError } = await supabase
-        .from('users')
-        .insert([{
-          email,
-          password_hash: hashedPassword,
-          role
-        }])
-        .select('id, email, role, created_at')
-        .single();
-
-      if (userError) {
-        console.error('User creation error:', userError);
-        return res.status(500).json(
-          errorResponse('Failed to create user account')
-        );
-      }
-
-      user = newUser;
-
-      // Create client profile with minimal data (can be updated later)
+      // Create client directly in clients table (no users table entry)
       const { data: client, error: clientError } = await supabase
         .from('clients')
         .insert([{
-          user_id: user.id,
+          email,
+          password_hash: hashedPassword,
           first_name: req.body.first_name || 'Pending',
           last_name: req.body.last_name || 'Update',
           phone_number: req.body.phone_number || '+91',
@@ -82,13 +75,19 @@ const register = async (req, res) => {
         .single();
 
       if (clientError) {
-        console.error('Client profile creation error:', clientError);
-        // Delete user if profile creation fails
-        await supabase.from('users').delete().eq('id', user.id);
+        console.error('Client creation error:', clientError);
         return res.status(500).json(
-          errorResponse('Failed to create client profile')
+          errorResponse('Failed to create client account')
         );
       }
+
+      // Create a mock user object for client (since they don't exist in users table)
+      user = {
+        id: client.id,
+        email: client.email,
+        role: 'client',
+        created_at: client.created_at
+      };
       profileData = client;
     } else if (role === 'psychologist') {
       // Create psychologist directly in psychologists table (no users table entry)
@@ -125,6 +124,27 @@ const register = async (req, res) => {
         created_at: psychologist.created_at
       };
       profileData = psychologist;
+    } else {
+      // Create admin/super admin/finance user in users table
+      const { data: newUser, error: userError } = await supabase
+        .from('users')
+        .insert([{
+          email,
+          password_hash: hashedPassword,
+          role
+        }])
+        .select('id, email, role, created_at')
+        .single();
+
+      if (userError) {
+        console.error('Admin user creation error:', userError);
+        return res.status(500).json(
+          errorResponse('Failed to create admin account')
+        );
+      }
+
+      user = newUser;
+      profileData = newUser; // Admin users don't have separate profile tables
     }
 
     // Generate JWT token
@@ -146,6 +166,247 @@ const register = async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json(
       errorResponse('Internal server error during registration')
+    );
+  }
+};
+
+// Google OAuth login
+const googleLogin = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json(
+        errorResponse('Google ID token is required')
+      );
+    }
+
+    // Verify Google ID token
+    const { OAuth2Client } = require('google-auth-library');
+    // Use frontend Client ID to verify the token (since frontend issued it)
+    // This should be the same Client ID used by the frontend
+    const frontendClientId = process.env.FRONTEND_GOOGLE_CLIENT_ID || '975865953640-79vjma6g08dski07q39a041efpqj9k2o.apps.googleusercontent.com';
+    const client = new OAuth2Client(frontendClientId);
+    
+    console.log('Verifying Google token with frontend client ID:', frontendClientId);
+    
+    const ticket = await client.verifyIdToken({
+      idToken: idToken,
+      audience: frontendClientId,
+    });
+    
+    const payload = ticket.getPayload();
+    const { email, name, picture, sub: googleId } = payload;
+    
+    console.log('Google token verified successfully:', {
+      email,
+      name,
+      googleId,
+      hasPicture: !!picture
+    });
+
+    if (!email) {
+      return res.status(400).json(
+        errorResponse('Email not provided by Google')
+      );
+    }
+
+    // Check if user already exists
+    let user = null;
+    let userRole = 'client'; // Default role for Google sign-ins
+
+    // First check psychologists table
+    const { data: psychologist, error: psychologistError } = await supabase
+      .from('psychologists')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (psychologist && !psychologistError) {
+      user = psychologist;
+      userRole = 'psychologist';
+    } else {
+      // Check clients table
+      const { data: existingClient, error: clientError } = await supabase
+        .from('clients')
+        .select(`
+          *,
+          users!inner(*)
+        `)
+        .eq('users.email', email)
+        .single();
+
+      if (existingClient && !clientError) {
+        user = existingClient;
+        userRole = 'client';
+      } else {
+        // Check users table for admin roles
+        const { data: existingUser, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', email)
+          .single();
+
+        if (existingUser && !userError) {
+          user = existingUser;
+          userRole = existingUser.role;
+        }
+      }
+    }
+
+    // If user doesn't exist, create new client
+    if (!user) {
+      console.log('Creating new client with Google data:', {
+        email,
+        googleId,
+        picture,
+        firstName: name?.split(' ')[0] || '',
+        lastName: name?.split(' ').slice(1).join(' ') || ''
+      });
+
+      // First create a user record in users table
+      const { data: newUser, error: userError } = await supabase
+        .from('users')
+        .insert({
+          email: email,
+          role: 'client',
+          google_id: googleId,
+          profile_picture_url: picture,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (userError) {
+        console.error('Error creating user:', userError);
+        return res.status(500).json(
+          errorResponse(`Failed to create user account: ${userError.message}`)
+        );
+      }
+
+      // Then create client record with user_id reference
+      const { data: newClient, error: createError } = await supabase
+        .from('clients')
+        .insert({
+          user_id: newUser.id,
+          first_name: name?.split(' ')[0] || '',
+          last_name: name?.split(' ').slice(1).join(' ') || '',
+          phone_number: '+91',
+          child_name: 'Pending',
+          child_age: 1,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Error creating client:', createError);
+        // Clean up user record if client creation fails
+        await supabase.from('users').delete().eq('id', newUser.id);
+        return res.status(500).json(
+          errorResponse(`Failed to create client account: ${createError.message}`)
+        );
+      }
+
+      // Combine user and client data
+      user = { ...newUser, ...newClient };
+      userRole = 'client';
+    } else {
+      // Update existing user with Google info if needed
+      if (userRole === 'client') {
+        // Update the user record with Google info
+        const { error: updateUserError } = await supabase
+          .from('users')
+          .update({
+            google_id: googleId,
+            profile_picture_url: picture
+          })
+          .eq('id', user.user_id || user.id);
+
+        if (updateUserError) {
+          console.error('Error updating user with Google info:', updateUserError);
+        }
+      } else if (userRole === 'psychologist') {
+        const { error: updateError } = await supabase
+          .from('psychologists')
+          .update({
+            google_id: googleId,
+            profile_picture_url: picture
+          })
+          .eq('id', user.id);
+
+        if (updateError) {
+          console.error('Error updating psychologist with Google info:', updateError);
+        }
+      } else {
+        // Update admin users in users table
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            google_id: googleId,
+            profile_picture_url: picture
+          })
+          .eq('id', user.id);
+
+        if (updateError) {
+          console.error('Error updating admin user with Google info:', updateError);
+        }
+      }
+    }
+
+    // Generate JWT token
+    const token = generateToken(user.id, userRole);
+
+    // Get role-specific profile
+    let profile = null;
+    if (userRole === 'client') {
+      // Client profile is already the user object since clients are stored directly in clients table
+      profile = user;
+    } else if (userRole === 'psychologist') {
+      profile = user;
+    } else {
+      // Admin users don't have separate profile tables
+      profile = user;
+    }
+
+    res.json(
+      successResponse({
+        user: {
+          id: user.id,
+          email: user.email,
+          role: userRole,
+          profile_picture_url: picture,
+          profile: profile
+        },
+        token
+      }, 'Google login successful')
+    );
+
+  } catch (error) {
+    console.error('Google login error:', error);
+    
+    // Handle specific Google Auth errors
+    if (error.message && error.message.includes('Invalid token')) {
+      return res.status(400).json(
+        errorResponse('Invalid Google token. Please try signing in again.')
+      );
+    }
+    
+    if (error.message && error.message.includes('Token expired')) {
+      return res.status(400).json(
+        errorResponse('Google token expired. Please try signing in again.')
+      );
+    }
+    
+    // Handle database errors
+    if (error.code && error.code.includes('23505')) { // Unique constraint violation
+      return res.status(400).json(
+        errorResponse('Account with this email already exists. Please try logging in instead.')
+      );
+    }
+    
+    res.status(500).json(
+      errorResponse('Google authentication failed. Please try again.')
     );
   }
 };
@@ -189,14 +450,35 @@ const login = async (req, res) => {
       return;
     }
 
-    // If not a psychologist, check users table for clients/admins
-    const { data: user, error: userError } = await supabase
-      .from('users')
+    // If not a psychologist, check clients table first, then users table for admins
+    let user = null;
+    let userRole = null;
+    
+    // Check clients table first
+    const { data: client, error: clientError } = await supabase
+      .from('clients')
       .select('*')
       .eq('email', email)
       .single();
 
-    if (userError || !user) {
+    if (client && !clientError) {
+      user = client;
+      userRole = 'client';
+    } else {
+      // Check users table for admin roles
+      const { data: adminUser, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single();
+
+      if (adminUser && !userError) {
+        user = adminUser;
+        userRole = adminUser.role;
+      }
+    }
+
+    if (!user) {
       return res.status(401).json(
         errorResponse('Invalid email or password')
       );
@@ -212,24 +494,23 @@ const login = async (req, res) => {
 
     // Get role-specific profile
     let profile = null;
-    if (user.role === 'client') {
-      const { data: client } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-      profile = client;
+    if (userRole === 'client') {
+      // Client profile is already the user object since clients are stored directly in clients table
+      profile = user;
+    } else {
+      // Admin users don't have separate profile tables
+      profile = user;
     }
 
     // Generate JWT token
-    const token = generateToken(user.id, user.role);
+    const token = generateToken(user.id, userRole);
 
     res.json(
       successResponse({
         user: {
           id: user.id,
           email: user.email,
-          role: user.role,
+          role: userRole,
           profile_picture_url: user.profile_picture_url,
           profile
         },
@@ -258,7 +539,7 @@ const getProfile = async (req, res) => {
       const { data: client } = await supabase
         .from('clients')
         .select('*')
-        .eq('user_id', userId)
+        .eq('id', userId)
         .single();
       profile = client;
     } else if (userRole === 'psychologist') {
@@ -546,6 +827,7 @@ const logout = async (req, res) => {
 module.exports = {
   register,
   login,
+  googleLogin,
   getProfile,
   updateProfilePicture,
   changePassword,

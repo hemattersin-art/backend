@@ -433,7 +433,7 @@ const getUserDetails = async (req, res) => {
       const { data: client } = await supabase
         .from('clients')
         .select('*')
-        .eq('user_id', userId)
+        .eq('id', userId)
         .single();
       profile = client;
     }
@@ -1412,7 +1412,7 @@ const updateUser = async (req, res) => {
       const { data: updatedClient, error: updateError } = await supabase
         .from('clients')
         .update(updateData)
-        .eq('user_id', userId)
+        .eq('id', userId)
         .select('*')
         .single();
 
@@ -1463,7 +1463,7 @@ const deleteUser = async (req, res) => {
       const { error: deleteProfileError } = await supabase
         .from('clients')
         .delete()
-        .eq('user_id', userId);
+        .eq('id', userId);
 
       if (deleteProfileError) {
         console.error('Delete client profile error:', deleteProfileError);

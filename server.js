@@ -11,6 +11,7 @@ const sessionRoutes = require('./routes/sessions');
 const adminRoutes = require('./routes/admin');
 const superadminRoutes = require('./routes/superadmin');
 const availabilityRoutes = require('./routes/availability');
+const availabilityControllerRoutes = require('./routes/availabilityControllerRoutes');
 const oauthRoutes = require('./routes/oauth');
 const meetRoutes = require('./routes/meet');
 const notificationRoutes = require('./routes/notifications');
@@ -20,6 +21,8 @@ const paymentRoutes = require('./routes/payment');
 const freeAssessmentRoutes = require('./routes/freeAssessments');
 const freeAssessmentTimeslotRoutes = require('./routes/freeAssessmentTimeslots');
 const emailVerificationRoutes = require('./routes/emailVerification');
+const calendarSyncService = require('./services/calendarSyncService');
+const googleCalendarRoutes = require('./routes/googleCalendar');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -37,7 +40,7 @@ app.use(limiter);
 
 // CORS configuration
 app.use(cors({
-  origin: ['https://kutikkal.vercel.app', 'https://kuttikal.vercel.app', 'https://kutikkal-one.vercel.app', 'http://localhost:3000', 'http://localhost:3001'],
+  origin: ['https://kutikkal-one.vercel.app', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
@@ -983,6 +986,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/availability', availabilityRoutes);
+app.use('/api/availability-controller', availabilityControllerRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/client-notifications', clientNotificationRoutes);
 app.use('/api/messages', messageRoutes);
@@ -991,7 +995,7 @@ app.use('/api/free-assessments', freeAssessmentRoutes);
 app.use('/api/free-assessment-timeslots', freeAssessmentTimeslotRoutes);
 app.use('/api/email-verification', emailVerificationRoutes);
 app.use('/api', oauthRoutes);
-app.use('/api', meetRoutes);
+app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -1030,6 +1034,9 @@ app.listen(PORT, () => {
   console.log(`🚀 Kuttikal Backend running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 Environment: ${process.env.NODE_ENV}`);
+  
+  // Start Google Calendar sync service
+  calendarSyncService.start();
 });
 
 module.exports = app;

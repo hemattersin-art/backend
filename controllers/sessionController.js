@@ -34,21 +34,8 @@ const bookSession = async (req, res) => {
       );
     }
 
-    // Get client profile from clients table
-    const { data: client, error: clientError } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('user_id', userId)
-      .single();
-
-    if (clientError || !client) {
-      console.error('Client profile not found:', clientError);
-      return res.status(404).json(
-        errorResponse('Client profile not found. Please complete your profile first.')
-      );
-    }
-
-    const clientId = client.id;
+    // req.user.id is already the client ID, no need to lookup
+    const clientId = userId;
 
     // Check if the time slot is available using availability service
     console.log('🔍 Checking time slot availability...');

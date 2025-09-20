@@ -1,7 +1,6 @@
 const supabase = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
-// COMMENTED OUT: Google Calendar sync disabled
-// const googleCalendarService = require('../utils/googleCalendarService');
+const googleCalendarService = require('../utils/googleCalendarService');
 
 // Set psychologist availability
 const setAvailability = async (req, res) => {
@@ -56,6 +55,47 @@ const setAvailability = async (req, res) => {
           errorResponse(`Time slots ${conflictingSlots.join(', ')} are already booked`)
         );
       }
+    }
+
+    // Check Google Calendar for external conflicts
+    try {
+      const { data: psychologist } = await supabase
+        .from('psychologists')
+        .select('id, first_name, last_name, google_calendar_credentials')
+        .eq('id', psychologist_id)
+        .single();
+
+      if (psychologist && psychologist.google_calendar_credentials) {
+        const googleConflicts = [];
+        
+        for (const timeSlot of time_slots) {
+          const [hours, minutes] = timeSlot.split(':');
+          const slotStart = new Date(date);
+          slotStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+          
+          const slotEnd = new Date(slotStart);
+          slotEnd.setMinutes(slotEnd.getMinutes() + 60); // Assuming 1-hour sessions
+          
+          const hasConflict = await googleCalendarService.hasTimeConflict(
+            psychologist.google_calendar_credentials,
+            slotStart,
+            slotEnd
+          );
+          
+          if (hasConflict) {
+            googleConflicts.push(timeSlot);
+          }
+        }
+        
+        if (googleConflicts.length > 0) {
+          return res.status(400).json(
+            errorResponse(`Time slots ${googleConflicts.join(', ')} conflict with Google Calendar events`)
+          );
+        }
+      }
+    } catch (googleError) {
+      console.error('Error checking Google Calendar conflicts:', googleError);
+      // Continue without blocking if Google Calendar check fails
     }
 
     // Check if availability already exists for this date
@@ -438,10 +478,167 @@ const setBulkAvailability = async (req, res) => {
   }
 };
 
+// Sync Google Calendar events and block conflicting times
+const syncGoogleCalendar = async (req, res) => {
+  try {
+    const { psychologist_id, start_date, end_date } = req.body;
+
+    if (!psychologist_id || !start_date || !end_date) {
+      return res.status(400).json(
+        errorResponse('Missing required fields: psychologist_id, start_date, end_date')
+      );
+    }
+
+    // Get psychologist with Google Calendar credentials
+    const { data: psychologist, error: psychologistError } = await supabase
+      .from('psychologists')
+      .select('id, first_name, last_name, google_calendar_credentials')
+      .eq('id', psychologist_id)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    if (!psychologist.google_calendar_credentials) {
+      return res.status(400).json(
+        errorResponse('Psychologist has no Google Calendar credentials')
+      );
+    }
+
+    // Sync calendar events
+    const syncResult = await googleCalendarService.syncCalendarEvents(
+      psychologist,
+      new Date(start_date),
+      new Date(end_date)
+    );
+
+    if (!syncResult.success) {
+      return res.status(500).json(
+        errorResponse(`Failed to sync calendar: ${syncResult.error}`)
+      );
+    }
+
+    // Block conflicting time slots in availability
+    const blockedSlots = [];
+    const errors = [];
+
+    for (const event of syncResult.externalEvents) {
+      try {
+        const eventDate = event.start.toISOString().split('T')[0];
+        const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
+        
+        // Get current availability for this date
+        const { data: availability } = await supabase
+          .from('availability')
+          .select('id, time_slots')
+          .eq('psychologist_id', psychologist_id)
+          .eq('date', eventDate)
+          .single();
+
+        if (availability) {
+          // Remove conflicting time slot
+          const updatedSlots = availability.time_slots.filter(slot => slot !== eventTime);
+          
+          if (updatedSlots.length !== availability.time_slots.length) {
+            await supabase
+              .from('availability')
+              .update({ 
+                time_slots: updatedSlots,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', availability.id);
+
+            blockedSlots.push({
+              date: eventDate,
+              time: eventTime,
+              reason: event.title
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Error blocking slot for event ${event.title}:`, error);
+        errors.push({
+          event: event.title,
+          error: error.message
+        });
+      }
+    }
+
+    res.json(
+      successResponse({
+        syncedAt: syncResult.syncedAt,
+        totalExternalEvents: syncResult.externalEvents.length,
+        blockedSlots: blockedSlots,
+        errors: errors
+      }, 'Google Calendar synced successfully')
+    );
+
+  } catch (error) {
+    console.error('Sync Google Calendar error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while syncing calendar')
+    );
+  }
+};
+
+// Get Google Calendar busy times for a psychologist
+const getGoogleCalendarBusyTimes = async (req, res) => {
+  try {
+    const { psychologist_id, start_date, end_date } = req.query;
+
+    if (!psychologist_id || !start_date || !end_date) {
+      return res.status(400).json(
+        errorResponse('Missing required query parameters: psychologist_id, start_date, end_date')
+      );
+    }
+
+    // Get psychologist with Google Calendar credentials
+    const { data: psychologist, error: psychologistError } = await supabase
+      .from('psychologists')
+      .select('id, first_name, last_name, google_calendar_credentials')
+      .eq('id', psychologist_id)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    if (!psychologist.google_calendar_credentials) {
+      return res.status(400).json(
+        errorResponse('Psychologist has no Google Calendar credentials')
+      );
+    }
+
+    // Get busy time slots from Google Calendar
+    const busySlots = await googleCalendarService.getBusyTimeSlots(
+      psychologist.google_calendar_credentials,
+      new Date(start_date),
+      new Date(end_date)
+    );
+
+    res.json(
+      successResponse(busySlots, 'Google Calendar busy times retrieved successfully')
+    );
+
+  } catch (error) {
+    console.error('Get Google Calendar busy times error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while getting busy times')
+    );
+  }
+};
+
 module.exports = {
   setAvailability,
   getAvailability,
   getAvailableTimeSlots,
   deleteAvailability,
-  setBulkAvailability
+  setBulkAvailability,
+  syncGoogleCalendar,
+  getGoogleCalendarBusyTimes
 };

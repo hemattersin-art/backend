@@ -17,7 +17,7 @@ const getProfile = async (req, res) => {
     const { data: client, error } = await supabase
       .from('clients')
       .select('*')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (error) {
@@ -54,7 +54,7 @@ const updateProfile = async (req, res) => {
         ...updateData,
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', userId)
+      .eq('id', userId)
       .select('*')
       .single();
 
@@ -83,18 +83,8 @@ const getSessions = async (req, res) => {
     const userId = req.user.id;
     const { page = 1, limit = 10, status } = req.query;
 
-    // Get client ID
-    const { data: client } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('user_id', userId)
-      .single();
-
-    if (!client) {
-      return res.status(404).json(
-        errorResponse('Client profile not found')
-      );
-    }
+    // req.user.id is already the client ID, no need to lookup
+    const clientId = userId;
 
     // Check if sessions table exists and has proper relationships
     try {
@@ -109,7 +99,7 @@ const getSessions = async (req, res) => {
             area_of_expertise
           )
         `)
-        .eq('client_id', client.id);
+        .eq('client_id', clientId);
 
       // Filter by status if provided
       if (status) {
@@ -206,7 +196,7 @@ const bookSession = async (req, res) => {
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -483,7 +473,7 @@ const cancelSession = async (req, res) => {
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (!client) {
@@ -564,7 +554,7 @@ const requestReschedule = async (req, res) => {
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (!client) {
@@ -717,7 +707,7 @@ const rescheduleSession = async (req, res) => {
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (!client) {
@@ -1105,7 +1095,7 @@ const submitSessionFeedback = async (req, res) => {
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -1193,7 +1183,7 @@ const getClientPackages = async (req, res) => {
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -1269,7 +1259,7 @@ const bookRemainingSession = async (req, res) => {
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -1494,7 +1484,7 @@ const reserveTimeSlot = async (req, res) => {
     const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('*')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (clientError || !client) {
@@ -1602,7 +1592,7 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .single();
 
     if (!client) {
