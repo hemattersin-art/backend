@@ -406,6 +406,7 @@ const getUserDetails = async (req, res) => {
             email: psychologist.email,
             role: 'psychologist',
             profile_picture_url: null,
+            cover_image_url: psychologist.cover_image_url,
             created_at: psychologist.created_at,
             updated_at: psychologist.updated_at,
             profile: psychologist
@@ -818,7 +819,8 @@ const createPsychologist = async (req, res) => {
       experience_years, 
       availability,
       packages, // New field for dynamic packages
-      price // Individual session price
+      price, // Individual session price
+      cover_image_url // Doctor's profile image
     } = req.body;
 
     // Check if psychologist already exists with this email
@@ -852,7 +854,8 @@ const createPsychologist = async (req, res) => {
         area_of_expertise,
         description,
         experience_years: experience_years || 0,
-        individual_session_price: price ? parseInt(price) : null
+        individual_session_price: price ? parseInt(price) : null,
+        cover_image_url: cover_image_url || null
       }])
       .select('*')
       .single();

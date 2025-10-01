@@ -390,6 +390,14 @@ app.get('/api/public/psychologists', async (req, res) => {
       throw new Error('Failed to fetch psychologists');
     }
 
+    console.log('Successfully fetched psychologists:', psychologists?.length || 0);
+    console.log('Psychologists data:', psychologists);
+    
+    // Debug image URLs
+    psychologists.forEach(psych => {
+      console.log(`🔍 Image URL for ${psych.first_name}:`, psych.cover_image_url);
+    });
+
     // Individual price is stored directly in the psychologist record
     // No need to fetch from packages table since it doesn't exist
 

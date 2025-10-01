@@ -82,8 +82,8 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
     const filename = `${base}-${Date.now()}${ext}`;
     const objectPath = `${filename}`; // flat path; change to folders if needed
 
-    // Upload to Supabase Storage
-    const { error: uploadError } = await supabase.storage
+    // Upload to Supabase Storage using admin client (bypasses RLS)
+    const { error: uploadError } = await supabase.supabaseAdmin.storage
       .from(bucket)
       .upload(objectPath, req.file.buffer, {
         contentType: req.file.mimetype,
@@ -96,7 +96,7 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
     }
 
     // Get public URL (assumes bucket has public policy)
-    const { data: publicData } = supabase.storage
+    const { data: publicData } = supabase.supabaseAdmin.storage
       .from(bucket)
       .getPublicUrl(objectPath);
 

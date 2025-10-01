@@ -271,6 +271,7 @@ const bookSession = async (req, res) => {
         first_name, 
         last_name, 
         child_name,
+        phone_number,
         user:users(email)
       `)
       .eq('id', clientId)
@@ -414,10 +415,11 @@ const bookSession = async (req, res) => {
       }
     }
 
-    // Step 8: Send email notifications
+    // Step 8: Send email + WhatsApp notifications
     console.log('🔍 Step 8: Sending email notifications...');
     try {
       const emailService = require('../utils/emailService');
+      const { sendBookingConfirmation } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || 
                         `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -436,6 +438,31 @@ const bookSession = async (req, res) => {
       });
 
       console.log('✅ Email notifications sent successfully');
+
+      // WhatsApp notification (best-effort, non-blocking)
+      try {
+        const to = clientDetails.phone_number || null;
+        if (to && meetData?.meetLink) {
+          const details = {
+            childName: clientDetails.child_name || clientDetails.first_name,
+            date: scheduled_date,
+            time: scheduled_time,
+            meetLink: meetData.meetLink,
+          };
+          const waResult = await sendBookingConfirmation(to, details);
+          if (waResult?.success) {
+            console.log('✅ WhatsApp confirmation sent.');
+          } else if (waResult?.skipped) {
+            console.log('ℹ️ WhatsApp skipped:', waResult.reason);
+          } else {
+            console.warn('⚠️ WhatsApp send failed');
+          }
+        } else {
+          console.log('ℹ️ No client phone or meet link; skipping WhatsApp');
+        }
+      } catch (waError) {
+        console.error('❌ WhatsApp notification error:', waError);
+      }
     } catch (emailError) {
       console.error('❌ Error sending email notifications:', emailError);
       // Continue even if email fails
