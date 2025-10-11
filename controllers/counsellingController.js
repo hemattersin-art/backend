@@ -324,6 +324,54 @@ const deleteCounsellingService = async (req, res) => {
   }
 };
 
+// Upload image for counselling service
+const uploadCounsellingImage = async (req, res) => {
+  try {
+    const { 
+      uploadCounsellingImage: uploadImage, 
+      getCounsellingImageUrl, 
+      generateCounsellingFileName,
+      validateImageFile 
+    } = require('../utils/storageService');
+
+    if (!req.file) {
+      return res.status(400).json(errorResponse('No file uploaded'));
+    }
+
+    // Validate file
+    const validation = validateImageFile(req.file);
+    if (!validation.valid) {
+      return res.status(400).json(errorResponse(validation.error));
+    }
+
+    const { slug, imageType } = req.body;
+    if (!slug || !imageType) {
+      return res.status(400).json(errorResponse('Slug and imageType are required'));
+    }
+
+    // Generate unique filename
+    const fileName = generateCounsellingFileName(req.file.originalname, slug, imageType);
+
+    // Upload to Supabase
+    const uploadResult = await uploadImage(req.file.buffer, fileName, req.file.mimetype);
+
+    if (!uploadResult.success) {
+      return res.status(500).json(errorResponse('Failed to upload image', uploadResult.error));
+    }
+
+    // Get public URL
+    const publicUrl = getCounsellingImageUrl(fileName);
+
+    res.json(successResponse('Image uploaded successfully', {
+      url: publicUrl,
+      filename: fileName
+    }));
+  } catch (error) {
+    console.error('Error uploading counselling image:', error);
+    res.status(500).json(errorResponse('Failed to upload image', error.message));
+  }
+};
+
 module.exports = {
   getAllCounsellingServices,
   getAllCounsellingServicesAdmin,
@@ -331,5 +379,6 @@ module.exports = {
   getCounsellingServiceById,
   createCounsellingService,
   updateCounsellingService,
-  deleteCounsellingService
+  deleteCounsellingService,
+  uploadCounsellingImage
 };

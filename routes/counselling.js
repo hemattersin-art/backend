@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const {
   getAllCounsellingServices,
@@ -8,8 +9,12 @@ const {
   getCounsellingServiceById,
   createCounsellingService,
   updateCounsellingService,
-  deleteCounsellingService
+  deleteCounsellingService,
+  uploadCounsellingImage
 } = require('../controllers/counsellingController');
+
+// Configure multer for memory storage
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Public routes
 router.get('/', getAllCounsellingServices);
@@ -20,6 +25,7 @@ router.get('/admin/:id', authenticateToken, requireAdmin, getCounsellingServiceB
 router.post('/admin', authenticateToken, requireAdmin, createCounsellingService);
 router.put('/admin/:id', authenticateToken, requireAdmin, updateCounsellingService);
 router.delete('/admin/:id', authenticateToken, requireAdmin, deleteCounsellingService);
+router.post('/admin/upload-image', authenticateToken, requireAdmin, upload.single('image'), uploadCounsellingImage);
 
 // Public slug route (must be after admin routes)
 router.get('/:slug', getCounsellingServiceBySlug);

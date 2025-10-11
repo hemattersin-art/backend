@@ -7,6 +7,7 @@ const supabase = createClient(
 );
 
 const BLOG_IMAGES_BUCKET = 'blog-images';
+const COUNSELLING_IMAGES_BUCKET = 'counselling-images';
 
 /**
  * Upload image to blog images bucket
@@ -117,10 +118,99 @@ function validateImageFile(file) {
   return { valid: true };
 }
 
+/**
+ * Upload image to counselling images bucket
+ * @param {Buffer} fileBuffer - File buffer
+ * @param {string} fileName - Unique file name
+ * @param {string} mimeType - File MIME type
+ * @returns {Promise<{success: boolean, data?: any, error?: string}>}
+ */
+async function uploadCounsellingImage(fileBuffer, fileName, mimeType) {
+  try {
+    const { data, error } = await supabase.storage
+      .from(COUNSELLING_IMAGES_BUCKET)
+      .upload(fileName, fileBuffer, {
+        contentType: mimeType,
+        cacheControl: '3600',
+        upsert: true // Allow overwriting for counselling pages
+      });
+
+    if (error) {
+      console.error('Supabase upload error:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data: data };
+  } catch (error) {
+    console.error('Upload error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Delete image from counselling images bucket
+ * @param {string} filePath - File path in bucket
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function deleteCounsellingImage(filePath) {
+  try {
+    const { error } = await supabase.storage
+      .from(COUNSELLING_IMAGES_BUCKET)
+      .remove([filePath]);
+
+    if (error) {
+      console.error('Supabase delete error:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Delete error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get public URL for counselling image
+ * @param {string} filePath - File path in bucket
+ * @returns {string} Public URL
+ */
+function getCounsellingImageUrl(filePath) {
+  if (!filePath) return null;
+  
+  const { data } = supabase.storage
+    .from(COUNSELLING_IMAGES_BUCKET)
+    .getPublicUrl(filePath);
+    
+  return data.publicUrl;
+}
+
+/**
+ * Generate unique filename for counselling image
+ * @param {string} originalName - Original filename
+ * @param {string} slug - Page slug for context
+ * @param {string} imageType - Type of image (hero, right, mobile, etc)
+ * @returns {string} Unique filename
+ */
+function generateCounsellingFileName(originalName, slug, imageType) {
+  const timestamp = Date.now();
+  const extension = originalName.split('.').pop().toLowerCase();
+  const cleanSlug = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+    
+  return `${cleanSlug}-${imageType}-${timestamp}.${extension}`;
+}
+
 module.exports = {
   uploadBlogImage,
   deleteBlogImage,
   getBlogImageUrl,
   generateUniqueFileName,
-  validateImageFile
+  validateImageFile,
+  uploadCounsellingImage,
+  deleteCounsellingImage,
+  getCounsellingImageUrl,
+  generateCounsellingFileName
 };
