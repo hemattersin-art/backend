@@ -23,6 +23,8 @@ const freeAssessmentTimeslotRoutes = require('./routes/freeAssessmentTimeslots')
 const emailVerificationRoutes = require('./routes/emailVerification');
 const calendarSyncService = require('./services/calendarSyncService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
+const blogRoutes = require('./routes/blogs');
+const counsellingRoutes = require('./routes/counselling');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -1004,6 +1006,8 @@ app.use('/api/free-assessment-timeslots', freeAssessmentTimeslotRoutes);
 app.use('/api/email-verification', emailVerificationRoutes);
 app.use('/api', oauthRoutes);
 app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
+app.use('/api/blogs', blogRoutes);
+app.use('/api/counselling', counsellingRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

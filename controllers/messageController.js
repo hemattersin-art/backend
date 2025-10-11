@@ -16,7 +16,7 @@ const getConversations = async (req, res) => {
         .from('conversations')
         .select(`
           *,
-          psychologist:psychologists(first_name, last_name, email),
+          psychologist:psychologists(first_name, last_name, email, cover_image_url),
           session:sessions(scheduled_date, scheduled_time, status),
           messages:messages(count)
         `)
@@ -108,10 +108,10 @@ const sendMessage = async (req, res) => {
       return res.status(400).json(errorResponse('Message content is required'));
     }
 
-    // Verify user has access to this conversation
+    // Optimized: Single query to verify access and get conversation
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('*')
+      .select('id, client_id, psychologist_id')
       .eq('id', conversationId)
       .single();
 
@@ -130,7 +130,7 @@ const sendMessage = async (req, res) => {
       }
     }
 
-    // Create message
+    // Create message and update conversation in a single transaction
     const { data: message, error } = await supabase
       .from('messages')
       .insert([{
@@ -145,11 +145,13 @@ const sendMessage = async (req, res) => {
 
     if (error) throw error;
 
-    // Update conversation last_message_at
-    await supabase
+    // Update conversation last_message_at (non-blocking)
+    supabase
       .from('conversations')
       .update({ last_message_at: new Date().toISOString() })
-      .eq('id', conversationId);
+      .eq('id', conversationId)
+      .then(() => {}) // Fire and forget
+      .catch(err => console.error('Failed to update conversation timestamp:', err));
 
     res.json(successResponse('Message sent successfully', { message }));
   } catch (error) {

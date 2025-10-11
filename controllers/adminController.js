@@ -210,7 +210,47 @@ const getAllUsers = async (req, res) => {
       );
     }
 
+    console.log('Raw users from database:', users);
+    console.log('Users count:', users?.length || 0);
+
     let enrichedUsers = users;
+
+    // Also fetch clients who don't have entries in users table (Google OAuth users)
+    console.log('Fetching clients without user entries...');
+    const { data: clients, error: clientsError } = await supabase
+      .from('clients')
+      .select('*')
+      .is('user_id', null)
+      .not('email', 'is', null);
+
+    if (clientsError) {
+      console.error('Error fetching clients:', clientsError);
+    } else {
+      console.log('Found clients without user entries:', clients?.length || 0);
+      
+      // Convert clients to user format
+      const clientUsers = clients?.map(client => ({
+        id: client.id,
+        email: client.email,
+        role: 'client',
+        profile_picture_url: client.profile_picture_url,
+        created_at: client.created_at,
+        updated_at: client.updated_at,
+        // Include client-specific data
+        first_name: client.first_name,
+        last_name: client.last_name,
+        phone_number: client.phone_number,
+        child_name: client.child_name,
+        child_age: client.child_age,
+        name: `${client.first_name || ''} ${client.last_name || ''}`.trim() || client.email
+      })) || [];
+
+      console.log('Converted client users:', clientUsers);
+      
+      // Merge users and client users
+      enrichedUsers = [...users, ...clientUsers];
+      console.log('Combined users count:', enrichedUsers.length);
+    }
 
     // Filter by search if provided
     let filteredUsers = enrichedUsers;
@@ -221,6 +261,12 @@ const getAllUsers = async (req, res) => {
         (user.name && user.name.toLowerCase().includes(searchLower))
       );
     }
+
+    console.log('Final users being returned:', filteredUsers);
+    console.log('Users by role:', filteredUsers.reduce((acc, user) => {
+      acc[user.role] = (acc[user.role] || 0) + 1;
+      return acc;
+    }, {}));
 
     res.json(
       successResponse({
@@ -2147,6 +2193,140 @@ const getPsychologistAvailabilityForReschedule = async (req, res) => {
   }
 };
 
+// Get psychologist calendar events for admin view
+const getPsychologistCalendarEvents = async (req, res) => {
+  try {
+    const { psychologistId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json(
+        errorResponse('Start date and end date are required')
+      );
+    }
+
+    // Get psychologist details with Google Calendar credentials
+    const { data: psychologist, error: psychologistError } = await supabase
+      .from('psychologists')
+      .select('id, first_name, last_name, email, google_calendar_credentials')
+      .eq('id', psychologistId)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    // Get internal sessions (Little Care sessions)
+    const { data: internalSessions, error: sessionsError } = await supabase
+      .from('sessions')
+      .select(`
+        scheduled_date,
+        scheduled_time,
+        status,
+        session_type,
+        client:clients(
+          first_name,
+          last_name,
+          child_name
+        )
+      `)
+      .eq('psychologist_id', psychologistId)
+      .gte('scheduled_date', startDate)
+      .lte('scheduled_date', endDate)
+      .in('status', ['booked', 'rescheduled', 'confirmed', 'completed'])
+      .order('scheduled_date', { ascending: true });
+
+    if (sessionsError) {
+      console.error('Error fetching internal sessions:', sessionsError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch internal sessions')
+      );
+    }
+
+    // Get external calendar events if Google Calendar is connected
+    let externalEvents = [];
+    if (psychologist.google_calendar_credentials) {
+      try {
+        const googleCalendarService = require('../utils/googleCalendarService');
+        
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
+        
+        // Get external events from Google Calendar
+        const calendarEvents = await googleCalendarService.getCalendarEvents(
+          psychologist.google_calendar_credentials,
+          'primary',
+          startDateObj,
+          endDateObj
+        );
+
+        // Filter out events created by our own system
+        externalEvents = calendarEvents.filter(event => 
+          !event.summary?.includes('LittleMinds') && 
+          !event.summary?.includes('Session') &&
+          !event.summary?.includes('Therapy')
+        ).map(event => ({
+          id: event.id,
+          summary: event.summary || 'Untitled Event',
+          start: event.start,
+          end: event.end,
+          location: event.location,
+          description: event.description,
+          source: 'external'
+        }));
+      } catch (calendarError) {
+        console.error('Error fetching Google Calendar events:', calendarError);
+        // Continue without external events if Google Calendar fails
+      }
+    }
+
+    // Format internal sessions as events
+    const internalEvents = internalSessions?.map(session => ({
+      id: `internal-${session.scheduled_date}-${session.scheduled_time}`,
+      summary: session.client ? 
+        `Session with ${session.client.first_name} ${session.client.last_name}${session.client.child_name ? ` (${session.client.child_name})` : ''}` :
+        'Session',
+      start: {
+        dateTime: `${session.scheduled_date}T${session.scheduled_time}:00`
+      },
+      end: {
+        dateTime: `${session.scheduled_date}T${session.scheduled_time}:00`
+      },
+      status: session.status,
+      session_type: session.session_type,
+      source: 'little_care'
+    })) || [];
+
+    // Combine and sort all events
+    const allEvents = [...internalEvents, ...externalEvents].sort((a, b) => {
+      const dateA = new Date(a.start.dateTime || a.start.date);
+      const dateB = new Date(b.start.dateTime || b.start.date);
+      return dateA - dateB;
+    });
+
+    res.json(
+      successResponse({
+        psychologist: {
+          id: psychologist.id,
+          name: `${psychologist.first_name} ${psychologist.last_name}`,
+          email: psychologist.email
+        },
+        events: allEvents,
+        hasGoogleCalendar: !!psychologist.google_calendar_credentials,
+        dateRange: { startDate, endDate }
+      }, 'Calendar events fetched successfully')
+    );
+
+  } catch (error) {
+    console.error('Get psychologist calendar events error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching calendar events')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -2166,5 +2346,6 @@ module.exports = {
   getRecentUsers,
   getRecentBookings,
   rescheduleSession,
-  getPsychologistAvailabilityForReschedule
+  getPsychologistAvailabilityForReschedule,
+  getPsychologistCalendarEvents
 };

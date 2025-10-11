@@ -49,6 +49,9 @@ router.delete('/users/:userId', adminController.deleteUser);
 router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);
 router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
 
+// Psychologist calendar events
+router.get('/psychologists/:psychologistId/calendar-events', adminController.getPsychologistCalendarEvents);
+
 module.exports = router;
 
 // File uploads (admin only)

@@ -96,7 +96,8 @@ const getSessions = async (req, res) => {
             id,
             first_name,
             last_name,
-            area_of_expertise
+            area_of_expertise,
+            cover_image_url
           )
         `)
         .eq('client_id', clientId);
