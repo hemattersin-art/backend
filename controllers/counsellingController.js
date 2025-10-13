@@ -154,6 +154,7 @@ const createCounsellingService = async (req, res) => {
       types = [],
       faqs = [],
       testimonials = [],
+      benefits_image_url,
       right_image_url,
       mobile_image_url
     } = req.body;
@@ -196,6 +197,7 @@ const createCounsellingService = async (req, res) => {
         types: validateJsonArray(types, 'types'),
         faqs: validateJsonArray(faqs, 'faqs'),
         testimonials: validateJsonArray(testimonials, 'testimonials'),
+        benefits_image_url,
         right_image_url,
         mobile_image_url,
         updated_by: req.user?.id
@@ -231,6 +233,7 @@ const updateCounsellingService = async (req, res) => {
       types,
       faqs,
       testimonials,
+      benefits_image_url,
       right_image_url,
       mobile_image_url
     } = req.body;
@@ -264,6 +267,7 @@ const updateCounsellingService = async (req, res) => {
     if (types !== undefined) updateData.types = types;
     if (faqs !== undefined) updateData.faqs = faqs;
     if (testimonials !== undefined) updateData.testimonials = testimonials;
+    if (benefits_image_url !== undefined) updateData.benefits_image_url = benefits_image_url;
     if (right_image_url !== undefined) updateData.right_image_url = right_image_url;
     if (mobile_image_url !== undefined) updateData.mobile_image_url = mobile_image_url;
     updateData.updated_by = req.user?.id;

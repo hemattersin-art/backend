@@ -46,7 +46,8 @@ class GoogleCalendarService {
         timeMax: timeMax.toISOString(),
         singleEvents: true,
         orderBy: 'startTime',
-        showDeleted: false
+        showDeleted: false,
+        maxResults: 2500
       });
 
       return response.data.items || [];

@@ -1091,7 +1091,7 @@ const updatePsychologist = async (req, res) => {
     }
 
     // Handle package updates
-    if (packages && Array.isArray(packages) && packages.length > 0) {
+    if (packages && Array.isArray(packages)) {
       console.log('📦 Packages provided for update:', packages);
       
       try {
@@ -1105,6 +1105,31 @@ const updatePsychologist = async (req, res) => {
           console.error('Error fetching existing packages:', fetchError);
         } else {
           console.log('📦 Existing packages:', existingPackages);
+          
+          // First, delete packages that are not in the updated list
+          if (existingPackages && existingPackages.length > 0) {
+            const updatedPackageIds = packages
+              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
+              .map(pkg => parseInt(pkg.id));
+            
+            console.log('📦 Updated package IDs:', updatedPackageIds);
+            
+            for (const existingPkg of existingPackages) {
+              if (!updatedPackageIds.includes(existingPkg.id)) {
+                console.log(`📦 Deleting removed package ${existingPkg.id} (${existingPkg.name})`);
+                const { error: deleteError } = await supabase
+                  .from('packages')
+                  .delete()
+                  .eq('id', existingPkg.id);
+                
+                if (deleteError) {
+                  console.error(`❌ Error deleting package ${existingPkg.id}:`, deleteError);
+                } else {
+                  console.log(`✅ Package ${existingPkg.id} deleted successfully`);
+                }
+              }
+            }
+          }
           
           // Process each package
           for (const pkg of packages) {
@@ -1192,6 +1217,38 @@ const updatePsychologist = async (req, res) => {
         }
       } catch (error) {
         console.error('❌ Error handling package updates:', error);
+      }
+    } else if (packages && Array.isArray(packages) && packages.length === 0) {
+      // If empty array is sent, delete all packages (except we keep packages in DB for now)
+      console.log('📦 Empty packages array sent - will only delete packages not in the list');
+      
+      try {
+        // Get all existing packages
+        const { data: existingPackages, error: fetchError } = await supabase
+          .from('packages')
+          .select('id, name')
+          .eq('psychologist_id', psychologistId);
+        
+        if (fetchError) {
+          console.error('Error fetching existing packages:', fetchError);
+        } else if (existingPackages && existingPackages.length > 0) {
+          // Delete all existing packages since empty array was sent
+          for (const existingPkg of existingPackages) {
+            console.log(`📦 Deleting package ${existingPkg.id} (${existingPkg.name})`);
+            const { error: deleteError } = await supabase
+              .from('packages')
+              .delete()
+              .eq('id', existingPkg.id);
+            
+            if (deleteError) {
+              console.error(`❌ Error deleting package ${existingPkg.id}:`, deleteError);
+            } else {
+              console.log(`✅ Package ${existingPkg.id} deleted successfully`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error deleting all packages:', error);
       }
     }
 

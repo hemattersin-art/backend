@@ -95,9 +95,12 @@ class CalendarSyncService {
    * @param {Object} psychologist - Psychologist object with Google Calendar credentials
    */
   async syncPsychologistCalendar(psychologist) {
+    // Cover the entire current day and next 30 days so events earlier today are included
     const startDate = new Date();
+    startDate.setHours(0, 0, 0, 0);
     const endDate = new Date();
     endDate.setDate(endDate.getDate() + 30); // Sync next 30 days
+    endDate.setHours(23, 59, 59, 999);
 
     // Sync calendar events
     const syncResult = await googleCalendarService.syncCalendarEvents(

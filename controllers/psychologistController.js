@@ -366,6 +366,53 @@ const updateAvailability = async (req, res) => {
     const psychologistId = req.user.id;
     const { date, time_slots } = req.body;
 
+    // Check for conflicts with Google Calendar
+    let filteredTimeSlots = time_slots;
+    let blockedSlots = [];
+    
+    try {
+      const { data: psychologist } = await supabase
+        .from('psychologists')
+        .select('id, first_name, last_name, google_calendar_credentials')
+        .eq('id', psychologistId)
+        .single();
+
+      if (psychologist && psychologist.google_calendar_credentials) {
+        const googleCalendarService = require('../utils/googleCalendarService');
+        const conflictingSlots = [];
+        
+        for (const timeSlot of time_slots) {
+          const [hours, minutes] = timeSlot.split(':');
+          const slotStart = new Date(date);
+          slotStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+          
+          const slotEnd = new Date(slotStart);
+          slotEnd.setHours(slotEnd.getHours() + 1); // Assuming 1-hour sessions
+          
+          const hasConflict = await googleCalendarService.hasTimeConflict(
+            psychologist.google_calendar_credentials,
+            slotStart,
+            slotEnd
+          );
+          
+          if (hasConflict) {
+            conflictingSlots.push(timeSlot);
+          }
+        }
+        
+        // Filter out conflicting time slots
+        filteredTimeSlots = time_slots.filter(slot => !conflictingSlots.includes(slot));
+        blockedSlots = conflictingSlots;
+        
+        if (conflictingSlots.length > 0) {
+          console.log(`⚠️  Blocked ${conflictingSlots.length} conflicting slots: ${conflictingSlots.join(', ')}`);
+        }
+      }
+    } catch (googleError) {
+      console.error('Error checking Google Calendar conflicts:', googleError);
+      // Continue without blocking if Google Calendar check fails
+    }
+
     // Check if availability already exists for this date
     const { data: existingAvailability } = await supabase
       .from('availability')
@@ -376,11 +423,11 @@ const updateAvailability = async (req, res) => {
 
     let result;
     if (existingAvailability) {
-      // Update existing availability
+      // Update existing availability with filtered slots
       const { data: updatedAvailability, error } = await supabase
         .from('availability')
         .update({
-          time_slots,
+          time_slots: filteredTimeSlots,
           updated_at: new Date().toISOString()
         })
         .eq('id', existingAvailability.id)
@@ -395,13 +442,13 @@ const updateAvailability = async (req, res) => {
       }
       result = updatedAvailability;
     } else {
-      // Create new availability
+      // Create new availability with filtered slots
       const { data: newAvailability, error } = await supabase
         .from('availability')
         .insert([{
           psychologist_id: psychologistId,
           date,
-          time_slots
+          time_slots: filteredTimeSlots
         }])
         .select('*')
         .single();
@@ -415,8 +462,16 @@ const updateAvailability = async (req, res) => {
       result = newAvailability;
     }
 
+    const message = blockedSlots.length > 0 
+      ? `Availability updated. ${blockedSlots.length} slot(s) blocked due to Google Calendar conflicts: ${blockedSlots.join(', ')}`
+      : 'Availability updated successfully';
+
     res.json(
-      successResponse(result, 'Availability updated successfully')
+      successResponse({
+        ...result,
+        blocked_slots: blockedSlots,
+        blocked_count: blockedSlots.length
+      }, message)
     );
 
   } catch (error) {
@@ -454,13 +509,60 @@ const addAvailability = async (req, res) => {
       );
     }
 
-    // Create new availability
+    // Check for conflicts with Google Calendar
+    let filteredTimeSlots = time_slots;
+    let blockedSlots = [];
+    
+    try {
+      const { data: psychologist } = await supabase
+        .from('psychologists')
+        .select('id, first_name, last_name, google_calendar_credentials')
+        .eq('id', psychologistId)
+        .single();
+
+      if (psychologist && psychologist.google_calendar_credentials) {
+        const googleCalendarService = require('../utils/googleCalendarService');
+        const conflictingSlots = [];
+        
+        for (const timeSlot of time_slots) {
+          const [hours, minutes] = timeSlot.split(':');
+          const slotStart = new Date(date);
+          slotStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+          
+          const slotEnd = new Date(slotStart);
+          slotEnd.setHours(slotEnd.getHours() + 1); // Assuming 1-hour sessions
+          
+          const hasConflict = await googleCalendarService.hasTimeConflict(
+            psychologist.google_calendar_credentials,
+            slotStart,
+            slotEnd
+          );
+          
+          if (hasConflict) {
+            conflictingSlots.push(timeSlot);
+          }
+        }
+        
+        // Filter out conflicting time slots
+        filteredTimeSlots = time_slots.filter(slot => !conflictingSlots.includes(slot));
+        blockedSlots = conflictingSlots;
+        
+        if (conflictingSlots.length > 0) {
+          console.log(`⚠️  Blocked ${conflictingSlots.length} conflicting slots: ${conflictingSlots.join(', ')}`);
+        }
+      }
+    } catch (googleError) {
+      console.error('Error checking Google Calendar conflicts:', googleError);
+      // Continue without blocking if Google Calendar check fails
+    }
+
+    // Create new availability with filtered slots
     const { data: newAvailability, error } = await supabase
       .from('availability')
       .insert([{
         psychologist_id: psychologistId,
         date,
-        time_slots,
+        time_slots: filteredTimeSlots,
         is_available,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -475,8 +577,16 @@ const addAvailability = async (req, res) => {
       );
     }
 
+    const message = blockedSlots.length > 0 
+      ? `Availability created. ${blockedSlots.length} slot(s) blocked due to Google Calendar conflicts: ${blockedSlots.join(', ')}`
+      : 'Availability created successfully';
+
     res.status(201).json(
-      successResponse(newAvailability, 'Availability created successfully')
+      successResponse({
+        ...newAvailability,
+        blocked_slots: blockedSlots,
+        blocked_count: blockedSlots.length
+      }, message)
     );
 
   } catch (error) {
