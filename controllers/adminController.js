@@ -1032,7 +1032,10 @@ const createPsychologist = async (req, res) => {
 const updatePsychologist = async (req, res) => {
   try {
     const { psychologistId } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+    if (typeof updateData.email === 'string') {
+      updateData.email = updateData.email.trim().toLowerCase();
+    }
 
     // Get psychologist profile
     const { data: psychologist, error: psychologistError } = await supabase
@@ -1048,7 +1051,8 @@ const updatePsychologist = async (req, res) => {
     }
 
     // Remove fields that are not in the psychologists table
-    const { price, availability, packages, ...psychologistUpdateData } = updateData;
+    // Capture password separately so we can update the linked user record
+    const { price, availability, packages, password, ...psychologistUpdateData } = updateData;
 
     // Update psychologist profile
     const { data: updatedPsychologist, error: updateError } = await supabase
@@ -1063,6 +1067,80 @@ const updatePsychologist = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to update psychologist profile')
       );
+    }
+
+    // If admin requested a password change, update the linked user password
+    if (password && typeof password === 'string' && password.trim().length > 0) {
+      try {
+        let targetUserId = psychologist.user_id;
+
+        if (password.length < 6) {
+          return res.status(400).json(
+            errorResponse('New password must be at least 6 characters long')
+          );
+        }
+
+        // If no linked user_id, try to resolve by email
+        if (!targetUserId) {
+          const latestEmail = psychologistUpdateData.email || updatedPsychologist.email || psychologist.email;
+          if (!latestEmail) {
+            console.error('Password update requested but no email available to resolve user');
+            // Skip password update but continue with other updates
+            latestEmail = null;
+          }
+          if (latestEmail) {
+            const { data: userByEmail, error: userLookupError } = await supabase
+              .from('users')
+              .select('id, email')
+              .eq('email', latestEmail)
+              .single();
+
+            if (userLookupError || !userByEmail) {
+              // Create a new user for this psychologist using the provided password
+              const hashedPasswordForCreate = await hashPassword(password);
+              const { data: newUser, error: createUserError } = await supabase
+                .from('users')
+                .insert([{ email: latestEmail, password_hash: hashedPasswordForCreate, role: 'psychologist' }])
+                .select('id')
+                .single();
+
+              if (createUserError || !newUser) {
+                console.warn('Password update requested but user not found and could not create user. Skipping password update:', latestEmail, createUserError);
+              } else {
+                targetUserId = newUser.id;
+                // Backfill psychologists.user_id for future updates
+                await supabase
+                  .from('psychologists')
+                  .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
+                  .eq('id', psychologistId);
+              }
+            } else {
+              targetUserId = userByEmail.id;
+              // Backfill psychologists.user_id for future updates
+              await supabase
+                .from('psychologists')
+                .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
+                .eq('id', psychologistId);
+            }
+          }
+        }
+
+        if (targetUserId) {
+          const hashedPassword = await hashPassword(password);
+          const { error: userPasswordUpdateError } = await supabase
+            .from('users')
+            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
+            .eq('id', targetUserId);
+
+          if (userPasswordUpdateError) {
+            console.error('❌ Error updating user password:', userPasswordUpdateError);
+            // Skip password update error but continue with profile update
+          }
+        }
+      } catch (pwError) {
+        console.error('❌ Exception during password update:', pwError);
+        // Skip password update exception but continue with profile update
+      }
     }
 
     // Handle individual price by storing it in the dedicated field

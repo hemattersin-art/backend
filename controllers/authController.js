@@ -11,7 +11,10 @@ const emailVerificationService = require('../utils/emailVerificationService');
 // User registration
 const register = async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    let { email, password, role } = req.body;
+    if (typeof email === 'string') {
+      email = email.trim().toLowerCase();
+    }
 
     // Check if user already exists
     if (role === 'client') {
@@ -414,7 +417,10 @@ const googleLogin = async (req, res) => {
 // User login
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+    if (typeof email === 'string') {
+      email = email.trim().toLowerCase();
+    }
 
     // First check if it's a psychologist
     const { data: psychologist, error: psychologistError } = await supabase

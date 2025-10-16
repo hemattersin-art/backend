@@ -67,7 +67,76 @@ const uploadBlogImage = async (req, res) => {
   }
 };
 
+// Upload multiple blog images
+const uploadMultipleBlogImages = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No files provided'
+      });
+    }
+
+    const { blogTitle = 'untitled' } = req.body;
+    const uploadResults = [];
+    const errors = [];
+
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      try {
+        const fileName = storageService.generateUniqueFileName(file.originalname, `${blogTitle}_${i}`);
+        
+        const uploadResult = await storageService.uploadBlogImage(
+          file.buffer, 
+          fileName, 
+          file.mimetype
+        );
+
+        if (uploadResult.success) {
+          const imageUrl = storageService.getBlogImageUrl(uploadResult.data.path);
+          uploadResults.push({
+            fileName: fileName,
+            filePath: uploadResult.data.path,
+            imageUrl: imageUrl,
+            size: file.size,
+            mimeType: file.mimetype
+          });
+        } else {
+          errors.push({
+            fileName: file.originalname,
+            error: uploadResult.error
+          });
+        }
+      } catch (error) {
+        errors.push({
+          fileName: file.originalname,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: uploadResults.length > 0,
+      message: uploadResults.length > 0 
+        ? `${uploadResults.length} images uploaded successfully` 
+        : 'Failed to upload images',
+      data: {
+        uploadedImages: uploadResults,
+        errors: errors
+      }
+    });
+  } catch (error) {
+    console.error('Error uploading multiple images:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload images',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   upload,
-  uploadBlogImage
+  uploadBlogImage,
+  uploadMultipleBlogImages
 };

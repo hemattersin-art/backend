@@ -1,5 +1,11 @@
 const supabase = require('../config/supabase');
 const storageService = require('../utils/storageService');
+const { 
+  processStructuredContent: processContent, 
+  validateStructuredContent, 
+  calculateReadingTime,
+  extractImagesFromContent 
+} = require('../utils/blogContentProcessor');
 
 // Helper function for consistent error responses
 const errorResponse = (message, error = null, statusCode = 500) => ({
@@ -15,6 +21,7 @@ const successResponse = (message, data = null) => ({
   message,
   data
 });
+
 
 // Generate slug from title
 const generateSlug = (title) => {
@@ -156,15 +163,24 @@ const createBlog = async (req, res) => {
       title,
       excerpt,
       content,
+      structured_content,
       featured_image_url,
+      content_images = [],
       author_name,
       status = 'draft',
       tags = [],
-      read_time_minutes
+      categories = [],
+      read_time_minutes,
+      // SEO fields
+      seo_title,
+      seo_description,
+      focus_keyword,
+      meta_keywords = [],
+      canonical_url
     } = req.body;
 
-    if (!title || !content) {
-      return res.status(400).json(errorResponse('Title and content are required'));
+    if (!title || (!content && !structured_content)) {
+      return res.status(400).json(errorResponse('Title and content (or structured_content) are required'));
     }
 
     // Generate slug from title
@@ -191,6 +207,29 @@ const createBlog = async (req, res) => {
 
     const published_at = status === 'published' ? new Date().toISOString() : null;
 
+    // Process structured content if provided
+    let processedStructuredContent = null;
+    if (structured_content && Array.isArray(structured_content)) {
+      // Validate structured content
+      const validation = validateStructuredContent(structured_content);
+      if (!validation.isValid) {
+        return res.status(400).json(errorResponse('Invalid structured content', validation.errors));
+      }
+      
+      processedStructuredContent = processContent(structured_content);
+      
+      // Calculate reading time if not provided
+      if (!read_time_minutes) {
+        read_time_minutes = calculateReadingTime(processedStructuredContent);
+      }
+    }
+
+    // Process content images
+    let processedContentImages = [];
+    if (content_images && Array.isArray(content_images)) {
+      processedContentImages = content_images.filter(img => img && img.src);
+    }
+
     const { data: blog, error } = await supabase
       .from('blogs')
       .insert([{
@@ -198,14 +237,23 @@ const createBlog = async (req, res) => {
         slug,
         excerpt,
         content,
+        structured_content: processedStructuredContent,
         featured_image_url,
+        content_images: processedContentImages,
         author_id: req.user.id,
         author_name: author_name || req.user.name || 'Admin',
         status,
         published_at,
         tags: Array.isArray(tags) ? tags : [],
+        categories: Array.isArray(categories) ? categories : [],
         read_time_minutes: read_time_minutes || 5,
-        view_count: 0
+        view_count: 0,
+        // SEO fields
+        seo_title: seo_title || title,
+        seo_description: seo_description || excerpt,
+        focus_keyword: focus_keyword || '',
+        meta_keywords: Array.isArray(meta_keywords) ? meta_keywords : [],
+        canonical_url: canonical_url || null
       }])
       .select('*')
       .single();
@@ -214,7 +262,15 @@ const createBlog = async (req, res) => {
 
     res.status(201).json(successResponse('Blog created successfully', {
       ...blog,
-      tags: blog.tags || []
+      tags: blog.tags || [],
+      categories: blog.categories || [],
+      structured_content: blog.structured_content || [],
+      content_images: blog.content_images || [],
+      seo_title: blog.seo_title || blog.title,
+      seo_description: blog.seo_description || blog.excerpt,
+      focus_keyword: blog.focus_keyword || '',
+      meta_keywords: blog.meta_keywords || [],
+      canonical_url: blog.canonical_url || null
     }));
   } catch (error) {
     console.error('Error creating blog:', error);
@@ -230,7 +286,9 @@ const updateBlog = async (req, res) => {
       title,
       excerpt,
       content,
+      structured_content,
       featured_image_url,
+      content_images,
       author_name,
       status,
       tags,
@@ -292,7 +350,30 @@ const updateBlog = async (req, res) => {
     if (title) updateData.title = title;
     if (excerpt !== undefined) updateData.excerpt = excerpt;
     if (content) updateData.content = content;
+    if (structured_content !== undefined) {
+      if (structured_content && Array.isArray(structured_content)) {
+        // Validate structured content
+        const validation = validateStructuredContent(structured_content);
+        if (!validation.isValid) {
+          return res.status(400).json(errorResponse('Invalid structured content', validation.errors));
+        }
+        
+        updateData.structured_content = processContent(structured_content);
+        
+        // Recalculate reading time if structured content is updated
+        if (!read_time_minutes) {
+          updateData.read_time_minutes = calculateReadingTime(updateData.structured_content);
+        }
+      } else {
+        updateData.structured_content = null;
+      }
+    }
     if (featured_image_url !== undefined) updateData.featured_image_url = featured_image_url;
+    if (content_images !== undefined) {
+      updateData.content_images = content_images && Array.isArray(content_images) 
+        ? content_images.filter(img => img && img.src)
+        : [];
+    }
     if (author_name) updateData.author_name = author_name;
     if (status) updateData.status = status;
     if (tags !== undefined) updateData.tags = Array.isArray(tags) ? tags : [];
@@ -312,7 +393,9 @@ const updateBlog = async (req, res) => {
 
     res.json(successResponse('Blog updated successfully', {
       ...blog,
-      tags: blog.tags || []
+      tags: blog.tags || [],
+      structured_content: blog.structured_content || [],
+      content_images: blog.content_images || []
     }));
   } catch (error) {
     console.error('Error updating blog:', error);
@@ -353,11 +436,272 @@ const deleteBlog = async (req, res) => {
   }
 };
 
+// Create test dummy blog post (for testing purposes)
+const createTestBlog = async (req, res) => {
+  try {
+    const testBlogData = {
+      title: "Understanding Child Psychology: A Comprehensive Guide",
+      excerpt: "Explore the fascinating world of child psychology with our comprehensive guide covering development stages, common challenges, and effective therapeutic approaches.",
+      structured_content: [
+        {
+          type: 'paragraph',
+          content: 'Child psychology is a fascinating field that helps us understand how children develop, learn, and interact with the world around them. This comprehensive guide will walk you through the essential concepts and practical applications of child psychology.'
+        },
+        {
+          type: 'heading',
+          level: 2,
+          content: 'Key Developmental Stages'
+        },
+        {
+          type: 'paragraph',
+          content: 'Understanding child development is crucial for parents, educators, and therapists. Each stage brings unique challenges and opportunities for growth.'
+        },
+        {
+          type: 'numberedList',
+          items: [
+            'Infancy (0-2 years): Basic trust, sensory development, and motor skills',
+            'Early Childhood (2-6 years): Language development, social skills, and independence',
+            'Middle Childhood (6-12 years): Academic skills, peer relationships, and self-concept',
+            'Adolescence (12-18 years): Identity formation, abstract thinking, and social identity'
+          ]
+        },
+        {
+          type: 'heading',
+          level: 3,
+          content: 'Common Psychological Challenges'
+        },
+        {
+          type: 'paragraph',
+          content: 'Children may face various psychological challenges that require understanding and support from caring adults.'
+        },
+        {
+          type: 'bulletList',
+          items: [
+            'Anxiety disorders and separation anxiety',
+            'Attention-deficit/hyperactivity disorder (ADHD)',
+            'Autism spectrum disorders',
+            'Learning disabilities and academic challenges',
+            'Behavioral problems and conduct disorders',
+            'Depression and mood disorders',
+            'Social skills difficulties'
+          ]
+        },
+        {
+          type: 'heading',
+          level: 2,
+          content: 'Therapeutic Approaches'
+        },
+        {
+          type: 'paragraph',
+          content: 'Various evidence-based therapeutic approaches have proven effective in helping children overcome psychological challenges and develop healthy coping mechanisms.'
+        },
+        {
+          type: 'image',
+          src: '/uploads/blog/therapy-session.jpg',
+          alt: 'Child therapy session with therapist',
+          caption: 'A typical child therapy session focuses on creating a safe, supportive environment for emotional expression and growth.'
+        },
+        {
+          type: 'heading',
+          level: 3,
+          content: 'Cognitive Behavioral Therapy (CBT)'
+        },
+        {
+          type: 'paragraph',
+          content: 'CBT helps children identify and change negative thought patterns and behaviors. It\'s particularly effective for anxiety and depression.'
+        },
+        {
+          type: 'quote',
+          content: 'Children are not things to be molded, but people to be unfolded.',
+          author: 'Jess Lair'
+        },
+        {
+          type: 'heading',
+          level: 3,
+          content: 'Play Therapy'
+        },
+        {
+          type: 'paragraph',
+          content: 'Play therapy uses the natural language of children - play - to help them express feelings, resolve conflicts, and develop problem-solving skills.'
+        },
+        {
+          type: 'image',
+          src: '/uploads/blog/play-therapy.jpg',
+          alt: 'Children engaging in play therapy activities',
+          caption: 'Play therapy allows children to communicate their feelings and experiences through their natural medium of expression.'
+        },
+        {
+          type: 'heading',
+          level: 2,
+          content: 'Parenting Strategies'
+        },
+        {
+          type: 'paragraph',
+          content: 'Effective parenting strategies can significantly impact a child\'s psychological development and well-being.'
+        },
+        {
+          type: 'bulletList',
+          items: [
+            'Create a safe and nurturing environment',
+            'Establish consistent routines and boundaries',
+            'Practice active listening and empathy',
+            'Encourage emotional expression',
+            'Model healthy coping strategies',
+            'Celebrate achievements and efforts'
+          ]
+        },
+        {
+          type: 'heading',
+          level: 3,
+          content: 'Building Emotional Intelligence'
+        },
+        {
+          type: 'paragraph',
+          content: 'Emotional intelligence is crucial for a child\'s success in life. It involves recognizing, understanding, and managing emotions effectively.'
+        },
+        {
+          type: 'link',
+          href: 'https://www.apa.org/topics/emotion/children',
+          text: 'Learn more about emotional development in children',
+          target: '_blank'
+        },
+        {
+          type: 'heading',
+          level: 2,
+          content: 'When to Seek Professional Help'
+        },
+        {
+          type: 'paragraph',
+          content: 'It\'s important to recognize when a child may benefit from professional psychological support. Early intervention can make a significant difference.'
+        },
+        {
+          type: 'numberedList',
+          items: [
+            'Persistent behavioral problems that don\'t respond to typical discipline',
+            'Significant changes in mood, appetite, or sleep patterns',
+            'Difficulty with social interactions or peer relationships',
+            'Academic struggles that persist despite support',
+            'Signs of anxiety or depression lasting more than a few weeks',
+            'Traumatic experiences or significant life changes'
+          ]
+        },
+        {
+          type: 'image',
+          src: '/uploads/blog/family-counseling.jpg',
+          alt: 'Family counseling session with therapist',
+          caption: 'Family therapy can be beneficial when addressing child psychological challenges, involving the whole family in the healing process.'
+        },
+        {
+          type: 'heading',
+          level: 2,
+          content: 'Conclusion'
+        },
+        {
+          type: 'paragraph',
+          content: 'Understanding child psychology is essential for supporting children\'s healthy development. By recognizing developmental stages, common challenges, and effective interventions, we can help children thrive and reach their full potential.'
+        },
+        {
+          type: 'paragraph',
+          content: 'Remember that every child is unique, and what works for one child may not work for another. Patience, understanding, and professional guidance when needed can make all the difference in a child\'s psychological well-being.'
+        }
+      ],
+      featured_image_url: '/uploads/blog/child-psychology-featured.jpg',
+      content_images: [
+        {
+          src: '/uploads/blog/therapy-session.jpg',
+          alt: 'Child therapy session with therapist'
+        },
+        {
+          src: '/uploads/blog/play-therapy.jpg',
+          alt: 'Children engaging in play therapy activities'
+        },
+        {
+          src: '/uploads/blog/family-counseling.jpg',
+          alt: 'Family counseling session with therapist'
+        }
+      ],
+      author_name: 'Dr. Sarah Johnson',
+      status: 'published',
+      tags: ['Child Psychology', 'Development', 'Therapy', 'Parenting', 'Mental Health'],
+      read_time_minutes: 8
+    };
+
+    // Generate slug from title
+    let slug = generateSlug(testBlogData.title);
+    
+    // Check if test blog already exists
+    const { data: existingBlog } = await supabase
+      .from('blogs')
+      .select('slug')
+      .eq('slug', slug)
+      .single();
+
+    // If slug exists, append a number
+    if (existingBlog) {
+      let counter = 1;
+      let newSlug = `${slug}-${counter}`;
+      
+      while (await supabase.from('blogs').select('id').eq('slug', newSlug).single()) {
+        counter++;
+        newSlug = `${slug}-${counter}`;
+      }
+      slug = newSlug;
+    }
+
+    const published_at = new Date().toISOString();
+
+    // Process structured content
+    const validation = validateStructuredContent(testBlogData.structured_content);
+    if (!validation.isValid) {
+      return res.status(400).json(errorResponse('Invalid structured content', validation.errors));
+    }
+    
+    const processedStructuredContent = processContent(testBlogData.structured_content);
+
+    // Process content images
+    const processedContentImages = testBlogData.content_images.filter(img => img && img.src);
+
+    const { data: blog, error } = await supabase
+      .from('blogs')
+      .insert([{
+        title: testBlogData.title,
+        slug: slug,
+        excerpt: testBlogData.excerpt,
+        content: '', // Empty content since we're using structured content
+        structured_content: processedStructuredContent,
+        featured_image_url: testBlogData.featured_image_url,
+        content_images: processedContentImages,
+        author_id: req.user?.id || 'c634c633-6938-4342-8811-e9b365c92bb6', // Use existing admin ID for test
+        author_name: testBlogData.author_name,
+        status: testBlogData.status,
+        published_at: published_at,
+        tags: testBlogData.tags,
+        read_time_minutes: testBlogData.read_time_minutes,
+        view_count: 0
+      }])
+      .select('*')
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json(successResponse('Test blog created successfully', {
+      ...blog,
+      tags: blog.tags || [],
+      structured_content: blog.structured_content || [],
+      content_images: blog.content_images || []
+    }));
+  } catch (error) {
+    console.error('Error creating test blog:', error);
+    res.status(500).json(errorResponse('Failed to create test blog', error.message));
+  }
+};
+
 module.exports = {
   getAllBlogs,
   getBlogBySlug,
   getBlogById,
   createBlog,
   updateBlog,
-  deleteBlog
+  deleteBlog,
+  createTestBlog
 };

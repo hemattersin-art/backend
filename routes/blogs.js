@@ -7,9 +7,10 @@ const {
   getBlogById,
   createBlog,
   updateBlog,
-  deleteBlog
+  deleteBlog,
+  createTestBlog
 } = require('../controllers/blogController');
-const { upload, uploadBlogImage } = require('../controllers/blogUploadController');
+const { upload, uploadBlogImage, uploadMultipleBlogImages } = require('../controllers/blogUploadController');
 
 // Public routes
 router.get('/', getAllBlogs);
@@ -24,5 +25,11 @@ router.delete('/admin/:id', authenticateToken, requireSuperAdmin, deleteBlog);
 
 // Image upload route
 router.post('/admin/upload-image', authenticateToken, requireAdmin, upload.single('image'), uploadBlogImage);
+
+// Multiple images upload route
+router.post('/admin/upload-multiple-images', authenticateToken, requireAdmin, upload.array('images', 10), uploadMultipleBlogImages);
+
+// Test route to create dummy blog (for development/testing)
+router.post('/test/create-dummy', createTestBlog);
 
 module.exports = router;
