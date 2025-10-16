@@ -219,6 +219,11 @@ class MeetLinkService {
           dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
+        attendees: Array.isArray(sessionData.attendees)
+          ? sessionData.attendees
+              .filter(e => !!e)
+              .map(email => ({ email }))
+          : undefined,
         conferenceData: {
           createRequest: {
             requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -301,6 +306,11 @@ class MeetLinkService {
           dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
+        attendees: Array.isArray(sessionData.attendees)
+          ? sessionData.attendees
+              .filter(e => !!e)
+              .map(email => ({ email }))
+          : undefined,
         conferenceData: {
           createRequest: {
             requestId: crypto.randomUUID()

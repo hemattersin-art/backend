@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const {
   getFreeAssessmentStatus,
   getAvailableTimeSlots,
@@ -8,7 +8,8 @@ const {
   bookFreeAssessment,
   cancelFreeAssessment,
   testGlobalTimeslots,
-  testDateConfigs
+  testDateConfigs,
+  adminListFreeAssessments
 } = require('../controllers/freeAssessmentController');
 
 // Get client's free assessment status
@@ -25,6 +26,9 @@ router.post('/book', authenticateToken, bookFreeAssessment);
 
 // Cancel a free assessment
 router.put('/cancel/:assessmentId', authenticateToken, cancelFreeAssessment);
+
+// Admin: List free assessments
+router.get('/admin/list', authenticateToken, requireAdmin, adminListFreeAssessments);
 
 // Test global timeslots
 router.get('/test-timeslots', authenticateToken, testGlobalTimeslots);

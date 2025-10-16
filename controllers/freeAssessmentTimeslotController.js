@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
 // Get availability range for admin calendar
@@ -171,20 +172,53 @@ const addMultipleTimeslots = async (req, res) => {
       );
     }
 
-    console.log('🔍 Adding multiple timeslots:', timeslots.length);
+    // Normalize payload: accept strings or objects with timeSlot/time_slot; coerce to HH:MM:SS
+    const normalizeToHms = (t) => {
+      if (typeof t !== 'string') return null;
+      let s = t.trim();
+      // Accept HH:MM or HH:MM:SS
+      const mmMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(s);
+      const hmsMatch = /^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)$/.exec(s);
+      if (hmsMatch) return `${hmsMatch[1].padStart(2,'0')}:${hmsMatch[2].padStart(2,'0')}:${hmsMatch[3].padStart(2,'0')}`;
+      if (mmMatch) return `${mmMatch[1].padStart(2,'0')}:${mmMatch[2].padStart(2,'0')}:00`;
+      return null;
+    };
 
-    // Validate all timeslots
-    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
-    for (const timeslot of timeslots) {
-      if (!timeslot.time_slot || !timeRegex.test(timeslot.time_slot)) {
-        return res.status(400).json(
-          errorResponse(`Invalid time format for slot: ${timeslot.time_slot}. Use HH:MM:SS`)
-        );
+    const normalized = timeslots.map(slot => {
+      if (typeof slot === 'string') {
+        return {
+          time_slot: normalizeToHms(slot),
+          is_active: true,
+          max_bookings_per_slot: 3,
+        };
       }
+      const raw = slot.time_slot || slot.timeSlot || slot.time || null;
+      const normalizedTime = normalizeToHms(raw);
+      return {
+        time_slot: normalizedTime,
+        is_active: slot.is_active !== undefined ? !!slot.is_active : (slot.isActive !== undefined ? !!slot.isActive : true),
+        max_bookings_per_slot: slot.max_bookings_per_slot || slot.maxBookingsPerSlot || 3,
+      };
+    }).filter(s => !!s.time_slot);
+
+    if (normalized.length === 0) {
+      return res.status(400).json(
+        errorResponse('No valid timeslots provided. Expected HH:MM or HH:MM:SS')
+      );
     }
 
+    // De-duplicate within request
+    const seen = new Set();
+    const deduped = normalized.filter(s => {
+      if (seen.has(s.time_slot)) return false;
+      seen.add(s.time_slot);
+      return true;
+    });
+
+    console.log('🔍 Adding multiple timeslots (normalized):', deduped.map(s => s.time_slot));
+
     // Check for existing timeslots to avoid duplicates
-    const timeSlotsToCheck = timeslots.map(slot => slot.time_slot);
+    const timeSlotsToCheck = deduped.map(slot => slot.time_slot);
     const { data: existingTimeslots, error: checkError } = await supabase
       .from('free_assessment_timeslots')
       .select('time_slot')
@@ -199,7 +233,7 @@ const addMultipleTimeslots = async (req, res) => {
 
     // Filter out existing timeslots
     const existingTimeSlots = existingTimeslots.map(slot => slot.time_slot);
-    const newTimeslots = timeslots.filter(slot => !existingTimeSlots.includes(slot.time_slot));
+    const newTimeslots = deduped.filter(slot => !existingTimeSlots.includes(slot.time_slot));
 
     if (newTimeslots.length === 0) {
       return res.json(
@@ -214,13 +248,19 @@ const addMultipleTimeslots = async (req, res) => {
       max_bookings_per_slot: slot.max_bookings_per_slot || 3
     }));
 
-    const { data: insertedTimeslots, error } = await supabase
+    const { data: insertedTimeslots, error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .insert(timeslotsToInsert)
-      .select();
+      .select('*');
 
     if (error) {
       console.error('Error adding multiple timeslots:', error);
+      // If unique violation still occurs due to race conditions, treat as success with 0 inserted
+      if (error.code === '23505') {
+        return res.json(
+          successResponse([], 'All timeslots already exist')
+        );
+      }
       return res.status(500).json(
         errorResponse('Failed to add timeslots')
       );
@@ -259,7 +299,7 @@ const addTimeslot = async (req, res) => {
 
     console.log('🔍 Adding new timeslot:', timeSlot);
 
-    const { data: timeslot, error } = await supabase
+    const { data: timeslot, error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .insert({
         time_slot: timeSlot,
@@ -315,7 +355,7 @@ const updateTimeslot = async (req, res) => {
     if (isActive !== undefined) updateData.is_active = isActive;
     if (maxBookingsPerSlot !== undefined) updateData.max_bookings_per_slot = maxBookingsPerSlot;
 
-    const { data: timeslot, error } = await supabase
+    const { data: timeslot, error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .update(updateData)
       .eq('id', id)
@@ -393,7 +433,7 @@ const deleteTimeslot = async (req, res) => {
     }
 
     // Delete the timeslot
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .delete()
       .eq('id', id);
@@ -436,7 +476,7 @@ const bulkUpdateTimeslots = async (req, res) => {
 
     console.log('🔍 Bulk updating timeslots:', timeslotIds, 'to active:', isActive);
 
-    const { data: updatedTimeslots, error } = await supabase
+    const { data: updatedTimeslots, error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .update({ is_active: isActive })
       .in('id', timeslotIds)
@@ -464,7 +504,7 @@ const bulkUpdateTimeslots = async (req, res) => {
 // Save date-specific configuration
 const saveDateConfig = async (req, res) => {
   try {
-    const { date, timeSlots } = req.body;
+    let { date, timeSlots } = req.body;
 
     if (!date || !timeSlots) {
       return res.status(400).json(
@@ -472,7 +512,26 @@ const saveDateConfig = async (req, res) => {
       );
     }
 
-    console.log('🔍 Saving date config for:', date);
+    // Normalize inputs
+    if (typeof date === 'string') {
+      date = date.trim();
+    }
+    // Accept either an array of times OR an object grouped by period
+    let inputTimeSlots = [];
+    if (Array.isArray(timeSlots)) {
+      inputTimeSlots = timeSlots;
+    } else if (typeof timeSlots === 'object' && timeSlots !== null) {
+      // Flatten object values (e.g., { morning: ['9:00 AM'], ... })
+      Object.values(timeSlots).forEach((arr) => {
+        if (Array.isArray(arr)) inputTimeSlots.push(...arr);
+      });
+    } else {
+      return res.status(400).json(
+        errorResponse('timeSlots must be an array of times or an object grouped by period')
+      );
+    }
+
+    console.log('🔍 Saving date config for:', date, 'with slots:', timeSlots);
 
     // Validate date format
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -482,23 +541,60 @@ const saveDateConfig = async (req, res) => {
       );
     }
 
-    // Check if date is in the future
-    const selectedDate = new Date(date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    if (selectedDate < today) {
+    // Check if date is today or in the future (timezone-safe string compare)
+    // Convert current local date to YYYY-MM-DD without timezone ambiguity
+    const now = new Date();
+    const localTodayStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 10);
+    if (date < localTodayStr) {
       return res.status(400).json(
         errorResponse('Cannot configure dates in the past')
       );
     }
 
+    // Normalize time slots to HH:MM:SS, drop invalid, and de-duplicate
+    const normalizeToHms = (t) => {
+      if (typeof t !== 'string') return null;
+      const s = t.trim();
+      const mmMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(s);
+      const hmsMatch = /^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)$/.exec(s);
+      const ampmMatch = /^(\d{1,2}):(\d{2})\s?(AM|PM)$/i.exec(s);
+      if (hmsMatch) return `${hmsMatch[1].padStart(2,'0')}:${hmsMatch[2].padStart(2,'0')}:${hmsMatch[3].padStart(2,'0')}`;
+      if (mmMatch) return `${mmMatch[1].padStart(2,'0')}:${mmMatch[2].padStart(2,'0')}:00`;
+      if (ampmMatch) {
+        let hours = parseInt(ampmMatch[1], 10);
+        const minutes = ampmMatch[2];
+        const meridiem = ampmMatch[3].toUpperCase();
+        if (meridiem === 'AM') {
+          if (hours === 12) hours = 0;
+        } else if (meridiem === 'PM') {
+          if (hours !== 12) hours += 12;
+        }
+        return `${String(hours).padStart(2,'0')}:${minutes}:00`;
+      }
+      return null;
+    };
+
+    const normalizedSlots = inputTimeSlots
+      .map(normalizeToHms)
+      .filter(Boolean);
+
+    // De-duplicate and sort
+    const uniqueSortedSlots = Array.from(new Set(normalizedSlots)).sort();
+
+    if (uniqueSortedSlots.length === 0) {
+      return res.status(400).json(
+        errorResponse('No valid time slots provided. Use HH:MM or HH:MM:SS')
+      );
+    }
+
     // Upsert the date configuration
-    const { data: config, error } = await supabase
+    const { data: config, error } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .upsert({
         date: date,
-        time_slots: timeSlots,
+        time_slots: uniqueSortedSlots,
         is_active: true
       }, {
         onConflict: 'date'
@@ -577,7 +673,7 @@ const deleteDateConfig = async (req, res) => {
 
     console.log('🔍 Deleting date config for:', date);
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .delete()
       .eq('date', date);

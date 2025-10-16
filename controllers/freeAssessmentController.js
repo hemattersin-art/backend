@@ -166,7 +166,10 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
         const end = new Date(endDate);
         
         for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
-          const dateStr = date.toISOString().split('T')[0];
+          const y = date.getFullYear();
+          const m = String(date.getMonth() + 1).padStart(2, '0');
+          const d = String(date.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${m}-${d}`;
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           
@@ -210,7 +213,10 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
         const end = new Date(endDate);
         
         for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
-          const dateStr = date.toISOString().split('T')[0];
+          const y = date.getFullYear();
+          const m = String(date.getMonth() + 1).padStart(2, '0');
+          const d = String(date.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${m}-${d}`;
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           
@@ -259,7 +265,10 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
     const end = new Date(endDate);
     
     for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
-      const dateStr = date.toISOString().split('T')[0];
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
@@ -277,21 +286,28 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
           isConfigured = true;
           console.log(`🔍 Date ${dateStr} has config:`, dateConfig);
           
-          // Use date-specific timeslots
-          const allSlots = [
-            ...(dateConfig.morning || []),
-            ...(dateConfig.noon || []),
-            ...(dateConfig.evening || []),
-            ...(dateConfig.night || [])
-          ];
+          // Use date-specific timeslots (support both grouped object and flat array)
+          const extractAllSlots = (ts) => {
+            if (Array.isArray(ts)) return ts;
+            if (ts && typeof ts === 'object') {
+              return [
+                ...(ts.morning || []),
+                ...(ts.noon || []),
+                ...(ts.evening || []),
+                ...(ts.night || [])
+              ];
+            }
+            return [];
+          };
+          const allSlots = extractAllSlots(dateConfig);
           
           console.log(`🔍 Date ${dateStr} allSlots:`, allSlots);
           totalSlots = allSlots.length;
           
           // Check availability for each configured slot
           allSlots.forEach(slot => {
-            // Convert 12-hour format to 24-hour for comparison
-            const time24Hour = convertTo24Hour(slot);
+            // Convert to HH:MM:SS for comparison
+            const time24Hour = toHms24(slot);
             const bookingKey = `${dateStr}_${time24Hour}`;
             const currentBookings = bookingCounts[bookingKey] || 0;
             
@@ -377,6 +393,33 @@ const convertTo24Hour = (time12Hour) => {
   }
 };
 
+// Normalize any time string to HH:MM:SS (supports HH:MM, HH:MM:SS, and 12-hour with AM/PM)
+const toHms24 = (t) => {
+  try {
+    if (!t || typeof t !== 'string') return '00:00:00';
+    const s = t.trim();
+    const hmsMatch = /^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)$/.exec(s);
+    const hmMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(s);
+    const ampmMatch = /^(\d{1,2}):(\d{2})\s?(AM|PM)$/i.exec(s);
+    if (hmsMatch) return `${hmsMatch[1].padStart(2,'0')}:${hmsMatch[2].padStart(2,'0')}:${hmsMatch[3].padStart(2,'0')}`;
+    if (hmMatch) return `${hmMatch[1].padStart(2,'0')}:${hmMatch[2].padStart(2,'0')}:00`;
+    if (ampmMatch) {
+      let hours = parseInt(ampmMatch[1], 10);
+      const minutes = ampmMatch[2];
+      const meridiem = ampmMatch[3].toUpperCase();
+      if (meridiem === 'AM') {
+        if (hours === 12) hours = 0;
+      } else if (meridiem === 'PM') {
+        if (hours !== 12) hours += 12;
+      }
+      return `${String(hours).padStart(2,'0')}:${minutes}:00`;
+    }
+    return '00:00:00';
+  } catch (e) {
+    return '00:00:00';
+  }
+};
+
 // Get available time slots for free assessments
 const getAvailableTimeSlots = async (req, res) => {
   try {
@@ -454,17 +497,24 @@ const getAvailableTimeSlots = async (req, res) => {
 
       console.log('🔍 Booking counts for date:', date, bookingCounts);
 
-      // Process date-specific timeslots
-      const allSlots = [
-        ...(dateConfig.time_slots.morning || []),
-        ...(dateConfig.time_slots.noon || []),
-        ...(dateConfig.time_slots.evening || []),
-        ...(dateConfig.time_slots.night || [])
-      ];
+      // Process date-specific timeslots (support grouped or flat array)
+      const flattenSlots = (ts) => {
+        if (Array.isArray(ts)) return ts;
+        if (ts && typeof ts === 'object') {
+          return [
+            ...(ts.morning || []),
+            ...(ts.noon || []),
+            ...(ts.evening || []),
+            ...(ts.night || [])
+          ];
+        }
+        return [];
+      };
+      const allSlots = flattenSlots(dateConfig.time_slots);
 
       allSlots.forEach(slot => {
-        // Convert 12-hour format to 24-hour for comparison
-        const time24Hour = convertTo24Hour(slot);
+        // Normalize to HH:MM:SS for comparison
+        const time24Hour = toHms24(slot);
         const currentBookings = bookingCounts[time24Hour] || 0;
         
         console.log(`🔍 Processing slot ${slot} (${time24Hour}): ${currentBookings} bookings`);
@@ -472,7 +522,7 @@ const getAvailableTimeSlots = async (req, res) => {
         if (currentBookings < 20) { // Changed from 3 to 20 for testing
           availableSlots.push({
             time: time24Hour,
-            displayTime: slot,
+            displayTime: (() => { try { const [hh,mm] = time24Hour.split(':'); const h = parseInt(hh,10); const m = parseInt(mm,10)||0; const ampm = h>=12?'PM':'AM'; const h12 = h%12||12; return `${h12}:${m.toString().padStart(2,'0')} ${ampm}`;} catch { return slot; } })(),
             availableBookings: 20 - currentBookings,
             maxBookings: 20,
             currentBookings
@@ -571,7 +621,7 @@ const getAvailableTimeSlots = async (req, res) => {
         if (availablePsychologists.length > 0 && bookedPsychologists.length < 20) { // Changed from timeslot.max_bookings_per_slot to 20
           availableSlots.push({
             time: timeslot.time_slot,
-            displayTime: timeslot.time_slot,
+            displayTime: (() => { try { const [hh,mm] = timeslot.time_slot.split(':'); const h = parseInt(hh,10); const m = parseInt(mm,10)||0; const ampm = h>=12?'PM':'AM'; const h12 = h%12||12; return `${h12}:${m.toString().padStart(2,'0')} ${ampm}`;} catch { return timeslot.time_slot; } })(),
             availablePsychologists: availablePsychologists.length,
             maxBookings: 20,
             currentBookings: bookedPsychologists.length,
@@ -663,11 +713,79 @@ const bookFreeAssessment = async (req, res) => {
       );
     }
 
+    // Ensure a linked users.id exists for FK (free_assessments.user_id NOT NULL)
+    let userAccountId = client.user_id || null;
+    try {
+      if (!userAccountId) {
+        // Try to find a users row by client email (clients table usually has email)
+        if (!client.email) {
+          const { data: clientWithEmail } = await supabase
+            .from('clients')
+            .select('email')
+            .eq('id', userId)
+            .single();
+          client.email = clientWithEmail?.email || client.email;
+        }
+
+        if (client.email) {
+          const { data: existingUserByEmail } = await supabase
+            .from('users')
+            .select('id')
+            .eq('email', client.email)
+            .single();
+          if (existingUserByEmail) {
+            userAccountId = existingUserByEmail.id;
+            // Link it back to client for future
+            await supabase
+              .from('clients')
+              .update({ user_id: userAccountId })
+              .eq('id', userId);
+          }
+        }
+
+        // If still missing, create a minimal users row and link
+        if (!userAccountId) {
+          const { hashPassword } = require('../utils/helpers');
+          const tempPassword = `Temp@${Math.random().toString(36).slice(-8)}`;
+          const passwordHash = await hashPassword(tempPassword);
+
+          const { data: createdUser, error: createUserError } = await supabase.supabaseAdmin
+            .from('users')
+            .insert({
+              email: client.email || `client_${userId}@placeholder.local`,
+              role: 'client',
+              password_hash: passwordHash,
+              created_at: new Date().toISOString()
+            })
+            .select('id, email')
+            .single();
+
+          if (createUserError) {
+            console.error('Error auto-creating users row for client:', createUserError);
+            return res.status(500).json(
+              errorResponse('Failed to prepare client account for booking')
+            );
+          }
+
+          userAccountId = createdUser.id;
+          await supabase
+            .from('clients')
+            .update({ user_id: userAccountId })
+            .eq('id', userId);
+        }
+      }
+    } catch (linkError) {
+      console.error('Error ensuring users linkage for client:', linkError);
+      return res.status(500).json(
+        errorResponse('Failed to prepare client account')
+      );
+    }
+
     // Get the next available assessment number by checking existing assessments
     const { data: existingAssessments, error: existingError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .select('assessment_number')
-      .eq('id', userId)
+      .eq('client_id', userId)
       .order('assessment_number', { ascending: true });
 
     if (existingError) {
@@ -677,9 +795,9 @@ const bookFreeAssessment = async (req, res) => {
       );
     }
 
-    // Find the next available assessment number
+    // Find the next available assessment number (1..20) skipping used numbers
     let nextAssessmentNumber = 1;
-    const usedNumbers = existingAssessments.map(a => a.assessment_number);
+    const usedNumbers = (existingAssessments || []).map(a => a.assessment_number);
     
     console.log('🔍 Raw existing assessments:', existingAssessments);
     console.log('🔍 Used numbers:', usedNumbers);
@@ -712,156 +830,18 @@ const bookFreeAssessment = async (req, res) => {
       );
     }
 
-    // Try to get available psychologists for this time slot from availability table
-    let availability = [];
-    
-    // Convert 24-hour time back to 12-hour format for availability query
-    const convertTo12Hour = (time24Hour) => {
-      try {
-        const [hours, minutes] = time24Hour.split(':');
-        const hour = parseInt(hours);
-        const period = hour >= 12 ? 'PM' : 'AM';
-        const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-        return `${hour12}:${minutes} ${period}`;
-      } catch (error) {
-        console.error('Error converting to 12-hour format:', error);
-        return time24Hour;
-      }
-    };
-
-    const time12Hour = convertTo12Hour(scheduledTime);
-    console.log('🔍 Converting time for availability query:', scheduledTime, '->', time12Hour);
-
-    const { data: availabilityData, error: availabilityError } = await supabase
-      .from('availability')
-      .select(`
-        psychologist_id,
-        psychologist:psychologists(
-          id,
-          first_name,
-          last_name,
-          email
-        )
-      `)
-      .eq('date', scheduledDate)
-      .eq('is_available', true)
-      .contains('time_slots', [time12Hour]);
-
-    if (availabilityError) {
-      // If availability table query fails (e.g., JSON parse), fall back to all active psychologists
-      console.warn('Availability query failed, falling back to active psychologists:', availabilityError);
-    } else {
-      availability = availabilityData || [];
-    }
-
-    // If no availability found, fall back to all psychologists
-    if (availability.length === 0) {
-      console.log('🔍 No availability found, fetching all psychologists as fallback');
-      const { data: allPsychologists, error: psychologistsError } = await supabase
-        .from('psychologists')
-        .select('id, first_name, last_name, email');
-
-      if (psychologistsError) {
-        console.error('Error fetching all psychologists:', psychologistsError);
-        return res.status(500).json(
-          errorResponse('Failed to find available psychologists')
-        );
-      }
-
-      availability = allPsychologists.map(psychologist => ({
-        psychologist_id: psychologist.id,
-        psychologist: psychologist
-      }));
-      console.log(`🔍 Using fallback: ${availability.length} psychologists available`);
-    }
-
-    // Get booked sessions and assessments for this time
-    console.log('🔍 Checking for existing bookings at:', scheduledDate, scheduledTime);
-    const { data: bookedSessions, error: sessionsError } = await supabase
-      .from('sessions')
-      .select('psychologist_id')
-      .eq('scheduled_date', scheduledDate)
-      .eq('scheduled_time', scheduledTime);
-
-    const { data: bookedAssessments, error: assessmentsError } = await supabase
-      .from('free_assessments')
-      .select('psychologist_id')
-      .eq('scheduled_date', scheduledDate)
-      .eq('scheduled_time', scheduledTime)
-      .eq('status', 'booked');
-
-    if (sessionsError || assessmentsError) {
-      console.error('Error checking booked sessions:', sessionsError || assessmentsError);
-      return res.status(500).json(
-        errorResponse('Failed to check availability')
-      );
-    }
-
-    console.log(`🔍 Found ${bookedSessions?.length || 0} booked sessions and ${bookedAssessments?.length || 0} booked assessments`);
-
-    // Check if this specific time slot is already fully booked
-    const totalBookings = (bookedSessions?.length || 0) + (bookedAssessments?.length || 0);
-    if (totalBookings >= availability.length) {
-      console.error('❌ Time slot is fully booked - no psychologists available');
-      return res.status(400).json(
-        errorResponse('This time slot is already fully booked. Please select a different time.')
-      );
-    }
-
-    const bookedPsychologistIds = [
-      ...bookedSessions.map(s => s.psychologist_id),
-      ...bookedAssessments.map(a => a.psychologist_id)
-    ];
-
-    console.log('🔍 Booked psychologist IDs:', bookedPsychologistIds);
-
-    // If no availability rows (or query failed), fall back to all psychologists
-    if (!availability || availability.length === 0) {
-      console.log('🔄 No availability data, fetching all psychologists...');
-      const { data: allPsychologists, error: psychologistsError } = await supabase
-        .from('psychologists')
-        .select('id, first_name, last_name, email');
-
-      if (psychologistsError) {
-        console.error('Error fetching psychologists:', psychologistsError);
-        return res.status(500).json(
-          errorResponse('Failed to fetch psychologists')
-        );
-      }
-
-      console.log(`✅ Found ${allPsychologists?.length || 0} psychologists`);
-      // Map to the same shape expected below
-      availability = (allPsychologists || []).map(p => ({
-        psychologist_id: p.id,
-        psychologist: { id: p.id, first_name: p.first_name, last_name: p.last_name, email: p.email }
-      }));
-    }
-
-    console.log(`🔍 Found ${availability.length} available psychologists`);
-
-    // Find available psychologist (not already booked at this time)
-    const availablePsychologist = availability.find(avail => !bookedPsychologistIds.includes(avail.psychologist_id));
-    
-    console.log(`🔍 Available psychologist:`, availablePsychologist ? `${availablePsychologist.psychologist.first_name} ${availablePsychologist.psychologist.last_name}` : 'None');
-
-    if (!availablePsychologist) {
-      console.error('❌ No psychologists available at this time');
-      return res.status(400).json(
-        errorResponse('No psychologists available at this time')
-      );
-    }
-
-    // Create free assessment record
-    console.log('🔄 Creating free assessment record...');
+    // Do not assign to a specific psychologist; mark as unassigned for admin triage
+    console.log('🔄 Creating free assessment record (unassigned)...');
     const { data: assessment, error: assessmentError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .insert({
-        user_id: userId,
+        // Use linked users.id (ensured above); client_id remains the client (req.user.id)
+        user_id: userAccountId,
         client_id: userId,
         assessment_number: nextAssessmentNumber,
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
-        psychologist_id: availablePsychologist.psychologist_id,
+        psychologist_id: null,
         status: 'booked'
       })
       .select()
@@ -876,53 +856,53 @@ const bookFreeAssessment = async (req, res) => {
     
     console.log('✅ Free assessment record created:', assessment.id);
 
-    // Create session record for the free assessment
-    console.log('🔄 Creating session record...');
+    // Create a session placeholder (no doctor), with a Meet link ready for admin assignment
+    console.log('🔄 Creating session placeholder for free assessment...');
     const sessionData = {
       client_id: userId,
-      psychologist_id: availablePsychologist.psychologist_id,
+      psychologist_id: null, // unassigned
       scheduled_date: scheduledDate,
       scheduled_time: scheduledTime,
       status: 'booked',
-      price: 0, // Free assessment
+      price: 0,
       session_type: 'free_assessment'
     };
 
-    console.log('📋 Session data:', sessionData);
-
-    // Create real Google Meet link for free assessment
     try {
-      console.log('🔄 Creating real Google Meet link for free assessment...');
-      
-      // Prepare session data for Meet link creation
       const meetSessionData = {
-        summary: `Free Assessment - ${client.first_name || 'Client'} with ${availablePsychologist.psychologist.first_name}`,
-        description: `Free 20-minute assessment session`,
+        summary: `Free Assessment` ,
+        description: `Free 20-minute assessment session (doctor to be assigned)`,
         startDate: scheduledDate,
         startTime: scheduledTime,
-        endTime: addMinutesToTime(scheduledTime, 20) // 20-minute assessment
+        endTime: addMinutesToTime(scheduledTime, 20),
+        attendees: []
       };
-      
-      // Use the new Meet Link Service for real Meet link creation
+
+      // If the client has a linked users row, try to fetch their email for attendee
+      try {
+        const { data: userEmailRow } = await supabase
+          .from('users')
+          .select('email')
+          .eq('id', userAccountId)
+          .single();
+        if (userEmailRow?.email) {
+          meetSessionData.attendees = [userEmailRow.email];
+        }
+      } catch (_) {}
+
+      // Create meet link (OAuth preferred; will add attendee to client calendar)
       const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData);
-      
       if (meetResult.success) {
         sessionData.google_calendar_event_id = meetResult.eventId;
         sessionData.google_meet_link = meetResult.meetLink;
         sessionData.google_meet_join_url = meetResult.meetLink;
         sessionData.google_meet_start_url = meetResult.meetLink;
-        
-        console.log('✅ Real Google Meet link created for free assessment!');
-        console.log('   Method:', meetResult.method);
-        console.log('   Meet Link:', meetResult.meetLink);
-        console.log('   Event ID:', meetResult.eventId);
+        console.log('✅ Meet link created for free assessment (unassigned)');
       } else {
-        console.log('⚠️ Meet link creation failed, using fallback');
-        sessionData.google_meet_link = meetResult.meetLink; // Fallback link
+        console.log('⚠️ Meet link creation failed; continuing without link');
       }
-    } catch (meetError) {
-      console.error('❌ Error creating Google Meet:', meetError);
-      // Continue without meet link
+    } catch (e) {
+      console.error('❌ Error creating meet link placeholder:', e);
     }
 
     const { data: session, error: sessionError } = await supabase
@@ -932,21 +912,15 @@ const bookFreeAssessment = async (req, res) => {
       .single();
 
     if (sessionError) {
-      console.error('❌ Error creating session:', sessionError);
-      // Delete the assessment if session creation fails
-      await supabase.supabaseAdmin.from('free_assessments').delete().eq('id', assessment.id);
-      return res.status(500).json(
-        errorResponse('Failed to create session')
-      );
+      console.error('❌ Error creating session placeholder:', sessionError);
+      // proceed without session, admin can create later
+    } else {
+      await supabase.supabaseAdmin
+        .from('free_assessments')
+        .update({ session_id: session.id })
+        .eq('id', assessment.id);
+      console.log('✅ Session placeholder created:', session.id);
     }
-    
-    console.log('✅ Session record created:', session.id);
-
-    // Update assessment with session ID
-    await supabase.supabaseAdmin
-      .from('free_assessments')
-      .update({ session_id: session.id })
-      .eq('id', assessment.id);
 
     // Update client's free assessment count
     await supabase.supabaseAdmin
@@ -957,11 +931,17 @@ const bookFreeAssessment = async (req, res) => {
       .eq('id', userId);
 
     // Fetch user details for email (clients table may not have name/email columns)
-    const { data: userRowForEmail, error: userEmailError } = await supabase
-      .from('users')
-      .select('email')
-      .eq('id', userId)
-      .single();
+    let userRowForEmail = null;
+    let userEmailError = null;
+    if (userAccountId) {
+      const result = await supabase
+        .from('users')
+        .select('email')
+        .eq('id', userAccountId)
+        .single();
+      userRowForEmail = result.data;
+      userEmailError = result.error;
+    }
 
     if (userEmailError) {
       console.error('Error fetching user email:', userEmailError);
@@ -972,17 +952,17 @@ const bookFreeAssessment = async (req, res) => {
       userId: userId
     });
 
-    // Send confirmation email
+    // Send confirmation email (generic, without doctor or meet link)
     try {
       await emailService.sendFreeAssessmentConfirmation({
-        clientName: 'Client', // Generic name since users table doesn't have first_name/last_name
-        psychologistName: `${availablePsychologist.psychologist.first_name} ${availablePsychologist.psychologist.last_name}`,
+        clientName: 'Client',
+        psychologistName: 'To be assigned',
         assessmentDate: scheduledDate,
         assessmentTime: scheduledTime,
         assessmentNumber: nextAssessmentNumber,
         clientEmail: userRowForEmail?.email,
-        psychologistEmail: availablePsychologist.psychologist.email,
-        googleMeetLink: sessionData.google_meet_link
+        psychologistEmail: null,
+        googleMeetLink: session?.google_meet_link || null
       });
     } catch (emailError) {
       console.error('Error sending confirmation email:', emailError);
@@ -991,15 +971,11 @@ const bookFreeAssessment = async (req, res) => {
     res.json(
       successResponse({
         assessmentId: assessment.id,
-        sessionId: session.id,
         assessmentNumber: nextAssessmentNumber,
-        psychologist: {
-          id: availablePsychologist.psychologist.id,
-          name: `${availablePsychologist.psychologist.first_name} ${availablePsychologist.psychologist.last_name}`
-        },
+        psychologist: null,
         scheduledDate,
         scheduledTime,
-        meetLink: sessionData.google_meet_link
+        meetLink: null
       }, 'Free assessment booked successfully')
     );
 
@@ -1079,6 +1055,76 @@ const cancelFreeAssessment = async (req, res) => {
     res.status(500).json(
       errorResponse('Internal server error')
     );
+  }
+};
+
+// Admin: List free assessments with optional status filter
+const adminListFreeAssessments = async (req, res) => {
+  try {
+    const { status } = req.query;
+
+    let query = supabase.supabaseAdmin
+      .from('free_assessments')
+      .select(`
+        id,
+        assessment_number,
+        scheduled_date,
+        scheduled_time,
+        status,
+        client:clients(id, first_name, last_name, email),
+        psychologist:psychologists(id, first_name, last_name, email),
+        session:sessions(google_meet_link)
+      `)
+      .order('scheduled_date', { ascending: true })
+      .order('scheduled_time', { ascending: true });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Admin list free assessments error:', error);
+      return res.status(500).json(errorResponse('Failed to fetch free assessments'));
+    }
+
+    // Normalize payload and ensure a meet link is available (generate on the fly if missing)
+    const meetLinkService = require('../utils/meetLinkService');
+    const assessments = [];
+    for (const a of (data || [])) {
+      let meetLink = a.session?.google_meet_link || null;
+      if (!meetLink) {
+        try {
+          const result = await meetLinkService.generateSessionMeetLink({
+            summary: 'Free Assessment',
+            description: 'Free 20-minute assessment session (doctor to be assigned)',
+            startDate: a.scheduled_date,
+            startTime: a.scheduled_time,
+            endTime: require('../utils/helpers').addMinutesToTime(a.scheduled_time, 20)
+          });
+          if (result.success && result.meetLink) {
+            meetLink = result.meetLink;
+          }
+        } catch (e) {
+          // ignore, leave meetLink null
+        }
+      }
+      assessments.push({
+        id: a.id,
+        assessmentNumber: a.assessment_number,
+        scheduledDate: a.scheduled_date,
+        scheduledTime: a.scheduled_time,
+        status: a.status,
+        client: a.client || null,
+        psychologist: a.psychologist || null,
+        meetLink
+      });
+    }
+
+    return res.json(successResponse({ assessments }));
+  } catch (error) {
+    console.error('Admin list free assessments exception:', error);
+    return res.status(500).json(errorResponse('Internal server error'));
   }
 };
 
@@ -1168,5 +1214,6 @@ module.exports = {
   bookFreeAssessment,
   cancelFreeAssessment,
   testGlobalTimeslots,
-  testDateConfigs
+  testDateConfigs,
+  adminListFreeAssessments
 };
