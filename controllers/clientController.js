@@ -420,7 +420,7 @@ const bookSession = async (req, res) => {
     console.log('🔍 Step 8: Sending email notifications...');
     try {
       const emailService = require('../utils/emailService');
-      const { sendBookingConfirmation } = require('../utils/whatsappService');
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || 
                         `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -440,26 +440,48 @@ const bookSession = async (req, res) => {
 
       console.log('✅ Email notifications sent successfully');
 
-      // WhatsApp notification (best-effort, non-blocking)
+      // WhatsApp notifications (best-effort, non-blocking)
       try {
-        const to = clientDetails.phone_number || null;
-        if (to && meetData?.meetLink) {
-          const details = {
+        console.log('📱 Sending WhatsApp notifications...');
+        
+        // Send WhatsApp to client
+        const clientPhone = clientDetails.phone_number || null;
+        if (clientPhone && meetData?.meetLink) {
+          const clientDetails_wa = {
             childName: clientDetails.child_name || clientDetails.first_name,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
           };
-          const waResult = await sendBookingConfirmation(to, details);
-          if (waResult?.success) {
-            console.log('✅ WhatsApp confirmation sent.');
-          } else if (waResult?.skipped) {
-            console.log('ℹ️ WhatsApp skipped:', waResult.reason);
+          const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+          if (clientWaResult?.success) {
+            console.log('✅ WhatsApp confirmation sent to client.');
+          } else if (clientWaResult?.skipped) {
+            console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
           } else {
-            console.warn('⚠️ WhatsApp send failed');
+            console.warn('⚠️ Client WhatsApp send failed');
           }
         } else {
-          console.log('ℹ️ No client phone or meet link; skipping WhatsApp');
+          console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+        }
+
+        // Send WhatsApp to psychologist
+        console.log('ℹ️ Skipping psychologist WhatsApp message (not in test list)');
+        
+        // Send WhatsApp to client only
+        if (clientPhone && meetData?.meetLink) {
+          const clientMessage = `Your ${clientName}'s therapy session is booked.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nWe look forward to seeing you.`;
+          
+          const clientWaResult = await sendWhatsAppTextWithRetry(clientPhone, clientMessage);
+          if (clientWaResult?.success) {
+            console.log('✅ WhatsApp notification sent to client.');
+          } else if (clientWaResult?.skipped) {
+            console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+          } else {
+            console.warn('⚠️ Client WhatsApp send failed');
+          }
+        } else {
+          console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
         }
       } catch (waError) {
         console.error('❌ WhatsApp notification error:', waError);
@@ -754,9 +776,116 @@ const rescheduleSession = async (req, res) => {
 
     if (sessionError || !session) {
       return res.status(404).json(
-        errorResponse('Session not found or access denied')
+        errorResponse('Session not found')
       );
     }
+
+    // Check if session can be rescheduled (only booked sessions)
+    if (session.status !== 'booked') {
+      return res.status(400).json(
+        errorResponse('Only booked sessions can be rescheduled')
+      );
+    }
+
+    // Check 24-hour rule: if session is within 24 hours, require admin approval
+    const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`);
+    const now = new Date();
+    const hoursUntilSession = (sessionDateTime - now) / (1000 * 60 * 60);
+    
+    console.log('🕐 24-hour rule check:', {
+      sessionDateTime: sessionDateTime.toISOString(),
+      now: now.toISOString(),
+      hoursUntilSession: hoursUntilSession.toFixed(2)
+    });
+
+    if (hoursUntilSession <= 24) {
+      // Within 24 hours - create reschedule request for admin approval
+      console.log('⚠️ Session is within 24 hours, creating admin approval request');
+      
+      try {
+        // Create reschedule request notification for admin
+        const { data: clientDetails } = await supabase
+          .from('clients')
+          .select('first_name, last_name, child_name, email')
+          .eq('id', client.id)
+          .single();
+
+        const { data: psychologistDetails } = await supabase
+          .from('psychologists')
+          .select('first_name, last_name, email')
+          .eq('id', session.psychologist_id)
+          .single();
+
+        const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+        const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+
+        // Create admin notification for reschedule request
+        const adminNotificationData = {
+          type: 'reschedule_request',
+          title: 'Reschedule Request (Within 24 Hours)',
+          message: `${clientName} has requested to reschedule their session from ${session.scheduled_date} at ${session.scheduled_time} to ${new_date} at ${new_time}. This requires admin approval as it's within 24 hours.`,
+          session_id: session.id,
+          client_id: client.id,
+          psychologist_id: session.psychologist_id,
+          is_read: false,
+          created_at: new Date().toISOString(),
+          metadata: {
+            original_date: session.scheduled_date,
+            original_time: session.scheduled_time,
+            new_date: new_date,
+            new_time: new_time,
+            reason: 'Within 24-hour window - admin approval required'
+          }
+        };
+
+        const { error: notificationError } = await supabase
+          .from('notifications')
+          .insert([adminNotificationData]);
+
+        if (notificationError) {
+          console.error('Error creating admin notification:', notificationError);
+          return res.status(500).json(
+            errorResponse('Failed to create reschedule request')
+          );
+        }
+
+        // Update session status to indicate reschedule request
+        const { error: updateError } = await supabase
+          .from('sessions')
+          .update({
+            status: 'reschedule_requested',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', sessionId);
+
+        if (updateError) {
+          console.error('Error updating session status:', updateError);
+          return res.status(500).json(
+            errorResponse('Failed to update session status')
+          );
+        }
+
+        return res.json(
+          successResponse(
+            { 
+              session: session,
+              requiresApproval: true,
+              hoursUntilSession: Math.round(hoursUntilSession * 100) / 100
+            },
+            'Reschedule request sent to admin for approval (within 24-hour window)'
+          )
+        );
+
+      } catch (error) {
+        console.error('Error creating reschedule request:', error);
+        return res.status(500).json(
+          errorResponse('Failed to create reschedule request')
+        );
+      }
+    }
+
+    // Beyond 24 hours - proceed with direct reschedule
+    console.log('✅ Session is beyond 24 hours, proceeding with direct reschedule');
 
     // Check if session can be rescheduled
     if (session.status === 'completed' || session.status === 'cancelled') {

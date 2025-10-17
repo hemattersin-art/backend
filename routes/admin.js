@@ -49,6 +49,9 @@ router.delete('/users/:userId', adminController.deleteUser);
 router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);
 router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
 
+// Reschedule request handling
+router.put('/reschedule-requests/:notificationId', adminController.handleRescheduleRequest);
+
 // Psychologist calendar events
 router.get('/psychologists/:psychologistId/calendar-events', adminController.getPsychologistCalendarEvents);
 

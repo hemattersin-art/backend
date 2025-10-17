@@ -193,6 +193,57 @@ const bookSession = async (req, res) => {
       // Continue even if email sending fails
     }
 
+    // Send WhatsApp notifications to both client and psychologist
+    try {
+      console.log('📱 Sending WhatsApp notifications...');
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+      const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
+
+      // Send WhatsApp to client
+      const clientPhone = clientDetails.phone_number || null;
+      if (clientPhone && meetData?.meetLink) {
+        const clientDetails_wa = {
+          childName: clientDetails.child_name || clientDetails.first_name,
+          date: scheduled_date,
+          time: scheduled_time,
+          meetLink: meetData.meetLink,
+        };
+        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+        if (clientWaResult?.success) {
+          console.log('✅ WhatsApp confirmation sent to client.');
+        } else if (clientWaResult?.skipped) {
+          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        } else {
+          console.warn('⚠️ Client WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+      }
+
+      // Send WhatsApp to psychologist
+      console.log('ℹ️ Skipping psychologist WhatsApp message (not in test list)');
+      
+      // Send WhatsApp to client only
+      if (clientPhone && meetData?.meetLink) {
+        const clientMessage = `Your ${clientName}'s therapy session is booked.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nWe look forward to seeing you.`;
+        
+        const clientWaResult = await sendWhatsAppTextWithRetry(clientPhone, clientMessage);
+        if (clientWaResult?.success) {
+          console.log('✅ WhatsApp notification sent to client.');
+        } else if (clientWaResult?.skipped) {
+          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        } else {
+          console.warn('⚠️ Client WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+      }
+    } catch (waError) {
+      console.error('❌ WhatsApp notification error:', waError);
+    }
+
     res.status(201).json(
       successResponse({
         session,

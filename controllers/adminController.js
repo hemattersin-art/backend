@@ -2462,6 +2462,163 @@ const getPsychologistCalendarEvents = async (req, res) => {
   }
 };
 
+// Handle reschedule request approval/rejection
+const handleRescheduleRequest = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const { action } = req.body; // 'approve' or 'reject'
+
+    if (!action || !['approve', 'reject'].includes(action)) {
+      return res.status(400).json(
+        errorResponse('Action must be either "approve" or "reject"')
+      );
+    }
+
+    // Get the notification
+    const { data: notification, error: notificationError } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('id', notificationId)
+      .eq('type', 'reschedule_request')
+      .single();
+
+    if (notificationError || !notification) {
+      return res.status(404).json(
+        errorResponse('Reschedule request not found')
+      );
+    }
+
+    // Get the session
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('id', notification.session_id)
+      .single();
+
+    if (sessionError || !session) {
+      return res.status(404).json(
+        errorResponse('Session not found')
+      );
+    }
+
+    if (action === 'approve') {
+      // Check if new time slot is still available
+      const { data: conflictingSessions } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('psychologist_id', session.psychologist_id)
+        .eq('scheduled_date', notification.metadata.new_date)
+        .eq('scheduled_time', notification.metadata.new_time)
+        .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .neq('id', session.id);
+
+      if (conflictingSessions && conflictingSessions.length > 0) {
+        return res.status(400).json(
+          errorResponse('Selected time slot is no longer available')
+        );
+      }
+
+      // Update session with new date/time
+      const { data: updatedSession, error: updateError } = await supabase
+        .from('sessions')
+        .update({
+          scheduled_date: notification.metadata.new_date,
+          scheduled_time: notification.metadata.new_time,
+          status: 'rescheduled',
+          reschedule_count: (session.reschedule_count || 0) + 1,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', session.id)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Error updating session:', updateError);
+        return res.status(500).json(
+          errorResponse('Failed to reschedule session')
+        );
+      }
+
+      // Create approval notification for client
+      const clientNotificationData = {
+        type: 'reschedule_approved',
+        title: 'Reschedule Approved',
+        message: `Your reschedule request has been approved. Session moved to ${notification.metadata.new_date} at ${notification.metadata.new_time}`,
+        session_id: session.id,
+        client_id: notification.client_id,
+        psychologist_id: session.psychologist_id,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+
+      await supabase
+        .from('notifications')
+        .insert([clientNotificationData]);
+
+      // Mark original request as read
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notificationId);
+
+      res.json(
+        successResponse(updatedSession, 'Reschedule request approved successfully')
+      );
+
+    } else if (action === 'reject') {
+      // Revert session status back to booked
+      const { data: updatedSession, error: updateError } = await supabase
+        .from('sessions')
+        .update({
+          status: 'booked',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', session.id)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Error updating session:', updateError);
+        return res.status(500).json(
+          errorResponse('Failed to reject reschedule request')
+        );
+      }
+
+      // Create rejection notification for client
+      const clientNotificationData = {
+        type: 'reschedule_rejected',
+        title: 'Reschedule Request Rejected',
+        message: `Your reschedule request has been rejected. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}`,
+        session_id: session.id,
+        client_id: notification.client_id,
+        psychologist_id: session.psychologist_id,
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
+
+      await supabase
+        .from('notifications')
+        .insert([clientNotificationData]);
+
+      // Mark original request as read
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notificationId);
+
+      res.json(
+        successResponse(updatedSession, 'Reschedule request rejected')
+      );
+    }
+
+  } catch (error) {
+    console.error('Handle reschedule request error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while handling reschedule request')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -2482,5 +2639,6 @@ module.exports = {
   getRecentBookings,
   rescheduleSession,
   getPsychologistAvailabilityForReschedule,
-  getPsychologistCalendarEvents
+  getPsychologistCalendarEvents,
+  handleRescheduleRequest
 };

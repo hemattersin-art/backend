@@ -1,5 +1,6 @@
 const { calendar } = require('./googleOAuthClient');
 const supabase = require('../config/supabase');
+const googleCalendarService = require('./googleCalendarService');
 
 class AvailabilityCalendarService {
   constructor() {
@@ -163,13 +164,24 @@ class AvailabilityCalendarService {
   }
 
   /**
-   * Get psychologist availability for a date range - USING AVAILABILITY TABLE
+   * Get psychologist availability for a date range - USING AVAILABILITY TABLE + GOOGLE CALENDAR
    */
   async getPsychologistAvailabilityRange(psychologistId, startDate, endDate) {
     try {
       const startTime = Date.now();
       console.log(`🚀 Getting availability range for psychologist ${psychologistId} from ${startDate} to ${endDate}`);
       
+      // Get psychologist details including Google Calendar credentials
+      const { data: psychologist, error: psychError } = await supabase
+        .from('psychologists')
+        .select('id, first_name, last_name, google_calendar_credentials')
+        .eq('id', psychologistId)
+        .single();
+      
+      if (psychError || !psychologist) {
+        throw new Error('Psychologist not found');
+      }
+
       // SINGLE QUERY: Get availability from availability table
       const { data: availabilityData, error: availabilityError } = await supabase
         .from('availability')
@@ -200,6 +212,34 @@ class AvailabilityCalendarService {
       }
 
       console.log(`🔒 Found ${bookedSessions?.length || 0} booked sessions in date range`);
+
+      // Check Google Calendar for external bookings if credentials exist
+      let googleCalendarEvents = [];
+      if (psychologist.google_calendar_credentials) {
+        try {
+          console.log(`📅 Checking Google Calendar for external bookings...`);
+          const busySlots = await googleCalendarService.getBusyTimeSlots(
+            psychologist.google_calendar_credentials,
+            new Date(startDate),
+            new Date(endDate)
+          );
+          
+          // Filter out events created by our own system to avoid circular blocking
+          googleCalendarEvents = busySlots.filter(slot => 
+            !slot.title.toLowerCase().includes('littleminds') && 
+            !slot.title.toLowerCase().includes('session') &&
+            !slot.title.toLowerCase().includes('therapy') &&
+            !slot.title.toLowerCase().includes('kuttikal')
+          );
+          
+          console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events`);
+        } catch (calendarError) {
+          console.error('Error checking Google Calendar:', calendarError);
+          // Continue without Google Calendar data if it fails
+        }
+      } else {
+        console.log(`📅 No Google Calendar credentials found for psychologist ${psychologistId}`);
+      }
 
       // Helper function to convert 24-hour format to 12-hour format
       const convertTo12Hour = (time24) => {
@@ -235,6 +275,26 @@ class AvailabilityCalendarService {
         console.log(`   🚫 Blocked: ${session.scheduled_date} at ${session.scheduled_time} → ${time12Hour} (${session.status})`);
       });
 
+      // Create a map of Google Calendar events by date
+      const googleCalendarSlotsByDate = {};
+      googleCalendarEvents.forEach(event => {
+        const eventDate = new Date(event.start);
+        const year = eventDate.getFullYear();
+        const month = String(eventDate.getMonth() + 1).padStart(2, '0');
+        const day = String(eventDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        
+        if (!googleCalendarSlotsByDate[dateStr]) {
+          googleCalendarSlotsByDate[dateStr] = new Set();
+        }
+        
+        // Convert Google Calendar event time to 12-hour format
+        const eventTime = eventDate.toTimeString().split(' ')[0]; // HH:MM:SS
+        const time12Hour = convertTo12Hour(eventTime);
+        googleCalendarSlotsByDate[dateStr].add(time12Hour);
+        console.log(`   📅 Google Calendar Blocked: ${dateStr} at ${time12Hour} (${event.title})`);
+      });
+
       // Create availability for each date in range
       const availability = [];
       const currentDate = new Date(startDate);
@@ -254,15 +314,24 @@ class AvailabilityCalendarService {
           // Use the time slots from availability table
           const timeSlots = dayAvailability.time_slots || [];
           const bookedSlots = bookedSlotsByDate[dateStr] || new Set();
+          const googleCalendarSlots = googleCalendarSlotsByDate[dateStr] || new Set();
           
-          // Create formatted time slots showing both available and blocked
+          // Create formatted time slots showing both available and blocked (including Google Calendar)
           const formattedTimeSlots = timeSlots.map(timeString => {
             const isBooked = bookedSlots.has(timeString);
+            const isGoogleCalendarBlocked = googleCalendarSlots.has(timeString);
+            const isBlocked = isBooked || isGoogleCalendarBlocked;
+            
+            let reason = 'available';
+            if (isBooked) reason = 'booked';
+            else if (isGoogleCalendarBlocked) reason = 'google_calendar_blocked';
+            
             return {
               time: timeString,
-              available: !isBooked,
+              available: !isBlocked,
               displayTime: timeString,
-              status: isBooked ? 'booked' : 'available'
+              status: reason,
+              reason: reason
             };
           });
           
@@ -275,10 +344,11 @@ class AvailabilityCalendarService {
             timeSlots: formattedTimeSlots,
             totalSlots: timeSlots.length,
             availableSlots: availableTimeSlots.length,
-            blockedSlots: blockedTimeSlots.length
+            blockedSlots: blockedTimeSlots.length,
+            googleCalendarBlocked: blockedTimeSlots.filter(slot => slot.reason === 'google_calendar_blocked').length
           };
           
-          console.log(`📅 ${dateStr}: ${timeSlots.length} total, ${availableTimeSlots.length} available, ${dayData.blockedSlots} blocked`);
+          console.log(`📅 ${dateStr}: ${timeSlots.length} total, ${availableTimeSlots.length} available, ${dayData.blockedSlots} blocked (${dayData.googleCalendarBlocked} from Google Calendar)`);
           availability.push(dayData);
         } else {
           // No availability record - skip this date entirely
