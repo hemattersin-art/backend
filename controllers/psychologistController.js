@@ -341,9 +341,97 @@ const getAvailability = async (req, res) => {
         );
       }
 
-      res.json(
-        successResponse(availability || [])
-      );
+      // Get psychologist's Google Calendar credentials to check for blocked slots
+      const { data: psychologist, error: psychError } = await supabase
+        .from('psychologists')
+        .select('google_calendar_credentials')
+        .eq('id', psychologistId)
+        .single();
+
+      if (psychError || !psychologist) {
+        console.log('Psychologist not found or no Google Calendar credentials');
+        return res.json(
+          successResponse(availability || [])
+        );
+      }
+
+      // If Google Calendar is connected, check for blocked slots
+      if (psychologist.google_calendar_credentials) {
+        try {
+          const googleCalendarService = require('../utils/googleCalendarService');
+          
+          // Determine date range for Google Calendar check
+          let calendarStartDate, calendarEndDate;
+          if (date) {
+            calendarStartDate = new Date(date);
+            calendarEndDate = new Date(date);
+          } else if (start_date && end_date) {
+            calendarStartDate = new Date(start_date);
+            calendarEndDate = new Date(end_date);
+          } else {
+            // Default to current month if no date range specified
+            const now = new Date();
+            calendarStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+            calendarEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+          }
+
+          // Get Google Calendar busy slots
+          const busySlots = await googleCalendarService.getBusyTimeSlots(
+            psychologist.google_calendar_credentials,
+            calendarStartDate,
+            calendarEndDate
+          );
+
+          // Filter for blocked slots (events with "🚫 BLOCKED" in title)
+          const blockedSlots = busySlots.filter(slot => 
+            slot.title && (slot.title.includes('🚫 BLOCKED') || slot.title.includes('BLOCKED'))
+          );
+
+          console.log(`📅 Found ${blockedSlots.length} blocked slots from Google Calendar`);
+
+          // Process availability data to mark blocked slots
+          const processedAvailability = (availability || []).map(dayAvailability => {
+            const dayBlockedSlots = blockedSlots.filter(slot => {
+              const slotDate = new Date(slot.start).toISOString().split('T')[0];
+              return slotDate === dayAvailability.date;
+            });
+
+            // Convert blocked slots to time format and remove from available slots
+            const blockedTimes = dayBlockedSlots.map(slot => {
+              const slotTime = new Date(slot.start).toTimeString().split(' ')[0].substring(0, 5);
+              return slotTime;
+            });
+
+            // Remove blocked time slots from availability
+            const availableSlots = (dayAvailability.time_slots || []).filter(slot => 
+              !blockedTimes.includes(slot)
+            );
+
+            return {
+              ...dayAvailability,
+              time_slots: availableSlots,
+              blocked_slots: blockedTimes,
+              total_blocked: blockedTimes.length
+            };
+          });
+
+          res.json(
+            successResponse(processedAvailability)
+          );
+
+        } catch (calendarError) {
+          console.error('Error checking Google Calendar for blocked slots:', calendarError);
+          // Return availability without Google Calendar data if it fails
+          res.json(
+            successResponse(availability || [])
+          );
+        }
+      } else {
+        // No Google Calendar connected, return availability as-is
+        res.json(
+          successResponse(availability || [])
+        );
+      }
 
     } catch (dbError) {
       // If there's any database error, return empty availability

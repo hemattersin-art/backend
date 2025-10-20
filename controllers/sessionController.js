@@ -193,9 +193,9 @@ const bookSession = async (req, res) => {
       // Continue even if email sending fails
     }
 
-    // Send WhatsApp notifications to both client and psychologist
+    // Send WhatsApp notifications to both client and psychologist via Business API
     try {
-      console.log('📱 Sending WhatsApp notifications...');
+      console.log('📱 Sending WhatsApp notifications via Business API...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -212,7 +212,7 @@ const bookSession = async (req, res) => {
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
-          console.log('✅ WhatsApp confirmation sent to client.');
+          console.log('✅ WhatsApp confirmation sent to client via Business API');
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
         } else {
@@ -223,22 +223,20 @@ const bookSession = async (req, res) => {
       }
 
       // Send WhatsApp to psychologist
-      console.log('ℹ️ Skipping psychologist WhatsApp message (not in test list)');
-      
-      // Send WhatsApp to client only
-      if (clientPhone && meetData?.meetLink) {
-        const clientMessage = `Your ${clientName}'s therapy session is booked.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nWe look forward to seeing you.`;
+      const psychologistPhone = psychologistDetails.phone || null;
+      if (psychologistPhone && meetData?.meetLink) {
+        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
         
-        const clientWaResult = await sendWhatsAppTextWithRetry(clientPhone, clientMessage);
-        if (clientWaResult?.success) {
-          console.log('✅ WhatsApp notification sent to client.');
-        } else if (clientWaResult?.skipped) {
-          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+        if (psychologistWaResult?.success) {
+          console.log('✅ WhatsApp notification sent to psychologist via Business API');
+        } else if (psychologistWaResult?.skipped) {
+          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
         } else {
-          console.warn('⚠️ Client WhatsApp send failed');
+          console.warn('⚠️ Psychologist WhatsApp send failed');
         }
       } else {
-        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
       }
     } catch (waError) {
       console.error('❌ WhatsApp notification error:', waError);

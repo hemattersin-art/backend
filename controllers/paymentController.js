@@ -8,7 +8,6 @@ const {
 const meetLinkService = require('../utils/meetLinkService');
 const { addMinutesToTime } = require('../utils/helpers');
 const emailService = require('../utils/emailService');
-const whatsappService = require('../utils/whatsappService');
 
 // Generate and store PDF receipt in Supabase storage
 const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psychologistData) => {
@@ -537,29 +536,51 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Send WhatsApp messages to client and psychologist
     try {
-      console.log('📱 Sending WhatsApp messages...');
+      console.log('📱 Sending WhatsApp messages via Business API...');
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      // Skip psychologist WhatsApp for now - only send to client
-      console.log('ℹ️ Skipping psychologist WhatsApp message (not in test list)');
-      
-      // Send WhatsApp message to client
-      if (clientDetails.phone_number) {
-        const clientMessage = `Your ${clientDetails.child_name || 'therapy'} session is booked.
-Date: ${actualScheduledDate}
-Time: ${actualScheduledTime}
-Join via Google Meet: ${meetData?.meetLink || 'Link will be provided'}
-We look forward to seeing you.`;
+      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+      const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
-        await whatsappService.sendWhatsAppTextWithRetry(
-          clientDetails.phone_number,
-          clientMessage
-        );
-        console.log('✅ WhatsApp message sent to client');
+      // Send WhatsApp to client
+      const clientPhone = clientDetails.phone_number || null;
+      if (clientPhone && meetData?.meetLink) {
+        const clientDetails_wa = {
+          childName: clientDetails.child_name || clientDetails.first_name,
+          date: actualScheduledDate,
+          time: actualScheduledTime,
+          meetLink: meetData.meetLink,
+        };
+        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+        if (clientWaResult?.success) {
+          console.log('✅ WhatsApp confirmation sent to client via Business API');
+        } else if (clientWaResult?.skipped) {
+          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        } else {
+          console.warn('⚠️ Client WhatsApp send failed');
+        }
       } else {
-        console.log('⚠️ Client phone number not available for WhatsApp');
+        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+      }
+
+      // Send WhatsApp to psychologist
+      const psychologistPhone = psychologistDetails.phone || null;
+      if (psychologistPhone && meetData?.meetLink) {
+        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        
+        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+        if (psychologistWaResult?.success) {
+          console.log('✅ WhatsApp notification sent to psychologist via Business API');
+        } else if (psychologistWaResult?.skipped) {
+          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+        } else {
+          console.warn('⚠️ Psychologist WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
       }
       
-      console.log('✅ WhatsApp messages sent successfully');
+      console.log('✅ WhatsApp messages sent successfully via Business API');
     } catch (whatsappError) {
       console.error('❌ Error sending WhatsApp messages:', whatsappError);
       // Continue even if WhatsApp sending fails

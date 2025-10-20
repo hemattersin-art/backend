@@ -56,7 +56,7 @@ class AvailabilityCalendarService {
         // Continue with database-only approach if calendar fails
       }
 
-      // Combine database sessions and calendar events
+      // Combine database sessions, calendar events, and blocked time slots
       const blockedSlots = new Set();
       
       // Add database sessions
@@ -70,11 +70,31 @@ class AvailabilityCalendarService {
       // Add calendar events (if available)
       if (calendarEvents && calendarEvents.items) {
         calendarEvents.items.forEach(event => {
+          // Check if this is a blocked time slot (marked with 🚫 BLOCKED)
+          const isBlockedSlot = event.summary && event.summary.includes('🚫 BLOCKED');
+          
           if (event.start && event.start.dateTime) {
             const eventTime = new Date(event.start.dateTime);
             const timeSlot = eventTime.toTimeString().split(' ')[0]; // HH:MM:SS
-            blockedSlots.add(timeSlot);
-            console.log(`   🚫 Blocked slot from Calendar: ${timeSlot}`);
+            
+            if (isBlockedSlot) {
+              blockedSlots.add(timeSlot);
+              console.log(`   🚫 Blocked slot from Calendar: ${timeSlot} (${event.summary})`);
+            } else {
+              // Regular calendar event - also block this slot
+              blockedSlots.add(timeSlot);
+              console.log(`   📅 Blocked slot from Calendar Event: ${timeSlot} (${event.summary})`);
+            }
+          } else if (event.start && event.start.date) {
+            // All-day event (like blocked whole day)
+            if (isBlockedSlot) {
+              console.log(`   🚫 Whole day blocked from Calendar: ${event.summary}`);
+              // Block all time slots for whole day events
+              for (let hour = 9; hour < 18; hour++) {
+                const timeSlot = `${hour.toString().padStart(2, '0')}:00:00`;
+                blockedSlots.add(timeSlot);
+              }
+            }
           }
         });
       }
@@ -225,12 +245,18 @@ class AvailabilityCalendarService {
           );
           
           // Filter out events created by our own system to avoid circular blocking
-          googleCalendarEvents = busySlots.filter(slot => 
-            !slot.title.toLowerCase().includes('littleminds') && 
-            !slot.title.toLowerCase().includes('session') &&
-            !slot.title.toLowerCase().includes('therapy') &&
-            !slot.title.toLowerCase().includes('kuttikal')
-          );
+          // BUT INCLUDE blocked time slots created by psychologist dashboard
+          googleCalendarEvents = busySlots.filter(slot => {
+            const title = slot.title.toLowerCase();
+            const isBlockedSlot = title.includes('🚫 blocked') || title.includes('blocked');
+            const isSystemEvent = title.includes('littleminds') || 
+                                 title.includes('session') ||
+                                 title.includes('therapy') ||
+                                 title.includes('kuttikal');
+            
+            // Include blocked slots, exclude system events
+            return isBlockedSlot || !isSystemEvent;
+          });
           
           console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events`);
         } catch (calendarError) {

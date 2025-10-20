@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const psychologistController = require('../controllers/psychologistController');
+const timeBlockingController = require('../controllers/timeBlockingController');
 const { authenticateToken, requirePsychologist } = require('../middleware/auth');
 const { 
   validatePsychologistProfile,
@@ -33,5 +34,10 @@ router.get('/packages', psychologistController.getPackages);
 router.post('/packages', validatePackage, psychologistController.createPackage);
 router.put('/packages/:packageId', validatePackage, psychologistController.updatePackage);
 router.delete('/packages/:packageId', psychologistController.deletePackage);
+
+// Time blocking management
+router.post('/block-time', timeBlockingController.blockTimeSlots);
+router.post('/unblock-time', timeBlockingController.unblockTimeSlots);
+router.get('/blocked-time', timeBlockingController.getBlockedTimeSlots);
 
 module.exports = router;
