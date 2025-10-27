@@ -34,6 +34,7 @@ const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
 const betterParentingRoutes = require('./routes/betterParenting');
+const assessmentsRoutes = require('./routes/assessments');
 const securityRoutes = require('./routes/security');
 
 const app = express();
@@ -1065,6 +1066,7 @@ app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/counselling', counsellingRoutes);
 app.use('/api/better-parenting', betterParentingRoutes);
+app.use('/api/assessments', assessmentsRoutes);
 app.use('/api/security', securityRoutes);
 
 // 404 handler
