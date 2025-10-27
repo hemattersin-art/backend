@@ -33,6 +33,7 @@ const calendarSyncService = require('./services/calendarSyncService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
+const betterParentingRoutes = require('./routes/betterParenting');
 const securityRoutes = require('./routes/security');
 
 const app = express();
@@ -1063,6 +1064,7 @@ app.use('/api', oauthRoutes);
 app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/counselling', counsellingRoutes);
+app.use('/api/better-parenting', betterParentingRoutes);
 app.use('/api/security', securityRoutes);
 
 // 404 handler
