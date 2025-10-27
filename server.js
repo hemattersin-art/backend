@@ -2,6 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { 
+  createRateLimiters, 
+  requestSizeLimiter, 
+  memoryMonitor, 
+  ipFilter, 
+  requestValidator 
+} = require('./middleware/security');
+const securityMonitor = require('./utils/securityMonitor');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
@@ -25,28 +33,60 @@ const calendarSyncService = require('./services/calendarSyncService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
+const securityRoutes = require('./routes/security');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// Security middleware
-app.use(helmet());
+// Initialize advanced security middleware
+const {
+  generalLimiter,
+  authLimiter,
+  uploadLimiter,
+  passwordResetLimiter,
+  emailVerificationLimiter
+} = createRateLimiters();
 
-// Rate limiting - more lenient in development
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // 1000 requests in development, 100 in production
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use(limiter);
+// Security middleware stack
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false
+}));
 
-// CORS configuration
+// CORS configuration (MUST be before security middleware)
 app.use(cors({
   origin: ['https://kutikkal-one.vercel.app', 'http://localhost:3000', 'http://localhost:3001'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
 }));
+
+// IP filtering only (bot detection removed)
+app.use(ipFilter);
+
+// Request validation and size limiting
+app.use(requestValidator);
+app.use(requestSizeLimiter);
+
+// Memory monitoring
+app.use(memoryMonitor);
+
+// Progressive slow down removed (was causing IPv6 issues)
+
+// General rate limiting
+app.use(generalLimiter);
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -61,6 +101,21 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     message: 'Kuttikal Backend is running',
     timestamp: new Date().toISOString()
+  });
+});
+
+// Security monitoring endpoint (admin only)
+app.get('/api/security/status', (req, res) => {
+  const summary = securityMonitor.getSecuritySummary();
+  const recentEvents = securityMonitor.getRecentEvents(20);
+  
+  res.json({
+    success: true,
+    data: {
+      summary,
+      recentEvents,
+      timestamp: new Date().toISOString()
+    }
   });
 });
 
@@ -989,7 +1044,7 @@ app.get('/api/debug/client-sessions/:clientId', async (req, res) => {
 // This is now handled by the availability routes with better Google Calendar integration
 
 // API routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/psychologists', psychologistRoutes);
 app.use('/api/sessions', sessionRoutes);
@@ -1003,11 +1058,12 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/free-assessments', freeAssessmentRoutes);
 app.use('/api/free-assessment-timeslots', freeAssessmentTimeslotRoutes);
-app.use('/api/email-verification', emailVerificationRoutes);
+app.use('/api/email-verification', emailVerificationLimiter, emailVerificationRoutes);
 app.use('/api', oauthRoutes);
 app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/counselling', counsellingRoutes);
+app.use('/api/security', securityRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

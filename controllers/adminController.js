@@ -293,7 +293,7 @@ const getAllPsychologists = async (req, res) => {
     console.log('=== getAllPsychologists function called ===');
     console.log('Query params:', req.query);
     
-    const { page = 1, limit = 10, search, sort = 'created_at', order = 'desc' } = req.query;
+    const { page = 1, limit = 100, search, sort = 'created_at', order = 'desc' } = req.query;
 
     // Fetch psychologists directly from psychologists table with pagination
     const offset = (page - 1) * limit;
@@ -851,7 +851,7 @@ const createPsychologist = async (req, res) => {
   try {
     console.log('=== createPsychologist function called ===');
     console.log('Request body:', req.body);
-    const { 
+    let { 
       email, 
       password, 
       first_name, 
@@ -868,6 +868,11 @@ const createPsychologist = async (req, res) => {
       price, // Individual session price
       cover_image_url // Doctor's profile image
     } = req.body;
+
+    // Keep email as-is (don't normalize dots away)
+    if (typeof email === 'string') {
+      email = email.trim().toLowerCase();
+    }
 
     // Check if psychologist already exists with this email
     const { data: existingPsychologist } = await supabase

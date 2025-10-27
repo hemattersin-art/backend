@@ -214,6 +214,11 @@ const googleLogin = async (req, res) => {
       );
     }
 
+    // Normalize email to ensure consistency with login validation
+    if (typeof email === 'string') {
+      email = email.trim().toLowerCase();
+    }
+
     // Check if user already exists
     let user = null;
     let userRole = 'client'; // Default role for Google sign-ins
@@ -414,6 +419,61 @@ const googleLogin = async (req, res) => {
   }
 };
 
+// Helper function to find user with flexible Gmail dot handling
+const findUserWithFlexibleEmail = async (table, email) => {
+  // First try exact match
+  let { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq('email', email)
+    .single();
+  
+  if (data && !error) {
+    return { data, error };
+  }
+  
+  // If Gmail and no exact match, try without dots
+  if (email.includes('@gmail.com')) {
+    const [localPart, domain] = email.split('@');
+    const emailWithoutDots = localPart.replace(/\./g, '') + '@' + domain;
+    
+    const { data: dataWithoutDots, error: errorWithoutDots } = await supabase
+      .from(table)
+      .select('*')
+      .eq('email', emailWithoutDots)
+      .single();
+    
+    if (dataWithoutDots && !errorWithoutDots) {
+      return { data: dataWithoutDots, error: errorWithoutDots };
+    }
+  }
+  
+  // If Gmail and no match without dots, try with dots added
+  if (email.includes('@gmail.com')) {
+    const [localPart, domain] = email.split('@');
+    // Try common dot patterns
+    const dotPatterns = [
+      localPart.charAt(0) + '.' + localPart.slice(1), // first char + dot + rest
+      localPart.slice(0, -1) + '.' + localPart.slice(-1), // rest + dot + last char
+    ];
+    
+    for (const dotPattern of dotPatterns) {
+      const emailWithDots = dotPattern + '@' + domain;
+      const { data: dataWithDots, error: errorWithDots } = await supabase
+        .from(table)
+        .select('*')
+        .eq('email', emailWithDots)
+        .single();
+      
+      if (dataWithDots && !errorWithDots) {
+        return { data: dataWithDots, error: errorWithDots };
+      }
+    }
+  }
+  
+  return { data: null, error: { message: 'User not found' } };
+};
+
 // User login
 const login = async (req, res) => {
   try {
@@ -422,12 +482,8 @@ const login = async (req, res) => {
       email = email.trim().toLowerCase();
     }
 
-    // First check if it's a psychologist
-    const { data: psychologist, error: psychologistError } = await supabase
-      .from('psychologists')
-      .select('*')
-      .eq('email', email)
-      .single();
+    // First check if it's a psychologist with flexible email matching
+    const { data: psychologist, error: psychologistError } = await findUserWithFlexibleEmail('psychologists', email);
 
     if (psychologist && !psychologistError) {
       // Verify password for psychologist
@@ -460,23 +516,15 @@ const login = async (req, res) => {
     let user = null;
     let userRole = null;
     
-    // Check clients table first
-    const { data: client, error: clientError } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('email', email)
-      .single();
+    // Check clients table first with flexible email matching
+    const { data: client, error: clientError } = await findUserWithFlexibleEmail('clients', email);
 
     if (client && !clientError) {
       user = client;
       userRole = 'client';
     } else {
-      // Check users table for admin roles
-      const { data: adminUser, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', email)
-        .single();
+      // Check users table for admin roles with flexible email matching
+      const { data: adminUser, error: userError } = await findUserWithFlexibleEmail('users', email);
 
       if (adminUser && !userError) {
         user = adminUser;

@@ -110,6 +110,17 @@ class CalendarSyncService {
     );
 
     if (!syncResult.success) {
+      // Handle token expiration gracefully
+      if (syncResult.error && syncResult.error.includes('expired')) {
+        console.warn('⚠️ Google Calendar sync skipped due to expired tokens for psychologist:', psychologist.email);
+        console.warn('💡 Psychologist needs to reconnect Google Calendar in settings');
+        return {
+          success: true,
+          message: 'Calendar sync skipped - Google Calendar connection expired',
+          blockedSlots: [],
+          errors: ['Google Calendar connection has expired. Please reconnect in settings.']
+        };
+      }
       throw new Error(syncResult.error);
     }
 

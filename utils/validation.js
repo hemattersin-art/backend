@@ -17,7 +17,6 @@ const handleValidationErrors = (req, res, next) => {
 const validateClientRegistration = [
   body('email')
     .isEmail()
-    .normalizeEmail()
     .withMessage('Please provide a valid email address'),
   body('password')
     .isLength({ min: 6 })
@@ -29,7 +28,6 @@ const validateClientRegistration = [
 const validateUserLogin = [
   body('email')
     .isEmail()
-    .normalizeEmail()
     .withMessage('Please provide a valid email address'),
   body('password')
     .notEmpty()

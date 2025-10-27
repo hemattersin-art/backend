@@ -9,7 +9,7 @@ const { body, validationResult } = require('express-validator');
  * Send OTP to email for verification
  */
 router.post('/send-otp', [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().withMessage('Valid email is required'),
   body('verification_type').optional().isIn(['registration', 'password_reset', 'email_change']).withMessage('Invalid verification type'),
   body('user_role').optional().isIn(['client', 'psychologist', 'admin']).withMessage('Invalid user role')
 ], async (req, res) => {
@@ -50,7 +50,7 @@ router.post('/send-otp', [
  * Verify OTP code
  */
 router.post('/verify-otp', [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().withMessage('Valid email is required'),
   body('otp').isLength({ min: 6, max: 6 }).isNumeric().withMessage('Valid 6-digit OTP is required'),
   body('verification_type').optional().isIn(['registration', 'password_reset', 'email_change']).withMessage('Invalid verification type')
 ], async (req, res) => {
@@ -128,7 +128,7 @@ router.get('/check-status/:email', [
  * Resend OTP to email
  */
 router.post('/resend-otp', [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().withMessage('Valid email is required'),
   body('verification_type').optional().isIn(['registration', 'password_reset', 'email_change']).withMessage('Invalid verification type'),
   body('user_role').optional().isIn(['client', 'psychologist', 'admin']).withMessage('Invalid user role')
 ], async (req, res) => {

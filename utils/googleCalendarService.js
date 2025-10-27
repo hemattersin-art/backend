@@ -82,6 +82,14 @@ class GoogleCalendarService {
       };
     } catch (error) {
       console.error('Error refreshing access token:', error);
+      
+      // Handle specific token expiration errors
+      if (error.message && error.message.includes('invalid_grant')) {
+        console.error('🚨 Google Calendar refresh token has expired or been revoked');
+        console.error('💡 The psychologist needs to reconnect their Google Calendar');
+        throw new Error('Google Calendar connection has expired. Please reconnect your Google Calendar in settings.');
+      }
+      
       throw error;
     }
   }

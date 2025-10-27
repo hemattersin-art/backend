@@ -1,0 +1,530 @@
+[
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:13.383Z",
+    "url": "/api/admin/stats/platform?",
+    "id": 1761315073383.446
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:13.384Z",
+    "url": "/api/admin/stats/platform?",
+    "id": 1761315073384.252
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:19.680Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315079680.5896
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:19.682Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315079682.0613
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:40.065Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315100065.9312
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:11:40.067Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315100067.0547
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:12:28.968Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315148968.075
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "curl/8.7.1",
+    "timestamp": "2025-10-24T14:12:42.674Z",
+    "url": "/api/security/alerts",
+    "id": 1761315162675.5286
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:13:10.247Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315190247.683
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:13:17.612Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315197612.7786
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:13:36.135Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315216135.9966
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:09.580Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315249580.1946
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:20.086Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315260086.059
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:31.542Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315271542.6174
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:31.543Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315271543.065
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:31.546Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315271546.3765
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:31.551Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315271551.8435
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:35.136Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315275136.7866
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:35.138Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315275138.5845
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:14:35.140Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315275140.2192
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:15.469Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315315470.6335
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:15.473Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315315473.1052
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:15.488Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315315488.8254
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:15.491Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315315491.7036
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:26.318Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315326318.2722
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:26.320Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315326320.8767
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:26.321Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315326321.3
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:54.522Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315354522.5154
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:54.524Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315354524.4182
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:54.526Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315354526.387
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:15:54.527Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315354527.791
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:34.844Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315394844.5918
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:34.846Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315394846.891
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:34.848Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315394848.616
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:34.852Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315394852.0781
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:55.086Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315415086.7568
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:55.088Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315415088.9207
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:55.091Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315415091.82
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:16:55.100Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315415100.0083
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:17:00.466Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315420466.3215
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:17:00.469Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315420469.452
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:17:00.471Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315420471.7063
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:18:00.456Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315480456.622
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:00.458Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315540458.273
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.835Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315575835.0642
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.836Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315575836.225
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.840Z",
+    "url": "/api/security/alerts?limit=10&acknowledged=false",
+    "id": 1761315575840.1875
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.843Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315575843.6816
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.908Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315575908.564
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:19:35.915Z",
+    "url": "/api/admin/psychologists?",
+    "id": 1761315575915.8518
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:05.756Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315725756.0386
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:11.013Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315731013.6328
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:14.736Z",
+    "url": "/api/security/test",
+    "id": 1761315734736.3752
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:17.234Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315737234.0955
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:20.488Z",
+    "url": "/api/security/test",
+    "id": 1761315740488.8367
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:22:26.552Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315746552.389
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "curl/8.7.1",
+    "timestamp": "2025-10-24T14:23:11.026Z",
+    "url": "/api/security/test",
+    "id": 1761315791026.3079
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "curl/8.7.1",
+    "timestamp": "2025-10-24T14:23:27.917Z",
+    "url": "/api/security/test",
+    "id": 1761315807917.398
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:24:46.784Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315886784.3186
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:39.553Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315939553.1782
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:39.566Z",
+    "url": "/api/auth/profile",
+    "id": 1761315939566.383
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:40.349Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315940349.3962
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:40.355Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315940355.9546
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:42.026Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315942026.723
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "timestamp": "2025-10-24T14:25:42.031Z",
+    "url": "/api/counselling?limit=50",
+    "id": 1761315942031.8804
+  },
+  {
+    "type": "BOT_DETECTED",
+    "ip": "::1",
+    "userAgent": "curl/8.7.1",
+    "timestamp": "2025-10-24T14:28:59.580Z",
+    "url": "/api/security/test",
+    "id": 1761316139580.378
+  }
+]
