@@ -156,7 +156,11 @@ const createCounsellingService = async (req, res) => {
       testimonials = [],
       benefits_image_url,
       right_image_url,
-      mobile_image_url
+      mobile_image_url,
+      videos = [],
+      reviews = [],
+      blog_teaser_enabled = true,
+      blog_teaser_tag = null
     } = req.body;
 
     if (!slug || !hero_title) {
@@ -200,6 +204,10 @@ const createCounsellingService = async (req, res) => {
         benefits_image_url,
         right_image_url,
         mobile_image_url,
+        videos: validateJsonArray(videos, 'videos'),
+        reviews: validateJsonArray(reviews, 'reviews'),
+        blog_teaser_enabled,
+        blog_teaser_tag,
         updated_by: req.user?.id
       }])
       .select('*')
@@ -235,7 +243,11 @@ const updateCounsellingService = async (req, res) => {
       testimonials,
       benefits_image_url,
       right_image_url,
-      mobile_image_url
+      mobile_image_url,
+      videos,
+      reviews,
+      blog_teaser_enabled,
+      blog_teaser_tag
     } = req.body;
 
     // Check if service exists
@@ -270,6 +282,10 @@ const updateCounsellingService = async (req, res) => {
     if (benefits_image_url !== undefined) updateData.benefits_image_url = benefits_image_url;
     if (right_image_url !== undefined) updateData.right_image_url = right_image_url;
     if (mobile_image_url !== undefined) updateData.mobile_image_url = mobile_image_url;
+    if (videos !== undefined) updateData.videos = videos;
+    if (reviews !== undefined) updateData.reviews = reviews;
+    if (blog_teaser_enabled !== undefined) updateData.blog_teaser_enabled = blog_teaser_enabled;
+    if (blog_teaser_tag !== undefined) updateData.blog_teaser_tag = blog_teaser_tag;
     updateData.updated_by = req.user?.id;
 
     const { data: service, error } = await supabase

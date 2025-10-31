@@ -86,6 +86,7 @@ const getAllUsers = async (req, res) => {
         description: psych.description || '',
         experience_years: psych.experience_years || 0,
         area_of_expertise: psych.area_of_expertise || [],
+        personality_traits: psych.personality_traits || [], // NEW
         availability: [], // Will be populated below
         cover_image_url: psych.cover_image_url || null
       }));
@@ -332,6 +333,7 @@ const getAllPsychologists = async (req, res) => {
       description: psych.description || '',
       experience_years: psych.experience_years || 0,
       area_of_expertise: psych.area_of_expertise || [],
+      personality_traits: psych.personality_traits || [], // NEW
       availability: [], // Will be populated below
       cover_image_url: psych.cover_image_url || null
     }));
@@ -866,7 +868,8 @@ const createPsychologist = async (req, res) => {
       availability,
       packages, // New field for dynamic packages
       price, // Individual session price
-      cover_image_url // Doctor's profile image
+      cover_image_url, // Doctor's profile image
+      personality_traits // NEW: array of strings like ['Happy','Energetic']
     } = req.body;
 
     // Keep email as-is (don't normalize dots away)
@@ -903,6 +906,7 @@ const createPsychologist = async (req, res) => {
         pg_college,
         phd_college,
         area_of_expertise,
+        personality_traits, // NEW
         description,
         experience_years: experience_years || 0,
         individual_session_price: price ? parseInt(price) : null,

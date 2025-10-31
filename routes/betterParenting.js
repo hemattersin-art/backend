@@ -1,28 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+
 const {
-  getAllBetterParentingPages,
-  getAllBetterParentingPagesAdmin,
-  getBetterParentingPageBySlug,
-  getBetterParentingPageById,
-  createBetterParentingPage,
-  updateBetterParentingPage,
-  deleteBetterParentingPage
+  getAllBetterParenting,
+  getAllBetterParentingAdmin,
+  getBetterParentingBySlug,
+  getBetterParentingById,
+  createBetterParenting,
+  updateBetterParenting,
+  deleteBetterParenting,
 } = require('../controllers/betterParentingController');
 
-// Public routes
-router.get('/', getAllBetterParentingPages);
+// Admin (before public slug)
+router.get('/admin', authenticateToken, requireAdmin, getAllBetterParentingAdmin);
+router.get('/admin/:id', authenticateToken, requireAdmin, getBetterParentingById);
+router.post('/admin', authenticateToken, requireAdmin, createBetterParenting);
+router.put('/admin/:id', authenticateToken, requireAdmin, updateBetterParenting);
+router.delete('/admin/:id', authenticateToken, requireAdmin, deleteBetterParenting);
 
-// Admin routes (require authentication and admin role)
-router.get('/admin', authenticateToken, requireAdmin, getAllBetterParentingPagesAdmin);
-router.get('/admin/:id', authenticateToken, requireAdmin, getBetterParentingPageById);
-router.post('/admin', authenticateToken, requireAdmin, createBetterParentingPage);
-router.put('/admin/:id', authenticateToken, requireAdmin, updateBetterParentingPage);
-router.delete('/admin/:id', authenticateToken, requireAdmin, deleteBetterParentingPage);
-
-// Public slug route (must be after admin routes)
-router.get('/:slug', getBetterParentingPageBySlug);
+// Public
+router.get('/', getAllBetterParenting);
+router.get('/:slug', getBetterParentingBySlug);
 
 module.exports = router;
+
 

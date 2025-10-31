@@ -33,9 +33,9 @@ const calendarSyncService = require('./services/calendarSyncService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
-const betterParentingRoutes = require('./routes/betterParenting');
 const assessmentsRoutes = require('./routes/assessments');
 const securityRoutes = require('./routes/security');
+const betterParentingRoutes = require('./routes/betterParenting');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -432,6 +432,7 @@ app.get('/api/public/psychologists', async (req, res) => {
         first_name,
         last_name,
         area_of_expertise,
+        personality_traits,
         description,
         experience_years,
         ug_college,
@@ -487,6 +488,7 @@ app.get('/api/public/psychologists', async (req, res) => {
         email: psych.email,
         phone: psych.phone || 'N/A',
         area_of_expertise: psych.area_of_expertise || [],
+        personality_traits: psych.personality_traits || [],
         experience_years: psych.experience_years || 0,
         ug_college: psych.ug_college || 'N/A',
         pg_college: psych.pg_college || 'N/A',
@@ -1065,8 +1067,8 @@ app.use('/api', oauthRoutes);
 app.use('/api/psychologists/google-calendar', googleCalendarRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/counselling', counsellingRoutes);
-app.use('/api/better-parenting', betterParentingRoutes);
 app.use('/api/assessments', assessmentsRoutes);
+app.use('/api/better-parenting', betterParentingRoutes);
 app.use('/api/security', securityRoutes);
 
 // 404 handler
