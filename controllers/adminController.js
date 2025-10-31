@@ -1136,6 +1136,7 @@ const updatePsychologist = async (req, res) => {
 
         if (targetUserId) {
           const hashedPassword = await hashPassword(password);
+          // Update linked user account (if present)
           const { error: userPasswordUpdateError } = await supabase
             .from('users')
             .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
@@ -1143,7 +1144,16 @@ const updatePsychologist = async (req, res) => {
 
           if (userPasswordUpdateError) {
             console.error('❌ Error updating user password:', userPasswordUpdateError);
-            // Skip password update error but continue with profile update
+          }
+
+          // Ensure psychologist can login with the new password as well
+          const { error: psychPwUpdateError } = await supabase
+            .from('psychologists')
+            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
+            .eq('id', psychologistId);
+
+          if (psychPwUpdateError) {
+            console.error('❌ Error updating psychologist password_hash:', psychPwUpdateError);
           }
         }
       } catch (pwError) {

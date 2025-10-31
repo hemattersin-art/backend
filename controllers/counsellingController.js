@@ -149,11 +149,13 @@ const createCounsellingService = async (req, res) => {
       seo_title,
       hero_title,
       hero_subtext,
+      therapists_heading,
       hero_image_url,
       benefits = [],
       types = [],
       faqs = [],
       testimonials = [],
+      info_cards = [],
       benefits_image_url,
       right_image_url,
       mobile_image_url,
@@ -196,11 +198,13 @@ const createCounsellingService = async (req, res) => {
         seo_title,
         hero_title,
         hero_subtext,
+        therapists_heading,
         hero_image_url,
         benefits: validateJsonArray(benefits, 'benefits'),
         types: validateJsonArray(types, 'types'),
         faqs: validateJsonArray(faqs, 'faqs'),
         testimonials: validateJsonArray(testimonials, 'testimonials'),
+        info_cards: validateJsonArray(info_cards, 'info_cards'),
         benefits_image_url,
         right_image_url,
         mobile_image_url,
@@ -236,11 +240,13 @@ const updateCounsellingService = async (req, res) => {
       seo_title,
       hero_title,
       hero_subtext,
+      therapists_heading,
       hero_image_url,
       benefits,
       types,
       faqs,
       testimonials,
+      info_cards,
       benefits_image_url,
       right_image_url,
       mobile_image_url,
@@ -274,11 +280,13 @@ const updateCounsellingService = async (req, res) => {
     if (seo_title !== undefined) updateData.seo_title = seo_title;
     if (hero_title !== undefined) updateData.hero_title = hero_title;
     if (hero_subtext !== undefined) updateData.hero_subtext = hero_subtext;
+    if (therapists_heading !== undefined) updateData.therapists_heading = therapists_heading;
     if (hero_image_url !== undefined) updateData.hero_image_url = hero_image_url;
     if (benefits !== undefined) updateData.benefits = benefits;
     if (types !== undefined) updateData.types = types;
     if (faqs !== undefined) updateData.faqs = faqs;
     if (testimonials !== undefined) updateData.testimonials = testimonials;
+    if (info_cards !== undefined) updateData.info_cards = info_cards;
     if (benefits_image_url !== undefined) updateData.benefits_image_url = benefits_image_url;
     if (right_image_url !== undefined) updateData.right_image_url = right_image_url;
     if (mobile_image_url !== undefined) updateData.mobile_image_url = mobile_image_url;
@@ -287,6 +295,14 @@ const updateCounsellingService = async (req, res) => {
     if (blog_teaser_enabled !== undefined) updateData.blog_teaser_enabled = blog_teaser_enabled;
     if (blog_teaser_tag !== undefined) updateData.blog_teaser_tag = blog_teaser_tag;
     updateData.updated_by = req.user?.id;
+
+    // Keep only keys that exist on the table (based on fetched row)
+    const allowedKeys = new Set(Object.keys(existingService || {}));
+    Object.keys(updateData).forEach((k) => {
+      if (!allowedKeys.has(k)) {
+        delete updateData[k];
+      }
+    });
 
     const { data: service, error } = await supabase
       .from('counselling_services')

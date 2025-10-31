@@ -142,6 +142,7 @@ const createBetterParenting = async (req, res) => {
     // Step 2: prepare full payload, then keep only columns that exist in table
     const fullUpdate = {
       hero_subtext,
+      therapists_heading: body.therapists_heading,
       hero_image_url,
       benefits,
       benefits_title,
@@ -151,6 +152,7 @@ const createBetterParenting = async (req, res) => {
       right_image_url,
       mobile_image_url,
       faqs,
+      info_cards: Array.isArray(body.info_cards) ? body.info_cards : undefined,
       videos: Array.isArray(body.videos) ? body.videos : undefined,
       reviews: Array.isArray(body.reviews) ? body.reviews : undefined,
       blog_teaser_enabled: body.blog_teaser_enabled,
@@ -195,6 +197,7 @@ const updateBetterParenting = async (req, res) => {
       seo_title: src.seo_title,
       hero_title: src.hero_title,
       hero_subtext: src.hero_subtext,
+      therapists_heading: src.therapists_heading,
       hero_image_url: src.hero_image_url,
       benefits_title: src.benefits_title,
       benefits: Array.isArray(src.benefits) ? src.benefits : undefined,
@@ -204,6 +207,7 @@ const updateBetterParenting = async (req, res) => {
       right_image_url: src.right_image_url,
       mobile_image_url: src.mobile_image_url,
       faqs: Array.isArray(src.faqs) ? src.faqs : undefined,
+      info_cards: Array.isArray(src.info_cards) ? src.info_cards : undefined,
       videos: Array.isArray(src.videos) ? src.videos : undefined,
       reviews: Array.isArray(src.reviews) ? src.reviews : undefined,
       blog_teaser_enabled: src.blog_teaser_enabled,
