@@ -195,7 +195,7 @@ const bookSession = async (req, res) => {
 
     // Send WhatsApp notifications to both client and psychologist via Business API
     try {
-      console.log('📱 Sending WhatsApp notifications via Business API...');
+      console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -212,7 +212,7 @@ const bookSession = async (req, res) => {
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
-          console.log('✅ WhatsApp confirmation sent to client via Business API');
+          console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
         } else {
@@ -229,7 +229,7 @@ const bookSession = async (req, res) => {
         
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {
-          console.log('✅ WhatsApp notification sent to psychologist via Business API');
+          console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
         } else if (psychologistWaResult?.skipped) {
           console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
         } else {
@@ -566,7 +566,24 @@ const updateSessionStatus = async (req, res) => {
         updated_at: new Date().toISOString()
       })
       .eq('id', sessionId)
-      .select('*')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          phone_number,
+          email
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          phone,
+          email
+        )
+      `)
       .single();
 
     if (error) {
@@ -574,6 +591,65 @@ const updateSessionStatus = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to update session status')
       );
+    }
+
+    // Handle no-show status - send WhatsApp with reason request
+    if (status === 'noshow' || status === 'no_show') {
+      try {
+        console.log('📱 Handling no-show - sending WhatsApp notifications...');
+        const whatsappService = require('../utils/whatsappService');
+        
+        const client = updatedSession.client;
+        const psychologist = updatedSession.psychologist;
+        
+        if (client?.phone_number) {
+          const clientName = client.child_name || `${client.first_name || ''} ${client.last_name || ''}`.trim();
+          const psychologistName = `${psychologist?.first_name || ''} ${psychologist?.last_name || ''}`.trim();
+          const sessionDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
+            timeZone: 'Asia/Kolkata',
+            dateStyle: 'long',
+            timeStyle: 'short'
+          });
+
+          const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 XXXX XXXXXX';
+          const noShowMessage = `⚠️ No-Show Notice\n\n` +
+            `We noticed you didn't attend your scheduled session:\n\n` +
+            `📅 Date: ${sessionDateTime}\n` +
+            `👤 Psychologist: Dr. ${psychologistName}\n\n` +
+            `Please let us know the reason or contact our team to reschedule:\n` +
+            `📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@kuttikal.com'}\n` +
+            `📱 WhatsApp: ${supportPhone}\n\n` +
+            `We're here to help you reschedule or address any concerns.`;
+
+          const clientResult = await whatsappService.sendWhatsAppTextWithRetry(client.phone_number, noShowMessage);
+          if (clientResult?.success) {
+            console.log('✅ No-show WhatsApp sent to client');
+          } else {
+            console.warn('⚠️ Failed to send no-show WhatsApp to client');
+          }
+        }
+
+        // Also send email notification
+        try {
+          const emailService = require('../utils/emailService');
+          if (client?.email) {
+            await emailService.sendNoShowNotification({
+              to: client.email,
+              clientName: client.child_name || `${client.first_name || ''} ${client.last_name || ''}`.trim(),
+              psychologistName: `${psychologist?.first_name || ''} ${psychologist?.last_name || ''}`.trim(),
+              sessionDate: updatedSession.scheduled_date,
+              sessionTime: updatedSession.scheduled_time,
+              sessionId: updatedSession.id
+            });
+            console.log('✅ No-show email sent to client');
+          }
+        } catch (emailError) {
+          console.error('❌ Error sending no-show email:', emailError);
+        }
+      } catch (waError) {
+        console.error('❌ Error handling no-show notifications:', waError);
+        // Continue even if notifications fail
+      }
     }
 
     res.json(

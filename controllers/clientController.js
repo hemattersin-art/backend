@@ -441,7 +441,7 @@ const bookSession = async (req, res) => {
 
       // WhatsApp notifications via Business API (best-effort, non-blocking)
       try {
-        console.log('📱 Sending WhatsApp notifications via Business API...');
+        console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
         const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
         
         // Send WhatsApp to client
@@ -455,7 +455,7 @@ const bookSession = async (req, res) => {
           };
           const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
           if (clientWaResult?.success) {
-            console.log('✅ WhatsApp confirmation sent to client via Business API');
+            console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
           } else if (clientWaResult?.skipped) {
             console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
           } else {
@@ -472,7 +472,7 @@ const bookSession = async (req, res) => {
           
           const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
           if (psychologistWaResult?.success) {
-            console.log('✅ WhatsApp notification sent to psychologist via Business API');
+            console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
           } else if (psychologistWaResult?.skipped) {
             console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
           } else {
@@ -502,6 +502,20 @@ const bookSession = async (req, res) => {
         } : null
       }, 'Session booked successfully')
     );
+
+    // PRIORITY: Check and send reminder immediately if session is 12 hours away
+    // This gives new bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
+    }
 
   } catch (error) {
     console.error('❌ Session booking error:', error);
@@ -562,6 +576,19 @@ const cancelSession = async (req, res) => {
       );
     }
 
+    // Get client and psychologist details for notifications
+    const { data: clientDetails } = await supabase
+      .from('clients')
+      .select('first_name, last_name, child_name, phone_number, email')
+      .eq('id', client.id)
+      .single();
+
+    const { data: psychologistDetails } = await supabase
+      .from('psychologists')
+      .select('first_name, last_name, phone, email')
+      .eq('id', session.psychologist_id)
+      .single();
+
     // Update session status
     const { data: updatedSession, error } = await supabase
       .from('sessions')
@@ -578,6 +605,99 @@ const cancelSession = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to cancel session')
       );
+    }
+
+    // Send email notifications for cancellation
+    try {
+      console.log('📧 Sending cancellation email notifications...');
+      const emailService = require('../utils/emailService');
+      
+      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+      const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+      const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+
+      // Send cancellation email to client
+      if (clientDetails?.email) {
+        await emailService.sendCancellationNotification({
+          to: clientDetails.email,
+          clientName,
+          psychologistName,
+          sessionDate: session.scheduled_date,
+          sessionTime: session.scheduled_time,
+          sessionId: session.id
+        });
+      }
+
+      // Send cancellation email to psychologist
+      if (psychologistDetails?.email) {
+        await emailService.sendCancellationNotification({
+          to: psychologistDetails.email,
+          clientName,
+          psychologistName,
+          sessionDate: session.scheduled_date,
+          sessionTime: session.scheduled_time,
+          sessionId: session.id,
+          isPsychologist: true
+        });
+      }
+
+      console.log('✅ Cancellation emails sent successfully');
+    } catch (emailError) {
+      console.error('❌ Error sending cancellation emails:', emailError);
+      // Continue even if email fails
+    }
+
+    // Send WhatsApp notifications for cancellation
+    try {
+      console.log('📱 Sending WhatsApp notifications for cancellation...');
+      const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+      const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+      const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+
+      // Send WhatsApp to client
+      if (clientDetails?.phone_number) {
+        const clientMessage = `❌ Your therapy session has been cancelled.\n\n` +
+          `📅 Date: ${sessionDateTime}\n` +
+          `👤 Psychologist: Dr. ${psychologistName}\n\n` +
+          `If you need to reschedule, please book a new session. Thank you!`;
+
+        const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
+        if (clientResult?.success) {
+          console.log('✅ Cancellation WhatsApp sent to client');
+        } else {
+          console.warn('⚠️ Failed to send cancellation WhatsApp to client');
+        }
+      }
+
+      // Send WhatsApp to psychologist
+      if (psychologistDetails?.phone) {
+        const psychologistMessage = `❌ Session cancelled with ${clientName}.\n\n` +
+          `📅 Date: ${sessionDateTime}\n` +
+          `👤 Client: ${clientName}\n` +
+          `Session ID: ${session.id}`;
+
+        const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
+        if (psychologistResult?.success) {
+          console.log('✅ Cancellation WhatsApp sent to psychologist');
+        } else {
+          console.warn('⚠️ Failed to send cancellation WhatsApp to psychologist');
+        }
+      }
+      
+      console.log('✅ WhatsApp notifications sent for cancellation');
+    } catch (waError) {
+      console.error('❌ Error sending cancellation WhatsApp:', waError);
+      // Continue even if WhatsApp fails
     }
 
     res.json(
@@ -908,16 +1028,82 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // Update session with new date/time
+    // Get client and psychologist details for Meet link and notifications
+    const { data: clientDetails } = await supabase
+      .from('clients')
+      .select('first_name, last_name, child_name, phone_number, email')
+      .eq('id', client.id)
+      .single();
+
+    const { data: psychologistDetails } = await supabase
+      .from('psychologists')
+      .select('first_name, last_name, phone, email')
+      .eq('id', psychologist_id)
+      .single();
+
+    // Create new Google Meet link for rescheduled session
+    let meetData = null;
+    const meetLinkService = require('../utils/meetLinkService');
+    try {
+      console.log('🔄 Creating new Google Meet link for rescheduled session...');
+      
+      const sessionDataForMeet = {
+        summary: `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
+        description: `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
+        startDate: new_date,
+        startTime: new_time,
+        endTime: addMinutesToTime(formatTime(new_time), 60)
+      };
+
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionDataForMeet);
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+        };
+        console.log('✅ New Google Meet link created for rescheduled session');
+      } else {
+        // Use existing meet link if new one fails
+        meetData = {
+          meetLink: session.google_meet_link || null,
+          eventId: session.google_calendar_event_id || null,
+          calendarLink: null,
+        };
+        console.log('⚠️ Using existing Meet link as fallback');
+      }
+    } catch (meetError) {
+      console.error('❌ Meet link creation failed:', meetError);
+      // Use existing meet link as fallback
+      meetData = {
+        meetLink: session.google_meet_link || null,
+        eventId: session.google_calendar_event_id || null,
+        calendarLink: null,
+      };
+    }
+
+    // Update session with new date/time and new Meet link
+    const updateData = {
+      scheduled_date: formatDate(new_date),
+      scheduled_time: formatTime(new_time),
+      status: 'rescheduled',
+      reschedule_count: (session.reschedule_count || 0) + 1,
+      updated_at: new Date().toISOString()
+    };
+
+    // Add new Meet link data if available
+    if (meetData?.meetLink) {
+      updateData.google_meet_link = meetData.meetLink;
+      updateData.google_calendar_event_id = meetData.eventId;
+      if (meetData.calendarLink) {
+        updateData.google_calendar_link = meetData.calendarLink;
+      }
+    }
+
     const { data: updatedSession, error: updateError } = await supabase
       .from('sessions')
-      .update({
-        scheduled_date: formatDate(new_date),
-        scheduled_time: formatTime(new_time),
-        status: 'rescheduled',
-        reschedule_count: (session.reschedule_count || 0) + 1,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', sessionId)
       .select('*')
       .single();
@@ -932,15 +1118,107 @@ const rescheduleSession = async (req, res) => {
     // Create notification for psychologist
     await createRescheduleNotification(session, updatedSession, client.id);
 
-    // Send email notifications (keeping this functionality)
+    // Send email notifications
     try {
-      await sendRescheduleEmails(session, updatedSession, psychologist_id);
+      const emailService = require('../utils/emailService');
+      await emailService.sendRescheduleNotification(
+        {
+          clientName: clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim(),
+          psychologistName: `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim(),
+          clientEmail: clientDetails?.email,
+          psychologistEmail: psychologistDetails?.email,
+          scheduledDate: updatedSession.scheduled_date,
+          scheduledTime: updatedSession.scheduled_time,
+          sessionId: updatedSession.id,
+          meetLink: meetData?.meetLink
+        },
+        session.scheduled_date,
+        session.scheduled_time
+      );
+      console.log('✅ Reschedule emails sent successfully');
     } catch (emailError) {
       console.error('Error sending reschedule emails:', emailError);
       // Continue even if email fails
     }
 
+    // Send WhatsApp notifications for reschedule
+    try {
+      console.log('📱 Sending WhatsApp notifications for reschedule...');
+      const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+      const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+      
+      const originalDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+      const newDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+
+      // Send WhatsApp to client
+      if (clientDetails?.phone_number) {
+        const clientMessage = `🔄 Your therapy session has been rescheduled.\n\n` +
+          `❌ Old: ${originalDateTime}\n` +
+          `✅ New: ${newDateTime}\n\n` +
+          (meetData?.meetLink 
+            ? `🔗 New Google Meet Link: ${meetData.meetLink}\n\n`
+            : '') +
+          `Please update your calendar. We look forward to seeing you at the new time!`;
+
+        const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
+        if (clientResult?.success) {
+          console.log('✅ Reschedule WhatsApp sent to client');
+        } else {
+          console.warn('⚠️ Failed to send reschedule WhatsApp to client');
+        }
+      }
+
+      // Send WhatsApp to psychologist
+      if (psychologistDetails?.phone) {
+        const psychologistMessage = `🔄 Session rescheduled with ${clientName}.\n\n` +
+          `❌ Old: ${originalDateTime}\n` +
+          `✅ New: ${newDateTime}\n\n` +
+          `👤 Client: ${clientName}\n` +
+          (meetData?.meetLink 
+            ? `🔗 New Google Meet Link: ${meetData.meetLink}\n\n`
+            : '\n') +
+          `Session ID: ${session.id}`;
+
+        const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
+        if (psychologistResult?.success) {
+          console.log('✅ Reschedule WhatsApp sent to psychologist');
+        } else {
+          console.warn('⚠️ Failed to send reschedule WhatsApp to psychologist');
+        }
+      }
+      
+      console.log('✅ WhatsApp notifications sent for reschedule');
+    } catch (waError) {
+      console.error('❌ Error sending reschedule WhatsApp:', waError);
+      // Continue even if WhatsApp fails
+    }
+
     console.log('✅ Session rescheduled successfully');
+    
+    // PRIORITY: Check and send reminder immediately if rescheduled session is 12 hours away
+    // This gives rescheduled bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(updatedSession.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
+    }
+    
     res.json(
       successResponse(updatedSession, 'Session rescheduled successfully')
     );
@@ -1586,16 +1864,17 @@ const bookRemainingSession = async (req, res) => {
       // Continue even if update fails
     }
 
+    // Prepare names for notifications
+    const clientName = clientDetails.child_name || 
+                      `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+    const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
+
     // Send email notifications
     try {
       const emailService = require('../utils/emailService');
-      
-      const clientName = clientDetails.child_name || 
-                        `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
-      const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
       await emailService.sendSessionConfirmation({
-        clientEmail: clientDetails.user?.email || 'client@placeholder.com',
+        clientEmail: clientDetails.email || 'client@placeholder.com',
         psychologistEmail: psychologistDetails?.email || 'psychologist@placeholder.com',
         clientName,
         psychologistName,
@@ -1605,12 +1884,77 @@ const bookRemainingSession = async (req, res) => {
         meetLink: meetData.meetLink,
         price: 0
       });
+      console.log('✅ Email notifications sent successfully');
     } catch (emailError) {
-      console.error('Error sending email notifications:', emailError);
+      console.error('❌ Error sending email notifications:', emailError);
       // Continue even if email fails
     }
 
+    // Send WhatsApp messages to client and psychologist via UltraMsg
+    try {
+      console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+
+      // Send WhatsApp to client
+      const clientPhone = clientDetails.phone_number || null;
+      if (clientPhone && meetData?.meetLink) {
+        const clientDetails_wa = {
+          childName: clientDetails.child_name || clientDetails.first_name,
+          date: scheduled_date,
+          time: scheduled_time,
+          meetLink: meetData.meetLink,
+        };
+        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+        if (clientWaResult?.success) {
+          console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
+        } else if (clientWaResult?.skipped) {
+          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        } else {
+          console.warn('⚠️ Client WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+      }
+
+      // Send WhatsApp to psychologist
+      const psychologistPhone = psychologistDetails.phone || null;
+      if (psychologistPhone && meetData?.meetLink) {
+        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        
+        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+        if (psychologistWaResult?.success) {
+          console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
+        } else if (psychologistWaResult?.skipped) {
+          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+        } else {
+          console.warn('⚠️ Psychologist WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+      }
+      
+      console.log('✅ WhatsApp messages sent successfully via UltraMsg');
+    } catch (waError) {
+      console.error('❌ Error sending WhatsApp messages:', waError);
+      // Continue even if WhatsApp sending fails
+    }
+
     console.log('✅ Remaining session booked successfully');
+    
+    // PRIORITY: Check and send reminder immediately if remaining session booking is 12 hours away
+    // This gives new bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
+    }
+    
     res.status(201).json(
       successResponse({
         session,

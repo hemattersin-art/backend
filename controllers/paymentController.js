@@ -536,7 +536,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Send WhatsApp messages to client and psychologist
     try {
-      console.log('📱 Sending WhatsApp messages via Business API...');
+      console.log('📱 Sending WhatsApp messages via UltraMsg API...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -553,7 +553,7 @@ const handlePaymentSuccess = async (req, res) => {
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
-          console.log('✅ WhatsApp confirmation sent to client via Business API');
+          console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
         } else {
@@ -570,7 +570,7 @@ const handlePaymentSuccess = async (req, res) => {
         
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {
-          console.log('✅ WhatsApp notification sent to psychologist via Business API');
+          console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
         } else if (psychologistWaResult?.skipped) {
           console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
         } else {
@@ -580,7 +580,7 @@ const handlePaymentSuccess = async (req, res) => {
         console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
       }
       
-      console.log('✅ WhatsApp messages sent successfully via Business API');
+      console.log('✅ WhatsApp messages sent successfully via UltraMsg');
     } catch (whatsappError) {
       console.error('❌ Error sending WhatsApp messages:', whatsappError);
       // Continue even if WhatsApp sending fails
@@ -652,6 +652,20 @@ const handlePaymentSuccess = async (req, res) => {
       } catch (packageError) {
         console.error('❌ Exception while creating client package:', packageError);
       }
+    }
+
+    // PRIORITY: Check and send reminder immediately if session is 12 hours away
+    // This gives new bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
     }
 
     res.json({

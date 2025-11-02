@@ -1,4 +1,6 @@
-const supabase = require('../config/supabase');
+const supabaseConfig = require('../config/supabase');
+const supabase = supabaseConfig;
+const supabaseAdmin = supabaseConfig.supabaseAdmin;
 const { 
   successResponse, 
   errorResponse,
@@ -1531,8 +1533,8 @@ const createUser = async (req, res) => {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Create user
-    const { data: user, error: userError } = await supabase
+    // Create user (use admin client to bypass RLS)
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .insert([{
         email,
@@ -1549,8 +1551,8 @@ const createUser = async (req, res) => {
       );
     }
 
-    // Create client profile
-    const { data: client, error: clientError } = await supabase
+    // Create client profile (use admin client to bypass RLS)
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .insert([{
         user_id: user.id,
@@ -1566,11 +1568,17 @@ const createUser = async (req, res) => {
     if (clientError) {
       console.error('Client profile creation error:', clientError);
       // Delete user if profile creation fails
-      await supabase.from('users').delete().eq('id', user.id);
+      await supabaseAdmin.from('users').delete().eq('id', user.id);
       return res.status(500).json(
         errorResponse('Failed to create client profile')
       );
     }
+
+    console.log('✅ Client created:', {
+      userId: user.id,
+      clientId: client.id,
+      email: user.email
+    });
 
     res.status(201).json(
       successResponse({
@@ -1578,7 +1586,7 @@ const createUser = async (req, res) => {
           id: user.id,
           email: user.email,
           role: user.role,
-          profile: client
+          profile: client  // Contains client.id
         }
       }, 'Client created successfully')
     );
@@ -2029,6 +2037,7 @@ const rescheduleSession = async (req, res) => {
           first_name,
           last_name,
           child_name,
+          phone_number,
           user_id,
           users!inner(email)
         ),
@@ -2036,6 +2045,7 @@ const rescheduleSession = async (req, res) => {
           id,
           first_name,
           last_name,
+          phone,
           email
         )
       `)
@@ -2158,6 +2168,15 @@ const rescheduleSession = async (req, res) => {
       }
     }
 
+    // Get updated session with Meet link for notifications
+    const { data: sessionWithMeet } = await supabase
+      .from('sessions')
+      .select('google_meet_link')
+      .eq('id', sessionId)
+      .single();
+
+    const newMeetLink = sessionWithMeet?.google_meet_link || null;
+
     // Send reschedule notification emails
     try {
       const emailService = require('../utils/emailService');
@@ -2170,6 +2189,7 @@ const rescheduleSession = async (req, res) => {
         scheduledDate: new_date,
         scheduledTime: new_time,
         sessionId: session.id,
+        meetLink: newMeetLink,
         reason: reason || 'Admin rescheduled'
       }, oldSessionData.date, oldSessionData.time);
       
@@ -2177,6 +2197,74 @@ const rescheduleSession = async (req, res) => {
     } catch (emailError) {
       console.error('Error sending reschedule notification emails:', emailError);
       // Continue even if email sending fails
+    }
+
+    // Send WhatsApp notifications for reschedule
+    try {
+      console.log('📱 Sending WhatsApp notifications for admin reschedule...');
+      const whatsappService = require('../utils/whatsappService');
+      
+      // Use phone numbers already fetched from session query above
+      const clientPhone = session.clients.phone_number || null;
+      const psychologistPhone = session.psychologists.phone || null;
+
+      const clientName = session.clients.child_name || `${session.clients.first_name} ${session.clients.last_name}`;
+      const psychologistName = `${session.psychologists.first_name} ${session.psychologists.last_name}`;
+      
+      const originalDateTime = new Date(`${oldSessionData.date}T${oldSessionData.time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+      const newDateTime = new Date(`${new_date}T${new_time}`).toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'long',
+        timeStyle: 'short'
+      });
+
+      // Send WhatsApp to client
+      if (clientPhone) {
+        const clientMessage = `🔄 Your therapy session has been rescheduled by admin.\n\n` +
+          `❌ Old: ${originalDateTime}\n` +
+          `✅ New: ${newDateTime}\n\n` +
+          (newMeetLink 
+            ? `🔗 New Google Meet Link: ${newMeetLink}\n\n`
+            : '') +
+          `${reason ? `Reason: ${reason}\n\n` : ''}` +
+          `Please update your calendar. We look forward to seeing you at the new time!`;
+
+        const clientResult = await whatsappService.sendWhatsAppTextWithRetry(clientPhone, clientMessage);
+        if (clientResult?.success) {
+          console.log('✅ Reschedule WhatsApp sent to client');
+        } else {
+          console.warn('⚠️ Failed to send reschedule WhatsApp to client');
+        }
+      }
+
+      // Send WhatsApp to psychologist
+      if (psychologistPhone) {
+        const psychologistMessage = `🔄 Session rescheduled by admin with ${clientName}.\n\n` +
+          `❌ Old: ${originalDateTime}\n` +
+          `✅ New: ${newDateTime}\n\n` +
+          `👤 Client: ${clientName}\n` +
+          (newMeetLink 
+            ? `🔗 New Google Meet Link: ${newMeetLink}\n\n`
+            : '\n') +
+          `${reason ? `Reason: ${reason}\n\n` : ''}` +
+          `Session ID: ${session.id}`;
+
+        const psychologistResult = await whatsappService.sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+        if (psychologistResult?.success) {
+          console.log('✅ Reschedule WhatsApp sent to psychologist');
+        } else {
+          console.warn('⚠️ Failed to send reschedule WhatsApp to psychologist');
+        }
+      }
+      
+      console.log('✅ WhatsApp notifications sent for admin reschedule');
+    } catch (waError) {
+      console.error('❌ Error sending reschedule WhatsApp:', waError);
+      // Continue even if WhatsApp fails
     }
 
     // Create notification for client
@@ -2216,6 +2304,20 @@ const rescheduleSession = async (req, res) => {
       });
 
     console.log('✅ Session rescheduled successfully by admin');
+    
+    // PRIORITY: Check and send reminder immediately if rescheduled session is 12 hours away
+    // This gives rescheduled bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(updatedSession.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
+    }
 
     res.json(
       successResponse(updatedSession, 'Session rescheduled successfully')
@@ -2638,6 +2740,579 @@ const handleRescheduleRequest = async (req, res) => {
   }
 };
 
+// Create manual booking (admin only - for edge cases)
+const createManualBooking = async (req, res) => {
+  try {
+    const { 
+      client_id, 
+      psychologist_id, 
+      package_id, 
+      scheduled_date, 
+      scheduled_time, 
+      amount,
+      payment_received_date,
+      notes 
+    } = req.body;
+
+    console.log('📝 Admin creating manual booking:', {
+      client_id,
+      psychologist_id,
+      package_id,
+      scheduled_date,
+      scheduled_time,
+      amount,
+      payment_received_date,
+      client_id_type: typeof client_id,
+      client_id_length: client_id?.toString().length
+    });
+
+    // Validate required fields
+    if (!client_id || !psychologist_id || !scheduled_date || !scheduled_time || !amount) {
+      return res.status(400).json(
+        errorResponse('Missing required fields: client_id, psychologist_id, scheduled_date, scheduled_time, amount')
+      );
+    }
+
+    // Validate payment_received_date
+    if (!payment_received_date) {
+      return res.status(400).json(
+        errorResponse('payment_received_date is required for manual bookings')
+      );
+    }
+
+    // Check if client exists (use admin client to bypass RLS)
+    // Convert client_id to integer if it's a string (UUIDs will remain strings)
+    const clientIdForQuery = isNaN(client_id) ? client_id : parseInt(client_id);
+    
+    console.log('🔍 Looking up client:', {
+      client_id,
+      client_id_type: typeof client_id,
+      clientIdForQuery,
+      clientIdForQuery_type: typeof clientIdForQuery
+    });
+
+    // First try to find client by id
+    let { data: client, error: clientError } = await supabaseAdmin
+      .from('clients')
+      .select(`
+        *,
+        user:users(email)
+      `)
+      .eq('id', clientIdForQuery)
+      .single();
+
+    // If not found by id, try looking up by user_id (in case frontend sent user.id instead of client.id)
+    if (clientError || !client) {
+      console.log('⚠️ Client not found by id, trying user_id lookup...');
+      const { data: clientByUserId, error: userLookupError } = await supabaseAdmin
+        .from('clients')
+        .select(`
+          *,
+          user:users(email)
+        `)
+        .eq('user_id', clientIdForQuery)
+        .single();
+
+      if (clientByUserId && !userLookupError) {
+        console.log('✅ Found client by user_id instead');
+        client = clientByUserId;
+        clientError = null;
+      } else {
+        console.error('❌ Client lookup error (by id and user_id):', {
+          client_id,
+          clientIdForQuery,
+          errorById: clientError,
+          errorByUserId: userLookupError,
+          client: client,
+          errorDetails: clientError ? {
+            message: clientError.message,
+            code: clientError.code,
+            details: clientError.details,
+            hint: clientError.hint
+          } : null
+        });
+        return res.status(404).json(
+          errorResponse(`Client not found with id or user_id: ${client_id}`)
+        );
+      }
+    }
+
+    console.log('✅ Client found:', {
+      clientId: client.id,
+      clientEmail: client.user?.email,
+      clientName: `${client.first_name} ${client.last_name}`
+    });
+
+    // Check if psychologist exists (use admin client to bypass RLS)
+    // Also fetch Google Calendar credentials for better Meet link creation
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
+      .from('psychologists')
+      .select('*, google_calendar_credentials')
+      .eq('id', psychologist_id)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    // Check if package exists (if package_id is provided and not null)
+    let packageData = null;
+    if (package_id) {
+      const { data: pkg, error: packageError } = await supabaseAdmin
+        .from('packages')
+        .select('*')
+        .eq('id', package_id)
+        .single();
+
+      if (packageError || !pkg) {
+        return res.status(404).json(
+          errorResponse('Package not found')
+        );
+      }
+      packageData = pkg;
+    }
+
+    // Check if time slot is already booked (use admin client to bypass RLS)
+    const { data: existingSession, error: existingError } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('psychologist_id', psychologist_id)
+      .eq('scheduled_date', scheduled_date)
+      .eq('scheduled_time', scheduled_time)
+      .in('status', ['booked', 'rescheduled', 'confirmed'])
+      .single();
+
+    if (existingSession) {
+      return res.status(400).json(
+        errorResponse('This time slot is already booked for the psychologist')
+      );
+    }
+
+    // Generate transaction ID for manual payment
+    const transactionId = `MANUAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Create manual payment record (use admin client to bypass RLS)
+    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
+      .from('payments')
+      .insert({
+        transaction_id: transactionId,
+        session_id: null, // Will be set after session creation
+        psychologist_id: psychologist_id,
+        client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
+        package_id: package_id || null,
+        amount: amount,
+        session_type: packageData ? 'package' : 'individual',
+        status: 'success', // Mark as success for manual payment
+        payu_params: {
+          manual: true,
+          payment_method: 'manual',
+          admin_created: true,
+          created_by: req.user.id,
+          created_at: new Date().toISOString(),
+          payment_received_date: payment_received_date
+        },
+        completed_at: payment_received_date,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (paymentError) {
+      console.error('❌ Error creating payment record:', paymentError);
+      return res.status(500).json(
+        errorResponse('Failed to create payment record')
+      );
+    }
+
+    console.log('✅ Manual payment record created:', paymentRecord.id);
+
+    // Generate Google Meet link (non-blocking - continue even if it takes time)
+    const meetLinkService = require('../utils/meetLinkService');
+    const { addMinutesToTime } = require('../utils/helpers');
+    let meetData = null;
+
+    try {
+      console.log('🔄 Creating Google Meet meeting for manual booking...');
+      
+      const sessionData = {
+        summary: `Therapy Session - ${client.child_name || client.first_name} with ${psychologist.first_name}`,
+        description: `Online therapy session between ${client.child_name || client.first_name} and ${psychologist.first_name} ${psychologist.last_name}`,
+        startDate: scheduled_date,
+        startTime: scheduled_time,
+        endTime: addMinutesToTime(scheduled_time, 50) // Add 50 minutes
+      };
+      
+      // Try to use psychologist's Google Calendar OAuth credentials for faster Meet link creation
+      let userAuth = null;
+      if (psychologist.google_calendar_credentials) {
+        try {
+          const credentials = typeof psychologist.google_calendar_credentials === 'string' 
+            ? JSON.parse(psychologist.google_calendar_credentials) 
+            : psychologist.google_calendar_credentials;
+          
+          // Check if access token is still valid (not expired, with 5 min buffer)
+          const now = Date.now();
+          const expiryDate = credentials.expiry_date;
+          const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+          
+          if (credentials.access_token) {
+            if (!expiryDate || expiryDate > (now + bufferTime)) {
+              // Token is valid
+              userAuth = {
+                access_token: credentials.access_token,
+                refresh_token: credentials.refresh_token,
+                expiry_date: credentials.expiry_date
+              };
+              console.log('✅ Using psychologist Google Calendar OAuth credentials for Meet link creation (token valid)');
+            } else if (credentials.refresh_token) {
+              // Token expired but we have refresh token - pass both to service for auto-refresh
+              userAuth = {
+                access_token: credentials.access_token, // May be expired, service will refresh
+                refresh_token: credentials.refresh_token,
+                expiry_date: credentials.expiry_date
+              };
+              console.log('⚠️ Psychologist OAuth token expired, but refresh token available - service will attempt refresh');
+            } else {
+              console.log('⚠️ Psychologist OAuth credentials expired and no refresh token - will use fallback method');
+            }
+          }
+        } catch (credError) {
+          console.warn('⚠️ Error parsing psychologist OAuth credentials:', credError.message);
+        }
+      } else {
+        console.log('ℹ️ Psychologist does not have Google Calendar connected - will use service account method');
+      }
+      
+      // Create Meet link - will use OAuth if available, otherwise falls back to Calendar API
+      // The service will try to get the link immediately, and if not available,
+      // it waits up to 30 seconds for the conference to be ready.
+      // Even if it times out, the calendar event is created and the Meet link becomes available later.
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData, userAuth);
+      
+      if (meetResult.success && meetResult.meetLink && !meetResult.meetLink.includes('meet.google.com/new')) {
+        // Real Meet link created
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
+          method: meetResult.method
+        };
+        console.log('✅ Real Google Meet link created successfully:', meetResult.method);
+      } else if (meetResult.requiresOAuth || meetResult.method === 'service_account_limitation') {
+        // Service account limitation - psychologist needs to connect Google Calendar
+        console.log('⚠️ ⚠️ ⚠️ IMPORTANT: Real Meet link NOT created');
+        console.log('⚠️ Reason: Service accounts cannot create Meet conferences');
+        console.log('⚠️ Solution: Psychologist must connect their Google Calendar for OAuth authentication');
+        console.log('⚠️ Calendar event created:', meetResult.eventLink);
+        console.log('⚠️ Meet link must be added manually or psychologist needs to connect Google Calendar');
+        
+        // Return null for meetLink to indicate it needs manual creation or OAuth
+        meetData = {
+          meetLink: null, // No Meet link available
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
+          method: meetResult.method || 'oauth_required',
+          requiresOAuth: true,
+          note: 'Psychologist must connect Google Calendar to generate real Meet links'
+        };
+      } else {
+        // Fallback case
+        meetData = {
+          meetLink: meetResult.meetLink || null,
+          eventId: meetResult.eventId || null,
+          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
+          method: meetResult.method || 'fallback'
+        };
+        console.log('⚠️ Using fallback or no Meet link');
+      }
+    } catch (meetError) {
+      console.error('❌ Error creating Meet link:', meetError);
+      // Use fallback link and continue
+      meetData = {
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
+        eventId: null,
+        calendarLink: null,
+        method: 'fallback'
+      };
+      console.log('⚠️ Continuing with fallback Meet link');
+    }
+
+    // Create session
+    const sessionData = {
+      client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
+      psychologist_id: psychologist_id,
+      package_id: package_id || null,
+      scheduled_date: scheduled_date,
+      scheduled_time: scheduled_time,
+      status: 'booked',
+      payment_id: paymentRecord.id,
+      price: amount, // Sessions table uses 'price' column, not 'amount'
+      session_notes: notes || null, // Sessions table uses 'session_notes' column, not 'notes'
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+          // Add meet data if available
+          // IMPORTANT: Only add Meet link if it's a real Meet link (not fallback)
+          if (meetData && meetData.eventId) {
+            sessionData.google_calendar_event_id = meetData.eventId;
+            // Only set Meet link if it's a real link (not fallback URL)
+            if (meetData.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
+              sessionData.google_meet_link = meetData.meetLink;
+              sessionData.google_meet_join_url = meetData.meetLink;
+              sessionData.google_meet_start_url = meetData.meetLink;
+            } else {
+              // Leave Meet link fields as null - indicates manual creation needed
+              sessionData.google_meet_link = null;
+              sessionData.google_meet_join_url = null;
+              sessionData.google_meet_start_url = null;
+            }
+            // Always add calendar link if available
+            if (meetData.calendarLink) {
+              sessionData.google_calendar_link = meetData.calendarLink;
+            }
+          }
+
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .insert([sessionData])
+      .select('*')
+      .single();
+
+    if (sessionError) {
+      console.error('❌ Session creation failed:', sessionError);
+      // Rollback payment record
+      await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
+      return res.status(500).json(
+        errorResponse('Failed to create session')
+      );
+    }
+
+    console.log('✅ Session created successfully:', session.id);
+
+    // Update payment record with session_id (use admin client to bypass RLS)
+    await supabaseAdmin
+      .from('payments')
+      .update({ session_id: session.id })
+      .eq('id', paymentRecord.id);
+
+    // Send email notifications
+    try {
+      console.log('📧 Sending email notifications...');
+      const emailService = require('../utils/emailService');
+      
+      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
+
+      await emailService.sendSessionConfirmation({
+        clientName: clientName,
+        psychologistName: psychologistName,
+        sessionDate: scheduled_date,
+        sessionTime: scheduled_time,
+        sessionDuration: '60 minutes',
+        clientEmail: client.user?.email,
+        psychologistEmail: psychologist.email,
+        googleMeetLink: meetData?.meetLink,
+        sessionId: session.id,
+        transactionId: transactionId,
+        amount: amount
+      });
+
+      console.log('✅ Email notifications sent');
+    } catch (emailError) {
+      console.error('❌ Error sending emails:', emailError);
+      // Continue even if email fails
+    }
+
+    // Send WhatsApp notifications
+    try {
+      console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
+
+      // Send WhatsApp to client
+      if (client.phone_number) {
+        const meetLinkText = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new') 
+          ? `🔗 Google Meet Link: ${meetData.meetLink}` 
+          : meetData?.requiresOAuth
+            ? `⚠️ Note: Google Meet link will be shared once available.`
+            : `🔗 Google Meet Link: Will be shared shortly`;
+        
+        const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
+          timeZone: 'Asia/Kolkata',
+          dateStyle: 'long',
+          timeStyle: 'short'
+        });
+        
+        if (meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
+          // Use booking confirmation for real Meet links
+          const clientDetails = {
+            childName: client.child_name || client.first_name,
+            date: scheduled_date,
+            time: scheduled_time,
+            meetLink: meetData.meetLink
+          };
+          await sendBookingConfirmation(client.phone_number, clientDetails);
+        } else {
+          // Use plain text for cases without Meet link
+          const clientMessage = `🎉 Your session with Dr. ${psychologistName} is confirmed!\n\n` +
+            `📅 Date: ${sessionDateTime}\n` +
+            `${meetLinkText}\n\n` +
+            `We look forward to seeing you!`;
+          await sendWhatsAppTextWithRetry(client.phone_number, clientMessage);
+        }
+        console.log('✅ WhatsApp sent to client');
+      }
+
+      // Send WhatsApp to psychologist
+      if (psychologist.phone) {
+        const meetLinkText = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')
+          ? `🔗 Google Meet Link: ${meetData.meetLink}`
+          : meetData?.requiresOAuth
+            ? `⚠️ IMPORTANT: Please connect your Google Calendar in your profile to enable automatic Meet link creation.`
+            : `🔗 Google Meet Link: Will be shared shortly`;
+        
+        const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
+          timeZone: 'Asia/Kolkata',
+          dateStyle: 'long',
+          timeStyle: 'short'
+        });
+        
+        const psychologistMessage = `🔔 New session booked with ${clientName}.\n\n` +
+          `📅 Date: ${sessionDateTime}\n` +
+          `${meetLinkText}\n\n` +
+          `Session ID: ${session.id}`;
+        await sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage);
+        console.log('✅ WhatsApp sent to psychologist');
+      }
+      
+      console.log('✅ WhatsApp notifications sent successfully');
+    } catch (whatsappError) {
+      console.error('❌ Error sending WhatsApp:', whatsappError);
+      // Continue even if WhatsApp fails
+    }
+
+    // Generate PDF receipt
+    try {
+      console.log('📄 Generating PDF receipt...');
+      const { generateAndStoreReceipt } = require('../controllers/paymentController');
+      await generateAndStoreReceipt(
+        session,
+        paymentRecord,
+        client,
+        psychologist
+      );
+      console.log('✅ Receipt generated');
+    } catch (receiptError) {
+      console.error('❌ Error generating receipt:', receiptError);
+      // Continue even if receipt generation fails
+    }
+
+    // If package booking, create client package record
+    if (package_id && packageData) {
+      console.log('📦 Creating client package record...');
+      try {
+        // Check if client package already exists (use admin client to bypass RLS)
+        const { data: existingClientPackage } = await supabaseAdmin
+          .from('client_packages')
+          .select('*')
+          .eq('client_id', client.id) // Use the actual client.id we found, not the user_id that was sent
+          .eq('package_id', package_id)
+          .eq('status', 'active')
+          .single();
+
+        if (existingClientPackage) {
+          // Update existing package: increment used sessions
+          await supabaseAdmin
+            .from('client_packages')
+            .update({
+              remaining_sessions: existingClientPackage.remaining_sessions - 1
+            })
+            .eq('id', existingClientPackage.id);
+          console.log('✅ Updated existing client package');
+        } else {
+          // Create new client package
+          const clientPackageData = {
+            client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
+            psychologist_id: psychologist_id,
+            package_id: package_id,
+            package_type: packageData.package_type,
+            total_sessions: packageData.session_count,
+            remaining_sessions: packageData.session_count - 1,
+            total_amount: packageData.price,
+            amount_paid: packageData.price,
+            status: 'active',
+            purchased_at: payment_received_date,
+            first_session_id: session.id
+          };
+
+          await supabaseAdmin
+            .from('client_packages')
+            .insert([clientPackageData]);
+          console.log('✅ Client package record created');
+        }
+      } catch (packageError) {
+        console.error('❌ Error creating client package:', packageError);
+        // Continue even if package creation fails
+      }
+    }
+
+    // Fetch the complete session with relations for response
+    const { data: completeSession, error: fetchError } = await supabase
+      .from('sessions')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          email
+        ),
+        package:packages(*)
+      `)
+      .eq('id', session.id)
+      .single();
+
+    console.log('✅ Manual booking created successfully');
+    
+    // PRIORITY: Check and send reminder immediately if manual booking is 12 hours away
+    // This gives manual bookings priority over batch reminder processing
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      // Run asynchronously to not block the response
+      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+        // Don't block response - reminder will be sent in next hourly check
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+      // Don't block response
+    }
+
+    res.status(201).json(
+      successResponse(completeSession || session, 'Manual booking created successfully')
+    );
+
+  } catch (error) {
+    console.error('Create manual booking error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while creating manual booking')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -2659,5 +3334,6 @@ module.exports = {
   rescheduleSession,
   getPsychologistAvailabilityForReschedule,
   getPsychologistCalendarEvents,
-  handleRescheduleRequest
+  handleRescheduleRequest,
+  createManualBooking
 };

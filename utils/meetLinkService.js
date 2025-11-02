@@ -375,18 +375,63 @@ class MeetLinkService {
           eventLink: eventData.htmlLink,
           method: 'calendar_service_account'
         };
-      } else {
-        // Even if conference times out, return success with calendar event
-        console.log('⚠️ Conference timeout, but calendar event created successfully');
-        return {
-          success: true,
-          meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
-          eventId: eventData.id,
-          eventLink: eventData.htmlLink,
-          method: 'calendar_event_created',
-          note: 'Calendar event created but Meet conference timed out - manual Meet creation required'
-        };
       }
+      
+      // Final check: Sometimes Google populates the Meet link shortly after creation
+      // Wait a bit more and check one last time before giving up
+      console.log('⏳ Final check after timeout - sometimes Meet link appears shortly after...');
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 more seconds
+      
+      try {
+        const { data: finalEventData } = await calendar.events.get({ 
+          calendarId: 'primary', 
+          eventId: eventData.id, 
+          conferenceDataVersion: 1 
+        });
+        
+        // Check for Meet link one more time
+        let finalMeetLink = null;
+        if (finalEventData.conferenceData?.entryPoints) {
+          const meetEntry = finalEventData.conferenceData.entryPoints.find(ep => 
+            ep.entryPointType === 'video' || 
+            ep.uri?.includes('meet.google.com') ||
+            ep.uri?.includes('hangouts.google.com')
+          );
+          if (meetEntry && meetEntry.uri) {
+            finalMeetLink = meetEntry.uri;
+          }
+        }
+        
+        if (!finalMeetLink && finalEventData.hangoutLink) {
+          finalMeetLink = finalEventData.hangoutLink;
+        }
+        
+        if (finalMeetLink) {
+          console.log('✅ Meet link found in final check:', finalMeetLink);
+          return {
+            success: true,
+            meetLink: finalMeetLink,
+            eventId: eventData.id,
+            eventLink: eventData.htmlLink,
+            method: 'calendar_service_account'
+          };
+        }
+      } catch (finalCheckError) {
+        console.log('⚠️ Final check failed:', finalCheckError.message);
+      }
+      
+      // Even if conference times out, return success with calendar event
+      console.log('⚠️ Conference timeout, but calendar event created successfully');
+      console.log('⚠️ Note: Service accounts may have limitations creating Meet conferences');
+      console.log('⚠️ For guaranteed Meet links, use OAuth authentication (psychologist Google Calendar connection)');
+      return {
+        success: true,
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
+        eventId: eventData.id,
+        eventLink: eventData.htmlLink,
+        method: 'calendar_event_created',
+        note: 'Calendar event created but Meet conference timed out - manual Meet creation required'
+      };
 
     } catch (error) {
       console.error('❌ Calendar Meet creation failed:', error.message);
@@ -438,34 +483,36 @@ class MeetLinkService {
         const status = data.conferenceData?.createRequest?.status?.statusCode;
         console.log(`   📊 Conference Status: ${status || 'pending'}`);
         
-        if (status === 'success') {
-          console.log('   🎉 Conference is ready!');
-          
-          // Try multiple sources for Meet link
-          let meetLink = null;
-          
-          // First try: conferenceData entryPoints
-          if (data.conferenceData?.entryPoints) {
-            const meetEntry = data.conferenceData.entryPoints.find(ep => 
-              ep.entryPointType === 'video' || 
-              ep.uri?.includes('meet.google.com') ||
-              ep.uri?.includes('hangouts.google.com')
-            );
-            if (meetEntry) {
-              meetLink = meetEntry.uri;
-              console.log('   🔗 Meet link from entryPoints:', meetLink);
-            }
-          }
-          
-          // Second try: hangoutLink (fallback)
-          if (!meetLink && data.hangoutLink) {
-            meetLink = data.hangoutLink;
-            console.log('   🔗 Meet link from hangoutLink:', meetLink);
-          }
-          
-          if (meetLink) {
+        // IMPORTANT: Check for Meet link even if status is pending
+        // Sometimes Google populates the link even before status becomes 'success'
+        // Also check hangoutLink which may be available regardless of status
+        let meetLink = null;
+        
+        // First try: conferenceData entryPoints (even if status is pending)
+        if (data.conferenceData?.entryPoints) {
+          const meetEntry = data.conferenceData.entryPoints.find(ep => 
+            ep.entryPointType === 'video' || 
+            ep.uri?.includes('meet.google.com') ||
+            ep.uri?.includes('hangouts.google.com')
+          );
+          if (meetEntry && meetEntry.uri) {
+            meetLink = meetEntry.uri;
+            console.log('   🔗 Meet link found in entryPoints (even with pending status):', meetLink);
             return meetLink;
           }
+        }
+        
+        // Second try: hangoutLink (may be available even if status is pending)
+        if (data.hangoutLink) {
+          meetLink = data.hangoutLink;
+          console.log('   🔗 Meet link found in hangoutLink:', meetLink);
+          return meetLink;
+        }
+        
+        // If status is success, we already checked above, but let's confirm
+        if (status === 'success') {
+          console.log('   🎉 Conference status is success, but no Meet link found yet');
+          // Continue waiting as link might populate shortly
         }
         
         if (status === 'failure') {

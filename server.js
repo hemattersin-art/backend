@@ -30,6 +30,7 @@ const freeAssessmentRoutes = require('./routes/freeAssessments');
 const freeAssessmentTimeslotRoutes = require('./routes/freeAssessmentTimeslots');
 const emailVerificationRoutes = require('./routes/emailVerification');
 const calendarSyncService = require('./services/calendarSyncService');
+const sessionReminderService = require('./services/sessionReminderService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
@@ -1111,6 +1112,9 @@ app.listen(PORT, () => {
   
   // Start Google Calendar sync service
   calendarSyncService.start();
+  
+  // Start Session Reminder service (12-hour WhatsApp reminders)
+  sessionReminderService.start();
 });
 
 module.exports = app;

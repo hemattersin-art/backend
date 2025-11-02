@@ -454,7 +454,8 @@ class EmailService {
         psychologistEmail,
         scheduledDate,
         scheduledTime,
-        sessionId
+        sessionId,
+        meetLink
       } = sessionData;
 
       const oldDateTime = new Date(`${oldDate}T${oldTime}`);
@@ -494,6 +495,7 @@ class EmailService {
           newDate: formattedNewDate,
           newTime: formattedNewTime,
           sessionId,
+          meetLink,
           type: 'client'
         });
       }
@@ -507,6 +509,7 @@ class EmailService {
           newDate: formattedNewDate,
           newTime: formattedNewTime,
           sessionId,
+          meetLink,
           type: 'psychologist'
         });
       }
@@ -519,7 +522,7 @@ class EmailService {
   }
 
   async sendRescheduleEmail(emailData) {
-    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, type } = emailData;
+    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, meetLink, type } = emailData;
 
     const mailOptions = {
       from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
@@ -552,7 +555,16 @@ class EmailService {
               <h3 style="color: #0c5460; margin-top: 0;">Session Information</h3>
               <p><strong>Session ID:</strong> ${sessionId}</p>
               <p><strong>Type:</strong> ${type === 'client' ? 'Client' : 'Therapist'}</p>
+              ${meetLink ? `<p><strong>New Google Meet Link:</strong> <a href="${meetLink}" style="color: #17a2b8;">${meetLink}</a></p>` : ''}
             </div>
+            
+            ${meetLink ? `
+            <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+              <h3 style="color: #155724; margin-top: 0;">🔗 Meeting Link</h3>
+              <p style="color: #155724;">Your new Google Meet link for the rescheduled session:</p>
+              <p style="word-break: break-all;"><a href="${meetLink}" style="color: #28a745; font-weight: bold;">${meetLink}</a></p>
+            </div>
+            ` : ''}
             
             <p>Please update your calendar and ensure you're available at the new time.</p>
             
@@ -848,6 +860,194 @@ The Kuttikal Team
       return await this.transporter.sendMail(mailOptions);
     } catch (error) {
       console.error('Error sending email:', error);
+      throw error;
+    }
+  }
+
+  async sendCancellationNotification({
+    to,
+    clientName,
+    psychologistName,
+    sessionDate,
+    sessionTime,
+    sessionId,
+    isPsychologist = false
+  }) {
+    try {
+      const sessionDateTime = new Date(`${sessionDate}T${sessionTime}`);
+      const formattedDate = sessionDateTime.toLocaleDateString('en-IN', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Asia/Kolkata'
+      });
+      const formattedTime = sessionDateTime.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Kolkata',
+        timeZoneName: 'short'
+      });
+
+      const recipientName = isPsychologist ? psychologistName : clientName;
+      const otherParty = isPsychologist ? clientName : `Dr. ${psychologistName}`;
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        to: to,
+        subject: 'Session Cancelled',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="margin: 0; font-size: 28px;">Session Cancelled</h1>
+              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Session cancellation confirmation</p>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+              <h2 style="color: #2d3748; margin-top: 0;">Hello ${recipientName},</h2>
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                Your therapy session with <strong>${otherParty}</strong> has been cancelled.
+              </p>
+              
+              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545;">
+                <h3 style="color: #2d3748; margin-top: 0;">Cancelled Session Details</h3>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Date:</strong> ${formattedDate}</p>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Time:</strong> ${formattedTime}</p>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Session ID:</strong> ${sessionId}</p>
+              </div>
+              
+              ${!isPsychologist ? `
+              <div style="background: #e6fffa; border: 1px solid #81e6d9; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                <p style="margin: 0; color: #234e52; font-size: 14px;">
+                  <strong>📅 Need to reschedule?</strong><br>
+                  You can book a new session anytime from your profile dashboard.
+                </p>
+              </div>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${process.env.FRONTEND_URL || 'https://kuttikal.vercel.app'}/profile" 
+                   style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
+                  Book New Session
+                </a>
+              </div>
+              ` : ''}
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                If you have any questions, please contact our support team.
+              </p>
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                Best regards,<br>
+                <strong>The Kuttikal Team</strong>
+              </p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
+              <p>This is an automated message. Please do not reply to this email.</p>
+              <p>&copy; 2024 Kuttikal. All rights reserved.</p>
+            </div>
+          </div>
+        `
+      };
+
+      return await this.transporter.sendMail(mailOptions);
+    } catch (error) {
+      console.error('Error sending cancellation notification:', error);
+      throw error;
+    }
+  }
+
+  async sendNoShowNotification({
+    to,
+    clientName,
+    psychologistName,
+    sessionDate,
+    sessionTime,
+    sessionId
+  }) {
+    try {
+      const sessionDateTime = new Date(`${sessionDate}T${sessionTime}`);
+      const formattedDate = sessionDateTime.toLocaleDateString('en-IN', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Asia/Kolkata'
+      });
+      const formattedTime = sessionDateTime.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Kolkata',
+        timeZoneName: 'short'
+      });
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        to: to,
+        subject: 'No-Show Notice - Session Missed',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="margin: 0; font-size: 28px;">⚠️ No-Show Notice</h1>
+              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Session missed - let's reschedule</p>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
+              <h2 style="color: #2d3748; margin-top: 0;">Hello ${clientName},</h2>
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                We noticed that you didn't attend your scheduled therapy session with <strong>Dr. ${psychologistName}</strong>.
+              </p>
+              
+              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ff9800;">
+                <h3 style="color: #2d3748; margin-top: 0;">Missed Session Details</h3>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Date:</strong> ${formattedDate}</p>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Time:</strong> ${formattedTime}</p>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Psychologist:</strong> Dr. ${psychologistName}</p>
+                <p style="margin: 5px 0; color: #4a5568;"><strong>Session ID:</strong> ${sessionId}</p>
+              </div>
+              
+              <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 20px; border-radius: 6px; margin: 20px 0;">
+                <h3 style="color: #856404; margin-top: 0;">📞 Need Help?</h3>
+                <p style="margin: 5px 0; color: #856404;">
+                  <strong>Let us know the reason or contact our team to reschedule:</strong>
+                </p>
+                <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
+                  <li>📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@kuttikal.com'}</li>
+                  <li>📱 WhatsApp: ${process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || 'Contact us via our support number'}</li>
+                  <li>💬 Book a new session from your profile</li>
+                </ul>
+              </div>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${process.env.FRONTEND_URL || 'https://kuttikal.vercel.app'}/profile" 
+                   style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
+                  Reschedule Session
+                </a>
+              </div>
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                We're here to help you reschedule or address any concerns. Don't hesitate to reach out!
+              </p>
+              
+              <p style="color: #4a5568; line-height: 1.6;">
+                Best regards,<br>
+                <strong>The Kuttikal Team</strong>
+              </p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
+              <p>This is an automated message. Please do not reply to this email.</p>
+              <p>&copy; 2024 Kuttikal. All rights reserved.</p>
+            </div>
+          </div>
+        `
+      };
+
+      return await this.transporter.sendMail(mailOptions);
+    } catch (error) {
+      console.error('Error sending no-show notification:', error);
       throw error;
     }
   }

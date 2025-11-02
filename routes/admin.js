@@ -49,11 +49,32 @@ router.delete('/users/:userId', adminController.deleteUser);
 router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);
 router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
 
+// Manual booking (admin only - for edge cases)
+router.post('/bookings/manual', adminController.createManualBooking);
+
 // Reschedule request handling
 router.put('/reschedule-requests/:notificationId', adminController.handleRescheduleRequest);
 
 // Psychologist calendar events
 router.get('/psychologists/:psychologistId/calendar-events', adminController.getPsychologistCalendarEvents);
+
+// Manual trigger for session reminders (admin only, for testing)
+router.post('/trigger-session-reminders', async (req, res) => {
+  try {
+    const sessionReminderService = require('../services/sessionReminderService');
+    await sessionReminderService.triggerReminderCheck();
+    res.json({
+      success: true,
+      message: 'Session reminder check triggered successfully'
+    });
+  } catch (error) {
+    console.error('Error triggering session reminders:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;
 
