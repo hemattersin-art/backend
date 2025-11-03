@@ -29,7 +29,14 @@ class EmailService {
   async sendSessionConfirmation(sessionData) {
     try {
       console.log('📧 Email Service - Starting session confirmation email...');
-      console.log('📧 Email Service - Session data:', JSON.stringify(sessionData, null, 2));
+      console.log('📧 Email Service - Session data:', {
+        sessionId: sessionData?.id || sessionData?.session_id,
+        date: sessionData?.scheduled_date,
+        time: sessionData?.scheduled_time,
+        status: sessionData?.status,
+        psychologistId: sessionData?.psychologist_id,
+        clientId: sessionData?.client_id
+      });
       
       const {
         clientName,

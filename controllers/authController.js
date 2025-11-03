@@ -18,6 +18,20 @@ const register = async (req, res) => {
 
     // Check if user already exists
     if (role === 'client') {
+      // Check users table first (for new system)
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        return res.status(400).json(
+          errorResponse('Client with this email already exists')
+        );
+      }
+
+      // Also check clients table for old entries (backward compatibility)
       const { data: existingClient } = await supabase
         .from('clients')
         .select('id')
@@ -62,36 +76,73 @@ const register = async (req, res) => {
     let user, profileData;
 
     if (role === 'client') {
-      // Create client directly in clients table (no users table entry)
-      const { data: client, error: clientError } = await supabase
-        .from('clients')
-        .insert([{
-          email,
+      // Use supabaseAdmin for registration to bypass RLS
+      const { supabaseAdmin } = require('../config/supabase');
+      
+      // First create a user record in users table (same as Google sign-in)
+      const { data: newUser, error: userError } = await supabaseAdmin
+        .from('users')
+        .insert({
+          email: email,
           password_hash: hashedPassword,
+          role: 'client',
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (userError) {
+        console.error('Error creating user:', userError);
+        return res.status(500).json(
+          errorResponse(`Failed to create user account: ${userError.message}`)
+        );
+      }
+
+      console.log('✅ User created successfully:', { id: newUser.id, email: newUser.email });
+
+      // Then create client record with user_id reference
+      const { data: client, error: clientError } = await supabaseAdmin
+        .from('clients')
+        .insert({
+          user_id: newUser.id,
           first_name: req.body.first_name || 'Pending',
           last_name: req.body.last_name || 'Update',
           phone_number: req.body.phone_number || '+91',
           child_name: req.body.child_name || 'Pending',
-          child_age: req.body.child_age || 1
-        }])
+          child_age: req.body.child_age || 1,
+          created_at: new Date().toISOString()
+        })
         .select('*')
         .single();
 
       if (clientError) {
-        console.error('Client creation error:', clientError);
+        console.error('Error creating client:', clientError);
+        // Clean up user record if client creation fails
+        await supabaseAdmin.from('users').delete().eq('id', newUser.id);
         return res.status(500).json(
-          errorResponse('Failed to create client account')
+          errorResponse(`Failed to create client account: ${clientError.message}`)
         );
       }
 
-      // Create a mock user object for client (since they don't exist in users table)
+      console.log('✅ Client created successfully:', { id: client.id, user_id: client.user_id });
+
+      // Combine user and client data
+      // IMPORTANT: Preserve newUser.id (from users table) as the primary ID for token generation
+      // Extract client.id separately to avoid overwriting user.id
+      const { id: clientId, ...clientDataWithoutId } = client;
       user = {
-        id: client.id,
-        email: client.email,
-        role: 'client',
-        created_at: client.created_at
+        ...newUser, // Start with user data
+        ...clientDataWithoutId, // Add client data (without client.id)
+        id: newUser.id, // Explicitly set user.id LAST to ensure it's not overwritten
+        client_id: clientId // Store client.id separately if needed
       };
-      profileData = client;
+      profileData = {
+        ...newUser,
+        ...client
+      };
+
+      console.log('✅ Registration complete, token will be generated for user.id:', user.id);
+      console.log('🔍 Verification - user object id:', user.id, 'should match newUser.id:', newUser.id);
     } else if (role === 'psychologist') {
       // Create psychologist directly in psychologists table (no users table entry)
       const { data: psychologist, error: psychologistError } = await supabase
@@ -512,23 +563,79 @@ const login = async (req, res) => {
       return;
     }
 
-    // If not a psychologist, check clients table first, then users table for admins
+    // If not a psychologist, check for clients or admin users
     let user = null;
     let userRole = null;
     
-    // Check clients table first with flexible email matching
-    const { data: client, error: clientError } = await findUserWithFlexibleEmail('clients', email);
+    // First check users table for new system clients (with user_id reference)
+    // This handles clients created via email/password or Google sign-in
+    let clientData = null;
+    const { data: userFromUsers, error: userFromUsersError } = await findUserWithFlexibleEmail('users', email);
 
-    if (client && !clientError) {
-      user = client;
-      userRole = 'client';
+    if (userFromUsers && !userFromUsersError && userFromUsers.role === 'client') {
+      // Found a client in users table (new system)
+      // Verify password
+      const isValidPassword = await comparePassword(password, userFromUsers.password_hash);
+      
+      if (isValidPassword) {
+        // Now fetch the client profile
+        const { data: clientProfile, error: clientProfileError } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('user_id', userFromUsers.id)
+          .single();
+
+        if (clientProfile && !clientProfileError) {
+          user = userFromUsers;
+          userRole = 'client';
+          clientData = clientProfile;
+        } else {
+          // User exists but client profile not found - might be a data inconsistency
+          user = userFromUsers;
+          userRole = 'client';
+        }
+      } else {
+        return res.status(401).json(
+          errorResponse('Invalid email or password')
+        );
+      }
     } else {
-      // Check users table for admin roles with flexible email matching
-      const { data: adminUser, error: userError } = await findUserWithFlexibleEmail('users', email);
+      // Check old system: clients table with direct email (backward compatibility)
+      const { data: oldClient, error: oldClientError } = await findUserWithFlexibleEmail('clients', email);
 
-      if (adminUser && !userError) {
-        user = adminUser;
-        userRole = adminUser.role;
+      if (oldClient && !oldClientError && oldClient.password_hash) {
+        // Old system client - password is in clients table
+        const isValidPassword = await comparePassword(password, oldClient.password_hash);
+        
+        if (isValidPassword) {
+          user = oldClient;
+          userRole = 'client';
+          clientData = oldClient;
+        } else {
+          return res.status(401).json(
+            errorResponse('Invalid email or password')
+          );
+        }
+      } else {
+        // Check users table for admin roles with flexible email matching
+        const { data: adminUser, error: userError } = await findUserWithFlexibleEmail('users', email);
+
+        if (adminUser && !userError) {
+          const isValidPassword = await comparePassword(password, adminUser.password_hash);
+          
+          if (isValidPassword) {
+            user = adminUser;
+            userRole = adminUser.role;
+          } else {
+            return res.status(401).json(
+              errorResponse('Invalid email or password')
+            );
+          }
+        } else {
+          return res.status(401).json(
+            errorResponse('Invalid email or password')
+          );
+        }
       }
     }
 
@@ -538,25 +645,23 @@ const login = async (req, res) => {
       );
     }
 
-    // Verify password
-    const isValidPassword = await comparePassword(password, user.password_hash);
-    if (!isValidPassword) {
-      return res.status(401).json(
-        errorResponse('Invalid email or password')
-      );
-    }
-
     // Get role-specific profile
     let profile = null;
     if (userRole === 'client') {
-      // Client profile is already the user object since clients are stored directly in clients table
-      profile = user;
+      // Combine user and client data if available
+      if (clientData) {
+        // Remove the nested users object if it exists and merge client data
+        const { users, ...clientFields } = clientData;
+        profile = { ...user, ...clientFields };
+      } else {
+        profile = user;
+      }
     } else {
       // Admin users don't have separate profile tables
       profile = user;
     }
 
-    // Generate JWT token
+    // Generate JWT token - use user.id (from users table for new clients, or client.id for old clients)
     const token = generateToken(user.id, userRole);
 
     res.json(
@@ -590,12 +695,29 @@ const getProfile = async (req, res) => {
     let profile = null;
     
     if (userRole === 'client') {
-      const { data: client } = await supabase
+      // New system: client has user_id reference to users table
+      // Try lookup by user_id first (new system)
+      let { data: client, error: clientError } = await supabase
         .from('clients')
         .select('*')
-        .eq('id', userId)
+        .eq('user_id', userId)
         .single();
-      profile = client;
+
+      // If not found, try old system: lookup by id (backward compatibility)
+      if (clientError || !client) {
+        ({ data: client, error: clientError } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('id', userId)
+          .single());
+      }
+
+      // If client data is already in req.user (from middleware), use it
+      if (!client && req.user.first_name) {
+        profile = req.user;
+      } else {
+        profile = client;
+      }
     } else if (userRole === 'psychologist') {
       // For psychologists, the profile is the user data itself
       const { data: psychologist } = await supabase
@@ -613,7 +735,7 @@ const getProfile = async (req, res) => {
           email: req.user.email,
           role: req.user.role,
           profile_picture_url: req.user.profile_picture_url || null,
-          profile
+          profile: profile || req.user
         }
       })
     );

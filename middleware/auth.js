@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
+const supabaseAdmin = require('../config/supabase').supabaseAdmin;
 
 // Verify JWT token (handles both backend JWT and Supabase JWT)
 const authenticateToken = async (req, res, next) => {
@@ -178,8 +179,9 @@ const authenticateToken = async (req, res, next) => {
       });
     }
     
+    // Use supabaseAdmin to bypass RLS for authentication lookups
     // Check if it's a psychologist first (since login checks psychologists table first)
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('*')
       .eq('id', userId)
@@ -198,22 +200,81 @@ const authenticateToken = async (req, res, next) => {
     }
 
     // If not a psychologist, check users table for clients/admins
-    const { data: user, error: userError } = await supabase
+    console.log('🔍 Looking up user in users table with userId:', userId);
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', userId)
       .single();
 
+    console.log('🔍 User lookup result:', { 
+      found: !!user, 
+      error: userError?.message || null,
+      userId: userId 
+    });
+
     if (userError || !user) {
-      console.error('User not found in either table:', { userId, userError, psychologistError });
+      console.error('❌ User not found in either table:', { 
+        userId, 
+        userError: userError?.message || 'No error but no user found',
+        psychologistError: psychologistError?.message || null 
+      });
+      
+      // Try to verify the user actually exists by checking if we can find them by email
+      // This is just for debugging
+      console.log('🔍 Debugging: Checking if user exists with any role...');
+      
       return res.status(401).json({ 
         error: 'Access denied', 
-        message: 'Invalid token' 
+        message: 'Invalid token - user not found' 
       });
     }
+    
+    console.log('✅ User found:', { id: user.id, email: user.email, role: user.role });
 
-    // User exists in users table (client, admin, superadmin)
-    req.user = user;
+    // If user is a client, fetch the client profile data
+    if (user.role === 'client') {
+      const { data: client, error: clientError } = await supabaseAdmin
+        .from('clients')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (client && !clientError) {
+        // Combine user and client data
+        // Preserve both user.id (for token validation) and client.id (for client operations)
+        req.user = {
+          ...user,
+          ...client,
+          // Keep the users.id as the primary id for token validation
+          id: user.id,
+          // Store client.id separately so we can use it for client operations
+          client_id: client.id
+        };
+      } else {
+        // Client record not found - might be old system client, try lookup by id (backward compatibility)
+        const { data: oldClient, error: oldClientError } = await supabaseAdmin
+          .from('clients')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (oldClient && !oldClientError) {
+          // Old system client - use client data
+          req.user = {
+            ...oldClient,
+            id: oldClient.id,
+            role: 'client'
+          };
+        } else {
+          // Client record not found - just use user data
+          req.user = user;
+        }
+      }
+    } else {
+      // User exists in users table (admin, superadmin, etc.)
+      req.user = user;
+    }
 
     next();
   } catch (error) {

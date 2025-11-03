@@ -228,8 +228,7 @@ const createConversation = async (req, res) => {
       .eq('id', sessionId)
       .single();
 
-    console.log('Session data:', session);
-    console.log('Session error:', sessionError);
+    console.log('Session lookup - ID:', session?.id, 'Error:', sessionError ? 'Yes' : 'No');
 
     if (sessionError || !session) {
       return res.status(404).json(errorResponse('Session not found'));
@@ -243,8 +242,7 @@ const createConversation = async (req, res) => {
         .eq('id', userId)
         .single();
 
-      console.log('Client data:', client);
-      console.log('Client error:', clientError);
+      console.log('Client lookup - ID:', client?.id, 'Error:', clientError ? 'Yes' : 'No');
       console.log('Session client_id:', session.client_id);
       console.log('Client id:', client?.id);
 

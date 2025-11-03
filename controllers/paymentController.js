@@ -62,7 +62,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
           created_at: new Date().toISOString()
         };
         
-        console.log('📄 Storing receipt data:', receiptData);
+        console.log('📄 Storing receipt data - session_id:', receiptData.session_id, 'receipt_number:', receiptData.receipt_number);
         
         const { error: receiptError } = await supabase.supabaseAdmin
           .from('receipts')

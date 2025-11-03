@@ -67,7 +67,9 @@ const getAllUsers = async (req, res) => {
       }
 
       console.log('Successfully fetched psychologists:', psychologists?.length || 0);
-      console.log('Psychologists data:', psychologists);
+      if (psychologists && psychologists.length > 0) {
+        console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
+      }
       
       // Convert psychologists to the expected format
       const enrichedPsychologists = psychologists.map(psych => ({
@@ -107,7 +109,7 @@ const getAllUsers = async (req, res) => {
               .in('psychologist_id', psychologistIds);
 
             if (!availabilityError && availabilityData) {
-              console.log('Availability data fetched:', availabilityData);
+              console.log('Availability data fetched - count:', availabilityData?.length || 0);
               
               // Group availability by psychologist_id
               const availabilityMap = {};
@@ -213,7 +215,7 @@ const getAllUsers = async (req, res) => {
       );
     }
 
-    console.log('Raw users from database:', users);
+    console.log('Raw users from database - count:', users?.length || 0);
     console.log('Users count:', users?.length || 0);
 
     let enrichedUsers = users;
@@ -265,7 +267,7 @@ const getAllUsers = async (req, res) => {
       );
     }
 
-    console.log('Final users being returned:', filteredUsers);
+    console.log('Final users being returned - count:', filteredUsers?.length || 0);
     console.log('Users by role:', filteredUsers.reduce((acc, user) => {
       acc[user.role] = (acc[user.role] || 0) + 1;
       return acc;
@@ -314,7 +316,9 @@ const getAllPsychologists = async (req, res) => {
     }
 
     console.log('Successfully fetched psychologists:', psychologists?.length || 0);
-    console.log('Psychologists data:', psychologists);
+    if (psychologists && psychologists.length > 0) {
+      console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
+    }
     
     // Convert psychologists to the expected format
     const enrichedPsychologists = psychologists.map(psych => ({
@@ -358,7 +362,7 @@ const getAllPsychologists = async (req, res) => {
       
       console.log(`🔍 Admin price extraction for ${user.first_name}:`, {
         originalIndividualSessionPrice: originalPsych?.individual_session_price,
-        userDescription: user.description,
+        description_length: user.description?.length || 0,
         extractedPrice: user.price
       });
     });
@@ -1268,7 +1272,6 @@ const updatePsychologist = async (req, res) => {
             } else {
               // Create new package
               console.log(`📦 Creating new package: ${pkg.name} (${pkg.sessions} sessions, $${pkg.price})`);
-              console.log(`📦 Package data:`, pkg);
               
               // Ensure we have valid data
               const sessionCount = parseInt(pkg.sessions) || pkg.sessions;
@@ -1297,7 +1300,7 @@ const updatePsychologist = async (req, res) => {
                 discount_percentage: pkg.discount_percentage || 0
               };
               
-              console.log(`📦 Inserting package data:`, packageData);
+              console.log(`📦 Inserting package data - count:`, packageData?.length || 0);
               
               const { data: insertedPackage, error: createError } = await supabase
                 .from('packages')
@@ -1353,7 +1356,7 @@ const updatePsychologist = async (req, res) => {
 
     // Handle availability updates
     if (availability && Array.isArray(availability) && availability.length > 0) {
-      console.log('📅 Availability provided for update:', availability);
+      console.log('📅 Availability provided for update - count:', availability?.length || 0);
       
       try {
         // Convert frontend format to backend format
@@ -2417,9 +2420,9 @@ const getPsychologistAvailabilityForReschedule = async (req, res) => {
       const timeSlots = day.time_slots || [];
 
       console.log(`📅 Processing availability for ${day.date}:`, {
-        timeSlots,
-        bookedTimes,
-        availableSlots: timeSlots.filter(slot => !bookedTimes.includes(slot))
+        timeSlots_count: timeSlots?.length || 0,
+        bookedTimes_count: bookedTimes?.length || 0,
+        availableSlots_count: timeSlots.filter(slot => !bookedTimes.includes(slot)).length
       });
 
       return {

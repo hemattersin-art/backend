@@ -494,7 +494,10 @@ class TimeBlockingService {
         .eq('date', date)
         .single();
 
-      console.log(`🔍 Availability query result:`, { availability, error: availabilityError });
+      console.log(`🔍 Availability query result:`, { 
+        found: !!availability, 
+        error: availabilityError ? 'Yes' : 'No' 
+      });
 
       if (availability) {
         // Convert timeSlot from HH:MM-HH:MM format to HH:MM format for comparison

@@ -13,22 +13,62 @@ const meetLinkService = require('../utils/meetLinkService');
 const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userRole = req.user.role;
 
-    const { data: client, error } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('id', userId)
-      .single();
+    let client = null;
+    let error = null;
 
-    if (error) {
+    // New system: client has user_id reference to users table
+    if (userRole === 'client' && req.user.user_id) {
+      // User ID in token is from users table, client has user_id
+      // This means client profile is already loaded in req.user from middleware
+      client = req.user;
+    } else if (userRole === 'client') {
+      // Try new system: lookup by user_id
+      const { data: clientByUserId, error: errorByUserId } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (clientByUserId && !errorByUserId) {
+        client = clientByUserId;
+      } else {
+        // Fallback to old system: lookup by id (backward compatibility)
+        const { data: clientById, error: errorById } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (clientById && !errorById) {
+          client = clientById;
+        } else {
+          error = errorByUserId || errorById;
+        }
+      }
+    } else {
+      error = { message: 'User is not a client' };
+    }
+
+    if (error || !client) {
       console.error('Get client profile error:', error);
       return res.status(500).json(
         errorResponse('Failed to fetch client profile')
       );
     }
 
+    // Merge with user data if available
+    const userData = {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role,
+      profile_picture_url: req.user.profile_picture_url,
+      google_id: req.user.google_id
+    };
+
     res.json(
-      successResponse(client)
+      successResponse({ ...userData, ...client })
     );
 
   } catch (error) {
@@ -43,22 +83,66 @@ const getProfile = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userRole = req.user.role;
     const updateData = req.body;
 
-    // Remove user_id from update data if present
+    // Remove user_id from update data if present (shouldn't be updated)
     delete updateData.user_id;
 
-    const { data: client, error } = await supabase
-      .from('clients')
-      .update({
-        ...updateData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', userId)
-      .select('*')
-      .single();
+    // Use supabaseAdmin to bypass RLS
+    const { supabaseAdmin } = require('../config/supabase');
 
-    if (error) {
+    let client = null;
+    let error = null;
+
+    // New system: client has user_id reference to users table
+    if (userRole === 'client' && req.user.user_id) {
+      // User ID in token is from users table, client has user_id
+      // Update by user_id
+      const { data: updatedClient, error: updateError } = await supabaseAdmin
+        .from('clients')
+        .update({
+          ...updateData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+
+      client = updatedClient;
+      error = updateError;
+    } else if (userRole === 'client') {
+      // Try new system: lookup by user_id first
+      let { data: updatedClient, error: updateError } = await supabaseAdmin
+        .from('clients')
+        .update({
+          ...updateData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+
+      if (updateError || !updatedClient) {
+        // Fallback to old system: update by id (backward compatibility)
+        ({ data: updatedClient, error: updateError } = await supabaseAdmin
+          .from('clients')
+          .update({
+            ...updateData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', userId)
+          .select('*')
+          .single());
+      }
+
+      client = updatedClient;
+      error = updateError;
+    } else {
+      error = { message: 'User is not a client' };
+    }
+
+    if (error || !client) {
       console.error('Update client profile error:', error);
       return res.status(500).json(
         errorResponse('Failed to update client profile')
@@ -81,10 +165,13 @@ const updateProfile = async (req, res) => {
 const getSessions = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userRole = req.user.role;
     const { page = 1, limit = 10, status } = req.query;
 
-    // req.user.id is already the client ID, no need to lookup
-    const clientId = userId;
+    // Determine client ID based on system (new or old)
+    // For new system: req.user.id is users.id, use req.user.client_id (set by middleware)
+    // For old system: req.user.id is already clients.id
+    let clientId = req.user.client_id || userId;
 
     // Check if sessions table exists and has proper relationships
     try {

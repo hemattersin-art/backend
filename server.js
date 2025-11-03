@@ -452,12 +452,6 @@ app.get('/api/public/psychologists', async (req, res) => {
     }
 
     console.log('Successfully fetched psychologists:', psychologists?.length || 0);
-    console.log('Psychologists data:', psychologists);
-    
-    // Debug image URLs
-    psychologists.forEach(psych => {
-      console.log(`🔍 Image URL for ${psych.first_name}:`, psych.cover_image_url);
-    });
 
     // Individual price is stored directly in the psychologist record
     // No need to fetch from packages table since it doesn't exist
@@ -477,7 +471,7 @@ app.get('/api/public/psychologists', async (req, res) => {
       
       console.log(`🔍 Price extraction for ${psych.first_name}:`, {
         individual_session_price: psych.individual_session_price,
-        description: psych.description,
+        description_length: psych.description?.length || 0,
         extractedPrice: extractedPrice
       });
       

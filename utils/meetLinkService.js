@@ -318,7 +318,13 @@ class MeetLinkService {
         }
       };
 
-      console.log('🔍 Calendar API Event Data:', JSON.stringify(event, null, 2));
+      console.log('🔍 Calendar API Event Data:', {
+        summary: event.summary,
+        start: event.start?.dateTime || event.start?.date,
+        end: event.end?.dateTime || event.end?.date,
+        location: event.location,
+        conferenceData: event.conferenceData ? 'present' : 'none'
+      });
 
       const result = await calendar.events.insert({
         calendarId: 'primary',
@@ -608,7 +614,7 @@ class MeetLinkService {
   async generateSessionMeetLink(sessionData, userAuth = null) {
     try {
       console.log('🔄 Generating session Meet link...');
-      console.log('   📅 Session Data:', sessionData);
+      console.log('   📅 Session ID:', sessionData?.id || sessionData?.session_id);
       console.log('   🔑 User Auth:', userAuth ? 'Available' : 'Not available');
       
       // Prepare session data
