@@ -154,7 +154,11 @@ const createBetterParenting = async (req, res) => {
       faqs,
       info_cards: Array.isArray(body.info_cards) ? body.info_cards : undefined,
       videos: Array.isArray(body.videos) ? body.videos : undefined,
+      videos_heading: body.videos_heading,
+      videos_subheading: body.videos_subheading,
+      videos_featured_index: typeof body.videos_featured_index === 'number' ? body.videos_featured_index : undefined,
       reviews: Array.isArray(body.reviews) ? body.reviews : undefined,
+      reviews_heading: body.reviews_heading,
       blog_teaser_enabled: body.blog_teaser_enabled,
       blog_teaser_tag: body.blog_teaser_tag,
     };
@@ -209,7 +213,11 @@ const updateBetterParenting = async (req, res) => {
       faqs: Array.isArray(src.faqs) ? src.faqs : undefined,
       info_cards: Array.isArray(src.info_cards) ? src.info_cards : undefined,
       videos: Array.isArray(src.videos) ? src.videos : undefined,
+      videos_heading: src.videos_heading,
+      videos_subheading: src.videos_subheading,
+      videos_featured_index: typeof src.videos_featured_index === 'number' ? src.videos_featured_index : undefined,
       reviews: Array.isArray(src.reviews) ? src.reviews : undefined,
+      reviews_heading: src.reviews_heading,
       blog_teaser_enabled: src.blog_teaser_enabled,
       blog_teaser_tag: src.blog_teaser_tag,
     };
