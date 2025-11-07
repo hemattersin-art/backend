@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
@@ -187,35 +188,200 @@ const getSessions = async (req, res) => {
 
       const { data: sessions, error, count } = await query;
 
-      if (error) {
-        // If there's a database relationship error, return empty sessions
-        if (error.code === 'PGRST200' || error.message.includes('relationship') || error.message.includes('schema cache')) {
-          console.log('Database relationships not fully established, returning empty sessions for psychologist');
-          return res.json(
-            successResponse({
-              sessions: [],
-              pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total: 0
-              }
-            })
-          );
+      // Also fetch assessment sessions assigned to this psychologist
+      let assessmentSessions = [];
+      try {
+        let assessQuery = supabaseAdmin
+          .from('assessment_sessions')
+          .select(`
+            id,
+            assessment_id,
+            assessment_slug,
+            client_id,
+            psychologist_id,
+            scheduled_date,
+            scheduled_time,
+            status,
+            amount,
+            payment_id,
+            session_number,
+            created_at,
+            updated_at,
+            client:clients(
+              id,
+              first_name,
+              last_name,
+              child_name,
+              child_age,
+              phone_number,
+              user:users(
+                email
+              )
+            ),
+            assessment:assessments(
+              id,
+              slug,
+              hero_title,
+              seo_title,
+              assigned_doctor_ids
+            )
+          `)
+          .eq('psychologist_id', psychologistId);
+        
+        // Filter by status if provided (but don't filter if status is not provided)
+        if (status) {
+          assessQuery = assessQuery.eq('status', status);
         }
         
-        console.error('Get psychologist sessions error:', error);
-        return res.status(500).json(
-          errorResponse('Failed to fetch sessions')
-        );
+        // Filter by date if provided (but allow null dates for pending sessions)
+        if (date) {
+          assessQuery = assessQuery.or(`scheduled_date.eq.${date},scheduled_date.is.null`);
+        }
+        
+        let { data: assessData, error: assessError } = await assessQuery.order('created_at', { ascending: false });
+        
+        if (assessError) {
+          console.error('❌ Error fetching assessment sessions:', assessError);
+        } else {
+          console.log(`✅ Found ${assessData?.length || 0} assessment sessions for psychologist ${psychologistId}`);
+          console.log('🔍 Assessment sessions details:', assessData?.map(a => ({
+            id: a.id,
+            status: a.status,
+            psychologist_id: a.psychologist_id,
+            scheduled_date: a.scheduled_date,
+            scheduled_time: a.scheduled_time,
+            assessment_id: a.assessment_id
+          })) || []);
+          
+          // Backfill missing pending assessment sessions so each package has 3 total
+          try {
+            // Group by stable key (assessment_id + client_id + psychologist_id + payment_id)
+            const groups = new Map();
+            (assessData || []).forEach(s => {
+              const key = `${s.assessment_id}_${s.client_id}_${s.psychologist_id}_${s.payment_id || 'nopay'}`;
+              if (!groups.has(key)) groups.set(key, []);
+              groups.get(key).push(s);
+            });
+
+            for (const [key, sessions] of groups.entries()) {
+              const any = sessions[0];
+              // Only consider booked packages (must have a booked session or a payment_id)
+              const hasBooked = sessions.some(s => s.status === 'booked');
+              if (!hasBooked) continue;
+
+              const existingNumbers = new Set(sessions.map(s => s.session_number).filter(n => typeof n === 'number'));
+              const inserts = [];
+              // Ensure first session has session_number 1
+              const first = sessions.find(s => s.status === 'booked');
+              if (first && (first.session_number == null)) {
+                await supabaseAdmin
+                  .from('assessment_sessions')
+                  .update({ session_number: 1, updated_at: new Date().toISOString() })
+                  .eq('id', first.id);
+                existingNumbers.add(1);
+              }
+              // Create missing 2 and 3
+              [2,3].forEach(n => {
+                if (!existingNumbers.has(n)) {
+                  inserts.push({
+                    user_id: any.user_id,
+                    client_id: any.client_id,
+                    assessment_id: any.assessment_id,
+                    assessment_slug: any.assessment_slug,
+                    psychologist_id: any.psychologist_id,
+                    scheduled_date: null,
+                    scheduled_time: null,
+                    amount: any.amount,
+                    currency: any.currency || 'INR',
+                    status: 'pending',
+                    payment_id: any.payment_id,
+                    session_number: n,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                  });
+                }
+              });
+
+              if (inserts.length > 0) {
+                const { error: insertErr } = await supabaseAdmin
+                  .from('assessment_sessions')
+                  .insert(inserts);
+                if (insertErr) {
+                  console.warn('⚠️ Failed to backfill pending assessment sessions:', insertErr);
+                } else {
+                  // Refresh assessData for this group on success
+                  const { data: refreshed } = await supabaseAdmin
+                    .from('assessment_sessions')
+                    .select('*')
+                    .eq('assessment_id', any.assessment_id)
+                    .eq('client_id', any.client_id)
+                    .eq('psychologist_id', any.psychologist_id)
+                    .eq('payment_id', any.payment_id)
+                    .order('created_at', { ascending: false });
+                  // Replace entries in assessData by filtering out old group and adding refreshed
+                  assessData = (assessData || []).filter(s => s.assessment_id !== any.assessment_id || s.client_id !== any.client_id || s.psychologist_id !== any.psychologist_id || s.payment_id !== any.payment_id).concat(refreshed || []);
+                }
+              }
+            }
+          } catch (bfErr) {
+            console.warn('⚠️ Error during assessment sessions backfill:', bfErr);
+          }
+
+          // Transform assessment sessions to match session format
+          assessmentSessions = (assessData || []).map(a => ({
+            ...a,
+            session_type: 'assessment',
+            type: 'assessment',
+            // Add client_name for frontend compatibility
+            client_name: a.client ? `${a.client.first_name || ''} ${a.client.last_name || ''}`.trim() : 'Client',
+            // Add assessment title
+            assessment_title: a.assessment?.hero_title || a.assessment?.seo_title || 'Assessment'
+          }));
+          
+          console.log('🔍 Transformed assessment sessions:', assessmentSessions.map(a => ({
+            id: a.id,
+            status: a.status,
+            session_type: a.session_type,
+            type: a.type,
+            scheduled_date: a.scheduled_date
+          })));
+        }
+      } catch (assessError) {
+        console.error('❌ Assessment sessions fetch error:', assessError);
       }
+
+      // Combine regular sessions and assessment sessions
+      // Sort: pending sessions first (for scheduling), then by date
+      const allSessions = [...(sessions || []), ...assessmentSessions]
+        .sort((a, b) => {
+          // Pending sessions (null dates) come first
+          if (!a.scheduled_date && b.scheduled_date) return -1;
+          if (a.scheduled_date && !b.scheduled_date) return 1;
+          if (!a.scheduled_date && !b.scheduled_date) {
+            // Both pending, sort by created_at
+            return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+          }
+          // Both have dates, sort by date descending
+          return new Date(b.scheduled_date) - new Date(a.scheduled_date);
+        });
+
+      console.log(`🔍 Total sessions returned: ${allSessions.length} (regular: ${sessions?.length || 0}, assessment: ${assessmentSessions.length})`);
+      console.log(`🔍 Pending assessment sessions in response:`, allSessions.filter(s => 
+        (s.session_type === 'assessment' || s.type === 'assessment') && s.status === 'pending'
+      ).map(s => ({
+        id: s.id,
+        status: s.status,
+        psychologist_id: s.psychologist_id,
+        scheduled_date: s.scheduled_date
+      })));
 
       res.json(
         successResponse({
-          sessions: sessions || [],
+          sessions: allSessions,
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: count || (sessions ? sessions.length : 0)
+            total: (count || 0) + assessmentSessions.length
           }
         })
       );
@@ -308,8 +474,8 @@ const updateSession = async (req, res) => {
 // Get availability
 const getAvailability = async (req, res) => {
   try {
-    const psychologistId = req.user.id;
-    const { date, start_date, end_date } = req.query;
+    const { date, start_date, end_date, psychologist_id, target_psychologist_id } = req.query;
+    const psychologistId = psychologist_id || target_psychologist_id || req.user.id;
 
     // Check if availability table exists and has proper relationships
     try {
@@ -927,20 +1093,6 @@ const completeSession = async (req, res) => {
     const { sessionId } = req.params;
     const { session_summary, session_notes, status = 'completed' } = req.body;
 
-    // Check if session exists and belongs to psychologist
-    const { data: session } = await supabase
-      .from('sessions')
-      .select('*')
-      .eq('id', sessionId)
-      .eq('psychologist_id', psychologistId)
-      .single();
-
-    if (!session) {
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
     // Validate required fields
     if (!session_summary || session_summary.trim().length === 0) {
       return res.status(400).json(
@@ -960,23 +1112,70 @@ const completeSession = async (req, res) => {
       updateData.session_notes = session_notes.trim();
     }
 
-    // Update session
-    const { data: updatedSession, error } = await supabase
+    // First, try to find it as a regular session
+    const { data: regularSession } = await supabase
       .from('sessions')
-      .update(updateData)
-      .eq('id', sessionId)
       .select('*')
+      .eq('id', sessionId)
+      .eq('psychologist_id', psychologistId)
       .single();
 
-    if (error) {
-      console.error('Complete session error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to complete session')
+    if (regularSession) {
+      // Update regular session
+      const { data: updatedSession, error } = await supabase
+        .from('sessions')
+        .update(updateData)
+        .eq('id', sessionId)
+        .eq('psychologist_id', psychologistId)
+        .select('*')
+        .single();
+
+      if (error) {
+        console.error('Complete session error:', error);
+        return res.status(500).json(
+          errorResponse('Failed to complete session')
+        );
+      }
+
+      return res.json(
+        successResponse(updatedSession, 'Session completed successfully with summary and notes')
       );
     }
 
+    // If not found in regular sessions, check assessment sessions
+    const { data: assessmentSession, error: assessCheckError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .eq('psychologist_id', psychologistId)
+      .single();
+
+    if (assessCheckError || !assessmentSession) {
+      return res.status(404).json(
+        errorResponse('Session not found or you do not have permission to complete this session')
+      );
+    }
+
+    // Update assessment session
+    const { data: updatedAssessmentSession, error: assessUpdateError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .update(updateData)
+      .eq('id', sessionId)
+      .eq('psychologist_id', psychologistId)
+      .select('*')
+      .single();
+
+    if (assessUpdateError) {
+      console.error('Complete assessment session error:', assessUpdateError);
+      return res.status(500).json(
+        errorResponse('Failed to complete assessment session')
+      );
+    }
+
+    console.log('✅ Assessment session completed successfully:', updatedAssessmentSession.id);
+
     res.json(
-      successResponse(updatedSession, 'Session completed successfully with summary and notes')
+      successResponse(updatedAssessmentSession, 'Assessment session completed successfully with summary and notes')
     );
 
   } catch (error) {
@@ -1068,12 +1267,235 @@ const respondToRescheduleRequest = async (req, res) => {
   }
 };
 
+// Schedule pending assessment session (for psychologists)
+const scheduleAssessmentSession = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const { assessmentSessionId } = req.params;
+    const { scheduled_date, scheduled_time, target_psychologist_id } = req.body;
+
+    if (!scheduled_date || !scheduled_time) {
+      return res.status(400).json(
+        errorResponse('Missing required fields: scheduled_date, scheduled_time')
+      );
+    }
+
+    // Fetch assessment session by ID (allow reassignment to another psychologist)
+    const { data: assessmentSession, error: fetchError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('*')
+      .eq('id', assessmentSessionId)
+      .single();
+
+    if (fetchError || !assessmentSession) {
+      return res.status(404).json(
+        errorResponse('Assessment session not found')
+      );
+    }
+
+    // Check if session is in pending status
+    if (assessmentSession.status !== 'pending') {
+      return res.status(400).json(
+        errorResponse(`Cannot schedule session. Current status: ${assessmentSession.status}`)
+      );
+    }
+
+    // Decide which psychologist's availability to use
+    const targetPsychologistId = target_psychologist_id || assessmentSession.psychologist_id || psychologistId;
+
+    // Check conflicts for TARGET psychologist
+    const { data: conflictingAssessmentSessions } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', scheduled_date)
+      .eq('scheduled_time', scheduled_time)
+      .in('status', ['reserved', 'booked']);
+
+    // Also check regular therapy sessions for target psychologist
+    const { data: conflictingRegularSessions } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', scheduled_date)
+      .eq('scheduled_time', scheduled_time)
+      .in('status', ['booked', 'rescheduled', 'confirmed']);
+
+    const hasConflict = (conflictingAssessmentSessions && conflictingAssessmentSessions.length > 0) ||
+                       (conflictingRegularSessions && conflictingRegularSessions.length > 0);
+
+    if (hasConflict) {
+      return res.status(400).json(
+        errorResponse('This time slot is already booked for you. Please select another time.')
+      );
+    }
+
+    // Update the assessment session with scheduled date/time and change status to booked
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .update({
+        scheduled_date,
+        scheduled_time,
+        status: 'booked',
+        psychologist_id: targetPsychologistId,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assessmentSessionId)
+      .eq('status', 'pending')
+      .select('*')
+      .single();
+
+    if (updateError || !updatedSession) {
+      console.error('Error scheduling assessment session:', updateError);
+      return res.status(500).json(
+        errorResponse('Failed to schedule assessment session')
+      );
+    }
+
+    console.log('✅ Assessment session scheduled successfully by psychologist:', updatedSession.id);
+
+    // Block the booked slot from availability (best-effort)
+    try {
+      const hhmm = (scheduled_time || '').substring(0,5);
+      const { data: avail } = await supabaseAdmin
+        .from('availability')
+        .select('id, time_slots')
+        .eq('psychologist_id', psychologistId)
+        .eq('date', scheduled_date)
+        .single();
+      if (avail && Array.isArray(avail.time_slots)) {
+        const filtered = avail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== hhmm);
+        if (filtered.length !== avail.time_slots.length) {
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+            .eq('id', avail.id);
+          console.log('✅ Availability updated to block scheduled assessment slot', { date: scheduled_date, time: hhmm });
+        }
+      }
+    } catch (blockErr) {
+      console.warn('⚠️ Failed to update availability after scheduling:', blockErr?.message);
+    }
+
+    res.json(
+      successResponse(updatedSession, 'Assessment session scheduled successfully')
+    );
+
+  } catch (error) {
+    console.error('Schedule assessment session error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while scheduling assessment session')
+    );
+  }
+};
+
+// Delete a regular therapy session (owned by psychologist)
+const deleteSession = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const { sessionId } = req.params;
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('sessions')
+      .select('id, payment_id')
+      .eq('id', sessionId)
+      .eq('psychologist_id', psychologistId)
+      .single();
+
+    if (fetchError || !existing) {
+      return res.status(404).json(
+        errorResponse('Session not found or access denied')
+      );
+    }
+
+    // Delete related payment records (if any)
+    try {
+      await supabase
+        .from('payments')
+        .delete()
+        .eq('session_id', sessionId);
+    } catch (payErr) {
+      console.warn('⚠️  Failed to delete related payments for session:', sessionId, payErr?.message);
+    }
+
+    const { error: delError } = await supabase
+      .from('sessions')
+      .delete()
+      .eq('id', sessionId);
+
+    if (delError) {
+      console.error('Delete session error:', delError);
+      return res.status(500).json(
+        errorResponse('Failed to delete session')
+      );
+    }
+
+    res.json(successResponse(null, 'Session deleted successfully'));
+  } catch (error) {
+    console.error('Delete session error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while deleting session')
+    );
+  }
+};
+
+// Delete an assessment session (owned by psychologist)
+const deleteAssessmentSession = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const { assessmentSessionId } = req.params;
+
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('id')
+      .eq('id', assessmentSessionId)
+      .eq('psychologist_id', psychologistId)
+      .single();
+
+    if (fetchError || !existing) {
+      return res.status(404).json(
+        errorResponse('Assessment session not found or access denied')
+      );
+    }
+
+    // Delete related payment records (if any)
+    try {
+      await supabase
+        .from('payments')
+        .delete()
+        .eq('assessment_session_id', assessmentSessionId);
+    } catch (payErr) {
+      console.warn('⚠️  Failed to delete related payments for assessment session:', assessmentSessionId, payErr?.message);
+    }
+
+    const { error: delError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .delete()
+      .eq('id', assessmentSessionId);
+
+    if (delError) {
+      console.error('Delete assessment session error:', delError);
+      return res.status(500).json(
+        errorResponse('Failed to delete assessment session')
+      );
+    }
+
+    res.json(successResponse(null, 'Assessment session deleted successfully'));
+  } catch (error) {
+    console.error('Delete assessment session error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while deleting assessment session')
+    );
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
   getSessions,
   updateSession,
   completeSession,
+  scheduleAssessmentSession,
   getAvailability,
   addAvailability,
   updateAvailability,
@@ -1082,5 +1504,7 @@ module.exports = {
   createPackage,
   updatePackage,
   deletePackage,
-  respondToRescheduleRequest
+  respondToRescheduleRequest,
+  deleteSession,
+  deleteAssessmentSession
 };

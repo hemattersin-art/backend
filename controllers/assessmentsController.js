@@ -130,6 +130,21 @@ const getAssessmentBySlug = async (req, res) => {
       if (error.code === 'PGRST116') return res.status(404).json(errorResponse('Assessment not found'));
       throw error;
     }
+    if (!data) return res.status(404).json(errorResponse('Assessment not found'));
+    
+    // Ensure assigned_doctor_ids is an array (might be JSON string from database)
+    if (data.assigned_doctor_ids && typeof data.assigned_doctor_ids === 'string') {
+      try {
+        data.assigned_doctor_ids = JSON.parse(data.assigned_doctor_ids);
+      } catch (e) {
+        console.warn('Failed to parse assigned_doctor_ids:', e);
+        data.assigned_doctor_ids = [];
+      }
+    }
+    if (!Array.isArray(data.assigned_doctor_ids)) {
+      data.assigned_doctor_ids = [];
+    }
+    
     res.json(successResponse('Assessment retrieved', data));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to fetch assessment', err.message));
@@ -150,6 +165,21 @@ const getAssessmentById = async (req, res) => {
       if (error.code === 'PGRST116') return res.status(404).json(errorResponse('Assessment not found'));
       throw error;
     }
+    if (!data) return res.status(404).json(errorResponse('Assessment not found'));
+    
+    // Ensure assigned_doctor_ids is an array (might be JSON string from database)
+    if (data.assigned_doctor_ids && typeof data.assigned_doctor_ids === 'string') {
+      try {
+        data.assigned_doctor_ids = JSON.parse(data.assigned_doctor_ids);
+      } catch (e) {
+        console.warn('Failed to parse assigned_doctor_ids:', e);
+        data.assigned_doctor_ids = [];
+      }
+    }
+    if (!Array.isArray(data.assigned_doctor_ids)) {
+      data.assigned_doctor_ids = [];
+    }
+    
     res.json(successResponse('Assessment retrieved', data));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to fetch assessment', err.message));
@@ -227,6 +257,7 @@ const createAssessment = async (req, res) => {
       benefits_image_url,
       right_image_url,
       mobile_image_url,
+      assigned_doctor_ids: Array.isArray(body.assigned_doctor_ids) ? body.assigned_doctor_ids : undefined,
       updated_by: req.user?.id,
     };
 
@@ -304,6 +335,7 @@ const updateAssessment = async (req, res) => {
       faqs: validateJsonArray(src.faqs, 'faqs'),
       videos: validateJsonArray(src.videos, 'videos'),
       reviews: validateJsonArray(src.reviews, 'reviews'),
+      assigned_doctor_ids: Array.isArray(src.assigned_doctor_ids) ? src.assigned_doctor_ids : undefined,
       updated_by: req.user?.id,
     };
 

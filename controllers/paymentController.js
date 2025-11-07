@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   getPayUConfig, 
   generatePayUHash, 
@@ -181,7 +182,9 @@ const createPaymentOrder = async (req, res) => {
       clientEmail,
       clientPhone,
       scheduledDate,
-      scheduledTime
+      scheduledTime,
+      assessmentSessionId,
+      assessmentType
     } = req.body;
 
     // Validate required fields
@@ -227,7 +230,7 @@ const createPaymentOrder = async (req, res) => {
       key: payuConfig.merchantId,
       txnid: txnid,
       amount: amount.toString(),
-      productinfo: `Therapy Session - ${sessionType}`,
+      productinfo: assessmentType === 'assessment' ? `Assessment Session - ${sessionType}` : `Therapy Session - ${sessionType}`,
       firstname: clientName.split(' ')[0] || clientName,
       lastname: clientName.split(' ').slice(1).join(' ') || '',
       email: clientEmail,
@@ -246,8 +249,8 @@ const createPaymentOrder = async (req, res) => {
       udf3: clientId,
       udf4: packageId || '',
       udf5: scheduledTime, // Store scheduled_time
-      udf6: '',
-      udf7: '',
+      udf6: assessmentSessionId || '', // Store assessment_session_id if assessment
+      udf7: assessmentType || '', // 'assessment' or empty
       udf8: '',
       udf9: '',
       udf10: ''
@@ -259,28 +262,56 @@ const createPaymentOrder = async (req, res) => {
 
     // Store pending payment record
     console.log('💾 Creating payment record in database...');
+    console.log('🔍 Assessment booking check:', {
+      assessmentSessionId,
+      assessmentType,
+      hasAssessmentSessionId: !!assessmentSessionId
+    });
+    
+    const paymentData = {
+      transaction_id: txnid,
+      session_id: null, // Will be set after payment success
+      psychologist_id: psychologistId,
+      client_id: clientId,
+      package_id: packageId === 'individual' ? null : packageId, // Set to null for individual sessions
+      amount: amount,
+      session_type: sessionType,
+      status: 'pending',
+      payu_params: payuParams,
+      created_at: new Date().toISOString()
+    };
+    
+    // Add assessment_session_id if assessment booking (only if column exists)
+    // Note: This will fail if the column doesn't exist - check backend logs for details
+    if (assessmentSessionId) {
+      paymentData.assessment_session_id = assessmentSessionId;
+      console.log('🔍 Adding assessment_session_id to payment data:', assessmentSessionId);
+    }
+    
+    console.log('🔍 Final payment data (excluding payu_params):', {
+      ...paymentData,
+      payu_params: '[REDACTED]'
+    });
+    
     const { data: paymentRecord, error: paymentError } = await supabase
       .from('payments')
-      .insert({
-        transaction_id: txnid,
-        session_id: null, // Will be set after payment success
-        psychologist_id: psychologistId,
-        client_id: clientId,
-        package_id: packageId === 'individual' ? null : packageId, // Set to null for individual sessions
-        amount: amount,
-        session_type: sessionType,
-        status: 'pending',
-        payu_params: payuParams,
-        created_at: new Date().toISOString()
-      })
+      .insert([paymentData])
       .select()
       .single();
 
     if (paymentError) {
       console.error('❌ Error creating payment record:', paymentError);
+      console.error('❌ Payment data attempted:', JSON.stringify(paymentData, null, 2));
+      console.error('❌ Full error details:', {
+        message: paymentError.message,
+        code: paymentError.code,
+        details: paymentError.details,
+        hint: paymentError.hint
+      });
       return res.status(500).json({
         success: false,
-        message: 'Failed to create payment record'
+        message: 'Failed to create payment record',
+        error: paymentError.message || 'Database error'
       });
     }
 
@@ -348,7 +379,7 @@ const handlePaymentSuccess = async (req, res) => {
     //   });
     // }
 
-    const { txnid, status, amount, udf1: scheduledDate, udf2: psychologistId, udf3: clientIdFromPayU, udf4: packageId, udf5: scheduledTime } = params;
+    const { txnid, status, amount, udf1: scheduledDate, udf2: psychologistId, udf3: clientIdFromPayU, udf4: packageId, udf5: scheduledTime, udf6: assessmentSessionId, udf7: assessmentType } = params;
 
     // Find payment record
     const { data: paymentRecord, error: paymentError } = await supabase
@@ -371,6 +402,8 @@ const handlePaymentSuccess = async (req, res) => {
     const actualScheduledDate = paymentRecord.payu_params?.udf1 || scheduledDate;
     const actualScheduledTime = paymentRecord.payu_params?.udf5 || scheduledTime;
     const actualPackageId = paymentRecord.package_id;
+    const isAssessment = paymentRecord.assessment_session_id || paymentRecord.payu_params?.udf7 === 'assessment' || assessmentType === 'assessment';
+    const actualAssessmentSessionId = paymentRecord.assessment_session_id || assessmentSessionId;
 
     // Check if already processed
     if (paymentRecord.status === 'success') {
@@ -382,6 +415,176 @@ const handlePaymentSuccess = async (req, res) => {
 
     console.log('✅ Payment validated, creating session...');
 
+    // Check if this is an assessment booking
+    if (isAssessment && actualAssessmentSessionId) {
+      // Update assessment session status to booked
+      const { data: assessmentSession, error: assessError } = await supabaseAdmin
+        .from('assessment_sessions')
+        .update({
+          status: 'booked',
+          payment_id: paymentRecord.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', actualAssessmentSessionId)
+        .eq('status', 'reserved')
+        .select('*')
+        .single();
+
+      if (assessError || !assessmentSession) {
+        console.error('❌ Assessment session update failed:', assessError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update assessment session after payment'
+        });
+      }
+
+      console.log('✅ Assessment session booked successfully:', assessmentSession.id);
+
+      // Block the booked slot from availability (best-effort)
+      try {
+        const hhmm = (assessmentSession.scheduled_time || '').substring(0,5);
+        const { data: avail } = await supabaseAdmin
+          .from('availability')
+          .select('id, time_slots')
+          .eq('psychologist_id', assessmentSession.psychologist_id)
+          .eq('date', assessmentSession.scheduled_date)
+          .single();
+        if (avail && Array.isArray(avail.time_slots)) {
+          const filtered = avail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== hhmm);
+          if (filtered.length !== avail.time_slots.length) {
+            await supabaseAdmin
+              .from('availability')
+              .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+              .eq('id', avail.id);
+            console.log('✅ Availability updated to block booked assessment slot', { date: assessmentSession.scheduled_date, time: hhmm });
+          }
+        }
+      } catch (blockErr) {
+        console.warn('⚠️ Failed to update availability after assessment booking:', blockErr?.message);
+      }
+
+      // After first session is booked, create 2 additional sessions for psychologists to schedule
+      try {
+        // Get assessment details for pricing
+        const { data: assessmentData } = await supabaseAdmin
+          .from('assessments')
+          .select('assessment_price')
+          .eq('id', assessmentSession.assessment_id)
+          .single();
+
+        // Get client details for the new sessions
+        const { data: clientData } = await supabaseAdmin
+          .from('clients')
+          .select('user_id, id')
+          .eq('id', assessmentSession.client_id)
+          .single();
+
+        const assessmentPrice = assessmentData?.assessment_price || 5000;
+
+        // Get the actual user_id from the client record
+        // If client has user_id, use it; otherwise try to get it from the assessment session
+        const actualUserId = clientData?.user_id || assessmentSession.user_id;
+        
+        // If still no user_id, we need to find it from the users table using client email or other means
+        if (!actualUserId) {
+          console.warn('⚠️ No user_id found in client or assessment session, attempting to find user by client email');
+          // Try to get user_id from users table if client has email
+          // This is a fallback for old clients that might not have user_id set
+        }
+
+        // Create 2 additional sessions with status 'pending' for the SAME psychologist who took the first session
+        // This psychologist will schedule all remaining sessions
+        const additionalSessions = [];
+        
+        // Assign both session 2 and session 3 to the same psychologist who took the first session
+        const psychologistForPendingSessions = assessmentSession.psychologist_id;
+
+        console.log('🔍 Creating pending sessions - assigning to first session psychologist:', {
+          psychologist_id: psychologistForPendingSessions,
+          assessment_id: assessmentSession.assessment_id,
+          user_id: actualUserId,
+          client_id: assessmentSession.client_id,
+          note: 'All pending sessions will be assigned to the same psychologist who took the first session'
+        });
+
+        additionalSessions.push({
+          user_id: actualUserId, // Use the actual user_id from client record
+          client_id: assessmentSession.client_id,
+          assessment_id: assessmentSession.assessment_id,
+          assessment_slug: assessmentSession.assessment_slug,
+          psychologist_id: psychologistForPendingSessions,
+          scheduled_date: null, // To be set by psychologist
+          scheduled_time: null, // To be set by psychologist
+          amount: assessmentPrice,
+          currency: 'INR',
+          status: 'pending', // Status for psychologist to schedule
+          payment_id: paymentRecord.id, // Link to the same payment
+          created_at: new Date().toISOString()
+        });
+
+        additionalSessions.push({
+          user_id: actualUserId, // Use the actual user_id from client record
+          client_id: assessmentSession.client_id,
+          assessment_id: assessmentSession.assessment_id,
+          assessment_slug: assessmentSession.assessment_slug,
+          psychologist_id: psychologistForPendingSessions,
+          scheduled_date: null, // To be set by psychologist
+          scheduled_time: null, // To be set by psychologist
+          amount: assessmentPrice,
+          currency: 'INR',
+          status: 'pending', // Status for psychologist to schedule
+          payment_id: paymentRecord.id, // Link to the same payment
+          created_at: new Date().toISOString()
+        });
+
+        // Also update the first session to mark it as session 1 (if column exists)
+        try {
+          await supabaseAdmin
+            .from('assessment_sessions')
+            .update({ session_number: 1 })
+            .eq('id', assessmentSession.id);
+        } catch (updateError) {
+          // Ignore if session_number column doesn't exist yet
+          console.log('Note: session_number column may not exist yet:', updateError.message);
+        }
+
+        // Insert the 2 additional sessions
+        const { data: newSessions, error: insertError } = await supabaseAdmin
+          .from('assessment_sessions')
+          .insert(additionalSessions)
+          .select('*');
+
+        if (insertError) {
+          console.error('❌ Error creating additional assessment sessions:', insertError);
+          console.error('❌ Insert data attempted:', JSON.stringify(additionalSessions, null, 2));
+          // Don't fail the payment, just log the error
+        } else {
+          console.log('✅ Created 2 additional assessment sessions for psychologist to schedule:', newSessions.map(s => ({
+            id: s.id,
+            psychologist_id: s.psychologist_id,
+            status: s.status,
+            scheduled_date: s.scheduled_date
+          })));
+        }
+      } catch (error) {
+        console.error('❌ Error creating additional assessment sessions:', error);
+        // Don't fail the payment, just log the error
+      }
+
+      // Update payment record
+      await supabaseAdmin
+        .from('payments')
+        .update({ status: 'success', completed_at: new Date().toISOString() })
+        .eq('id', paymentRecord.id);
+
+      return res.json({
+        success: true,
+        message: 'Assessment session booked successfully. 2 additional sessions have been created for psychologists to schedule.',
+        data: { assessmentSessionId: assessmentSession.id }
+      });
+    }
+
+    // Regular therapy session booking (existing code)
     // Get client and psychologist details for session creation
     const { data: clientDetails, error: clientDetailsError } = await supabase
       .from('clients')

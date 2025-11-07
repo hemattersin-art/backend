@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const whatsappService = require('../utils/whatsappService');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
@@ -62,7 +62,8 @@ class SessionReminderService {
       const targetTimeStr = targetTime.format('HH:mm:ss');
       
       // Get sessions scheduled for the target date
-      const { data: sessions, error: sessionsError } = await supabase
+      // Use supabaseAdmin to bypass RLS and avoid fetch errors
+      const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select(`
           id,
@@ -93,7 +94,12 @@ class SessionReminderService {
         .order('scheduled_time', { ascending: true });
 
       if (sessionsError) {
-        console.error('❌ Error fetching sessions:', sessionsError);
+        console.error('❌ Error fetching sessions:', {
+          message: sessionsError.message,
+          details: sessionsError.details || sessionsError.toString(),
+          hint: sessionsError.hint || '',
+          code: sessionsError.code || ''
+        });
         this.isRunning = false;
         return;
       }
@@ -156,7 +162,7 @@ class SessionReminderService {
   async sendReminderForSession(session) {
     try {
       // Check if reminder has already been sent
-      const { data: existingNotifications } = await supabase
+      const { data: existingNotifications } = await supabaseAdmin
         .from('notifications')
         .select('id')
         .eq('related_id', session.id)
@@ -243,7 +249,7 @@ class SessionReminderService {
       await Promise.all(reminderPromises);
 
       // Create notification record to track that reminder was sent
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .insert([
           {
@@ -288,7 +294,8 @@ class SessionReminderService {
       
       // Query for sessions created or updated in the last minute
       // We'll fetch and filter in JavaScript to avoid complex OR query syntax
-      const { data: allTargetSessions, error: sessionsError } = await supabase
+      // Use supabaseAdmin to bypass RLS
+      const { data: allTargetSessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select(`
           id,
@@ -375,7 +382,8 @@ class SessionReminderService {
       const now = dayjs().tz('Asia/Kolkata');
       
       // Fetch the specific session with all required data
-      const { data: session, error: sessionError } = await supabase
+      // Use supabaseAdmin to bypass RLS
+      const { data: session, error: sessionError } = await supabaseAdmin
         .from('sessions')
         .select(`
           id,

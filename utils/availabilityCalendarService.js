@@ -1,5 +1,6 @@
 const { calendar } = require('./googleOAuthClient');
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const googleCalendarService = require('./googleCalendarService');
 
 class AvailabilityCalendarService {
@@ -39,6 +40,26 @@ class AvailabilityCalendarService {
         throw sessionsError;
       }
 
+      // Also get booked assessment sessions for this date
+      const { data: existingAssessmentSessions, error: assessmentSessionsError } = await supabaseAdmin
+        .from('assessment_sessions')
+        .select('scheduled_time, status, id')
+        .eq('psychologist_id', psychologistId)
+        .eq('scheduled_date', date)
+        .in('status', ['booked', 'reserved']); // Include reserved as they're also blocked
+
+      if (assessmentSessionsError) {
+        console.error('Error fetching existing assessment sessions:', assessmentSessionsError);
+      }
+
+      // Combine both types of sessions
+      const allExistingSessions = [
+        ...(existingSessions || []),
+        ...(existingAssessmentSessions || [])
+      ];
+
+      console.log(`📊 Found ${existingSessions?.length || 0} regular sessions and ${existingAssessmentSessions?.length || 0} assessment sessions for ${date}`);
+
       // Get Google Calendar events for this date
       const startOfDay = new Date(`${date}T00:00:00`);
       const endOfDay = new Date(`${date}T23:59:59`);
@@ -59,12 +80,12 @@ class AvailabilityCalendarService {
       // Combine database sessions, calendar events, and blocked time slots
       const blockedSlots = new Set();
       
-      // Add database sessions
-      console.log(`📊 Found ${existingSessions.length} existing sessions for ${date}`);
-      existingSessions.forEach(session => {
+      // Add database sessions (both regular and assessment)
+      allExistingSessions.forEach(session => {
         const timeSlot = session.scheduled_time;
         blockedSlots.add(timeSlot);
-        console.log(`   🚫 Blocked slot from DB: ${timeSlot} (${session.status}, ID: ${session.id})`);
+        const sessionType = existingAssessmentSessions?.some(s => s.id === session.id) ? 'assessment' : 'regular';
+        console.log(`   🚫 Blocked slot from DB: ${timeSlot} (${session.status}, ${sessionType}, ID: ${session.id})`);
       });
 
       // Add calendar events (if available)
@@ -219,6 +240,7 @@ class AvailabilityCalendarService {
       console.log(`📊 Found ${availabilityData.length} availability records in date range`);
 
       // Get all booked sessions in the date range to filter them out
+      // Check both regular therapy sessions and assessment sessions
       const { data: bookedSessions, error: sessionsError } = await supabase
         .from('sessions')
         .select('scheduled_date, scheduled_time, status, id')
@@ -231,7 +253,26 @@ class AvailabilityCalendarService {
         console.error('Error fetching booked sessions:', sessionsError);
       }
 
-      console.log(`🔒 Found ${bookedSessions?.length || 0} booked sessions in date range`);
+      // Also get booked assessment sessions for the same period
+      const { data: bookedAssessmentSessions, error: assessmentSessionsError } = await supabaseAdmin
+        .from('assessment_sessions')
+        .select('scheduled_date, scheduled_time, status, id')
+        .eq('psychologist_id', psychologistId)
+        .gte('scheduled_date', startDate)
+        .lte('scheduled_date', endDate)
+        .in('status', ['booked', 'reserved']); // Include reserved as they're also blocked
+
+      if (assessmentSessionsError) {
+        console.error('Error fetching booked assessment sessions:', assessmentSessionsError);
+      }
+
+      // Combine both types of booked sessions
+      const allBookedSessions = [
+        ...(bookedSessions || []),
+        ...(bookedAssessmentSessions || [])
+      ];
+
+      console.log(`🔒 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions in date range`);
 
       // Check Google Calendar for external bookings if credentials exist
       let googleCalendarEvents = [];
@@ -291,14 +332,16 @@ class AvailabilityCalendarService {
 
       // Create a map of booked sessions by date (convert to 12-hour format to match availability)
       const bookedSlotsByDate = {};
-      (bookedSessions || []).forEach(session => {
+      allBookedSessions.forEach(session => {
         if (!bookedSlotsByDate[session.scheduled_date]) {
           bookedSlotsByDate[session.scheduled_date] = new Set();
         }
         
         const time12Hour = convertTo12Hour(session.scheduled_time);
         bookedSlotsByDate[session.scheduled_date].add(time12Hour);
-        console.log(`   🚫 Blocked: ${session.scheduled_date} at ${session.scheduled_time} → ${time12Hour} (${session.status})`);
+        const sessionType = session.status === 'reserved' ? 'assessment (reserved)' : 
+                           bookedSessions?.some(s => s.id === session.id) ? 'regular therapy' : 'assessment';
+        console.log(`   🚫 Blocked: ${session.scheduled_date} at ${session.scheduled_time} → ${time12Hour} (${session.status}, ${sessionType})`);
       });
 
       // Create a map of Google Calendar events by date

@@ -1363,32 +1363,75 @@ const updatePsychologist = async (req, res) => {
         const availabilityRecords = [];
         
         for (const avail of availability) {
-          if (avail.day && avail.slots && Array.isArray(avail.slots)) {
-            // Generate dates for the next 1 occurrence of this day
-            const dates = getAvailabilityDatesForDay(avail.day, 1);
-            
-            if (dates.length > 0) {
-              const dateStr = dates[0].toISOString().split('T')[0]; // YYYY-MM-DD format
-              
-              // Convert all time slots to strings to prevent object storage
-              const stringTimeSlots = avail.slots.map(slot => {
+          // Case 1: New per-date format from admin UI: { date: 'YYYY-MM-DD', timeSlots: {morning,noon,evening,night} }
+          if (avail.date && avail.timeSlots && typeof avail.timeSlots === 'object') {
+            // Use the provided date string directly (assumed YYYY-MM-DD), no timezone conversions
+            try {
+              const dateStr = String(avail.date);
+              const allSlots = [
+                ...(Array.isArray(avail.timeSlots.morning) ? avail.timeSlots.morning : []),
+                ...(Array.isArray(avail.timeSlots.noon) ? avail.timeSlots.noon : []),
+                ...(Array.isArray(avail.timeSlots.evening) ? avail.timeSlots.evening : []),
+                ...(Array.isArray(avail.timeSlots.night) ? avail.timeSlots.night : []),
+              ];
+
+              const stringTimeSlots = allSlots.map(slot => {
                 if (typeof slot === 'object' && slot !== null) {
-                  // Extract the display time from object
-                  if (slot.displayTime) {
-                    return slot.displayTime;
-                  } else if (slot.time) {
-                    return slot.time;
-                  } else {
-                    console.warn('Time slot object has no displayable time property:', slot);
-                    return String(slot);
-                  }
-                } else if (typeof slot === 'string') {
-                  return slot;
-                } else {
+                  if (slot.displayTime) return slot.displayTime;
+                  if (slot.time) return slot.time;
                   return String(slot);
                 }
+                return String(slot);
               });
-              
+
+              if (stringTimeSlots.length > 0) {
+                availabilityRecords.push({
+                  psychologist_id: psychologistId,
+                  date: dateStr,
+                  time_slots: stringTimeSlots,
+                  is_available: true
+                });
+              }
+            } catch (e) {
+              console.warn('⚠️ Failed to normalize per-date availability entry:', avail, e);
+            }
+            continue;
+          }
+
+          // Case 2: Existing per-date format from DB passthrough: { date: 'YYYY-MM-DD', time_slots: [...] }
+          if (avail.date && Array.isArray(avail.time_slots)) {
+            try {
+              const dateStr = String(avail.date);
+              const stringTimeSlots = avail.time_slots.map(slot => (typeof slot === 'string' ? slot : String(slot)));
+              if (stringTimeSlots.length > 0) {
+                availabilityRecords.push({
+                  psychologist_id: psychologistId,
+                  date: dateStr,
+                  time_slots: stringTimeSlots,
+                  is_available: true
+                });
+              }
+            } catch (e) {
+              console.warn('⚠️ Failed to normalize legacy per-date availability entry:', avail, e);
+            }
+            continue;
+          }
+
+          // Case 3: Legacy day-based format: { day: 'Monday', slots: [...] }
+          if (avail.day && avail.slots && Array.isArray(avail.slots)) {
+            // Generate dates for the next 1 occurrence of this day (preserves previous behavior)
+            const dates = getAvailabilityDatesForDay(avail.day, 1);
+            if (dates.length > 0) {
+              const dateStr = dates[0].toISOString().split('T')[0];
+              const stringTimeSlots = avail.slots.map(slot => {
+                if (typeof slot === 'object' && slot !== null) {
+                  if (slot.displayTime) return slot.displayTime;
+                  if (slot.time) return slot.time;
+                  console.warn('Time slot object has no displayable time property:', slot);
+                  return String(slot);
+                }
+                return typeof slot === 'string' ? slot : String(slot);
+              });
               availabilityRecords.push({
                 psychologist_id: psychologistId,
                 date: dateStr,

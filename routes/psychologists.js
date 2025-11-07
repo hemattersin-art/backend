@@ -22,6 +22,10 @@ router.get('/sessions', psychologistController.getSessions);
 router.put('/sessions/:sessionId', psychologistController.updateSession);
 router.post('/sessions/:sessionId/complete', psychologistController.completeSession);
 router.post('/sessions/:sessionId/reschedule-response', psychologistController.respondToRescheduleRequest);
+router.delete('/sessions/:sessionId', psychologistController.deleteSession);
+// Assessment session scheduling
+router.post('/assessment-sessions/:assessmentSessionId/schedule', psychologistController.scheduleAssessmentSession);
+router.delete('/assessment-sessions/:assessmentSessionId', psychologistController.deleteAssessmentSession);
 
 // Availability management
 router.get('/availability', psychologistController.getAvailability);

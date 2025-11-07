@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const googleCalendarService = require('../utils/googleCalendarService');
 
@@ -230,11 +231,37 @@ const getAvailability = async (req, res) => {
       console.error('Error fetching booked sessions:', sessionsError);
     }
 
-    console.log(`📅 Found ${bookedSessions?.length || 0} booked sessions for psychologist ${psychologist_id}`);
+    // Also get booked assessment sessions for the same period
+    let assessmentSessionsQuery = supabaseAdmin
+      .from('assessment_sessions')
+      .select('scheduled_date, scheduled_time, status, id')
+      .eq('psychologist_id', psychologist_id)
+      .in('status', ['booked', 'reserved']); // Include reserved as they're also blocked
+
+    if (start_date) {
+      assessmentSessionsQuery = assessmentSessionsQuery.gte('scheduled_date', start_date);
+    }
+    if (end_date) {
+      assessmentSessionsQuery = assessmentSessionsQuery.lte('scheduled_date', end_date);
+    }
+
+    const { data: bookedAssessmentSessions, error: assessmentSessionsError } = await assessmentSessionsQuery;
+    
+    if (assessmentSessionsError) {
+      console.error('Error fetching booked assessment sessions:', assessmentSessionsError);
+    }
+
+    // Combine both types of booked sessions
+    const allBookedSessions = [
+      ...(bookedSessions || []),
+      ...(bookedAssessmentSessions || [])
+    ];
+
+    console.log(`📅 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions for psychologist ${psychologist_id}`);
 
     // Combine availability with booked sessions - remove booked slots in real-time
     const availabilityWithBookings = availability.map(avail => {
-      const bookedTimes = (bookedSessions || [])
+      const bookedTimes = allBookedSessions
         .filter(session => session.scheduled_date === avail.date)
         .map(session => session.scheduled_time);
 
@@ -247,6 +274,7 @@ const getAvailability = async (req, res) => {
 
       return {
         ...avail,
+        time_slots: availableSlots, // Update time_slots to only show available slots
         available_slots: availableSlots,
         booked_slots: bookedTimes,
         total_slots: avail.time_slots.length,
@@ -300,7 +328,20 @@ const getAvailableTimeSlots = async (req, res) => {
       .eq('scheduled_date', date)
       .in('status', ['booked', 'rescheduled']);
 
-    const bookedTimes = bookedSessions.map(session => session.scheduled_time);
+    // Also get booked assessment sessions for the date
+    const { data: bookedAssessmentSessions } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('scheduled_time')
+      .eq('psychologist_id', psychologist_id)
+      .eq('scheduled_date', date)
+      .in('status', ['booked', 'reserved']);
+
+    // Combine booked times from both sources
+    const bookedTimes = [
+      ...(bookedSessions || []).map(s => s.scheduled_time),
+      ...(bookedAssessmentSessions || []).map(s => s.scheduled_time)
+    ];
+
     const availableSlots = availability.time_slots.filter(slot => 
       !bookedTimes.includes(slot)
     );

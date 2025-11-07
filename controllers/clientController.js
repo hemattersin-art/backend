@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
@@ -8,6 +9,7 @@ const {
 } = require('../utils/helpers');
 const availabilityService = require('../utils/availabilityCalendarService');
 const meetLinkService = require('../utils/meetLinkService');
+const { reserveAssessmentSlot, bookAssessment, getAssessmentSessions } = require('./assessmentBookingController');
 
 // Get client profile
 const getProfile = async (req, res) => {
@@ -200,35 +202,65 @@ const getSessions = async (req, res) => {
 
       const { data: sessions, error, count } = await query;
 
-      if (error) {
-        // If there's a database relationship error, return empty sessions
-        if (error.code === 'PGRST200' || error.message.includes('relationship') || error.message.includes('schema cache')) {
-          console.log('Database relationships not fully established, returning empty sessions for new client');
-          return res.json(
-            successResponse({
-              sessions: [],
-              pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total: 0
-              }
-            })
-          );
+      // Also fetch assessment sessions
+      let assessmentSessions = [];
+      try {
+        const assessQuery = supabaseAdmin
+          .from('assessment_sessions')
+          .select(`
+            id,
+            assessment_id,
+            assessment_slug,
+            psychologist_id,
+            scheduled_date,
+            scheduled_time,
+            status,
+            amount,
+            payment_id,
+            created_at,
+            assessment:assessments(
+              id,
+              slug,
+              hero_title,
+              seo_title
+            ),
+            psychologist:psychologists(
+              id,
+              first_name,
+              last_name,
+              area_of_expertise,
+              cover_image_url
+            )
+          `)
+          .eq('client_id', clientId);
+        
+        if (status) {
+          assessQuery.eq('status', status);
         }
         
-        console.error('Get client sessions error:', error);
-        return res.status(500).json(
-          errorResponse('Failed to fetch sessions')
-        );
+        const { data: assessData } = await assessQuery.order('scheduled_date', { ascending: false });
+        
+        // Transform assessment sessions to match session format
+        assessmentSessions = (assessData || []).map(a => ({
+          ...a,
+          session_type: 'assessment',
+          type: 'assessment'
+        }));
+      } catch (assessError) {
+        console.log('Assessment sessions fetch error (non-blocking):', assessError);
       }
+
+      // Combine regular sessions and assessment sessions
+      const allSessions = [...(sessions || []), ...assessmentSessions]
+        .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
 
       res.json(
         successResponse({
-          sessions: sessions || [],
+          sessions: allSessions,
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: count || (sessions ? sessions.length : 0)
+            total: (count || 0) + assessmentSessions.length
           }
         })
       );
@@ -465,6 +497,29 @@ const bookSession = async (req, res) => {
     console.log('   - Session ID:', session.id);
     console.log('   - Status:', session.status);
     console.log('   - Price:', session.price);
+
+    // Block the booked slot from availability (best-effort)
+    try {
+      const hhmm = (session.scheduled_time || '').substring(0,5);
+      const { data: avail } = await supabase
+        .from('availability')
+        .select('id, time_slots')
+        .eq('psychologist_id', psychologist_id)
+        .eq('date', session.scheduled_date)
+        .single();
+      if (avail && Array.isArray(avail.time_slots)) {
+        const filtered = avail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== hhmm);
+        if (filtered.length !== avail.time_slots.length) {
+          await supabase
+            .from('availability')
+            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+            .eq('id', avail.id);
+          console.log('✅ Availability updated to block booked slot', { date: session.scheduled_date, time: hhmm });
+        }
+      }
+    } catch (blockErr) {
+      console.warn('⚠️ Failed to update availability after booking:', blockErr?.message);
+    }
 
     // Step 7: If this is a package purchase, create client package record
     if (package && package.session_count > 1 && package.id !== 'individual') {
@@ -2066,12 +2121,22 @@ const reserveTimeSlot = async (req, res) => {
     const { psychologist_id, scheduled_date, scheduled_time, package_id } = req.body;
 
     console.log('🔍 Step 1: Client validation');
-    // Get client ID
-    const { data: client, error: clientError } = await supabase
+    // Get client by user_id (new system); fallback to id (legacy)
+    let { data: client, error: clientError } = await supabase
       .from('clients')
       .select('*')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
+
+    if (clientError || !client) {
+      const fallback = await supabase
+        .from('clients')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      client = fallback.data;
+      clientError = fallback.error;
+    }
 
     if (clientError || !client) {
       console.log('❌ Client not found');
@@ -2341,5 +2406,8 @@ module.exports = {
   getClientPackages,
   bookRemainingSession,
   reserveTimeSlot,
-  getFreeAssessmentAvailabilityForReschedule
+  getFreeAssessmentAvailabilityForReschedule,
+  reserveAssessmentSlot,
+  bookAssessment,
+  getAssessmentSessions
 };
