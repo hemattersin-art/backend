@@ -332,13 +332,115 @@ const getAllSessions = async (req, res) => {
       );
     }
 
+    // Also fetch assessment sessions for admin dashboard
+    let assessmentSessions = [];
+    try {
+      const { supabaseAdmin } = require('../config/supabase');
+      let assessQuery = supabaseAdmin
+        .from('assessment_sessions')
+        .select(`
+          id,
+          assessment_id,
+          assessment_slug,
+          client_id,
+          psychologist_id,
+          scheduled_date,
+          scheduled_time,
+          status,
+          amount,
+          payment_id,
+          session_number,
+          created_at,
+          updated_at,
+          client:clients(
+            id,
+            first_name,
+            last_name,
+            child_name,
+            child_age,
+            phone_number,
+            user:users(
+              email
+            )
+          ),
+          psychologist:psychologists(
+            id,
+            first_name,
+            last_name,
+            area_of_expertise,
+            email
+          ),
+          assessment:assessments(
+            id,
+            slug,
+            hero_title,
+            seo_title
+          )
+        `);
+
+      // Apply same filters as regular sessions
+      if (status) {
+        assessQuery = assessQuery.eq('status', status);
+      }
+      if (psychologist_id) {
+        assessQuery = assessQuery.eq('psychologist_id', psychologist_id);
+      }
+      if (client_id) {
+        assessQuery = assessQuery.eq('client_id', client_id);
+      }
+      if (date) {
+        assessQuery = assessQuery.eq('scheduled_date', date);
+      }
+
+      // Apply sorting
+      if (sort && order) {
+        assessQuery = assessQuery.order(sort, { ascending: order === 'asc' });
+      }
+
+      const { data: assessData, error: assessError } = await assessQuery;
+
+      if (assessError) {
+        console.error('Error fetching assessment sessions:', assessError);
+      } else {
+        // Transform assessment sessions to match session format
+        assessmentSessions = (assessData || []).map(a => ({
+          ...a,
+          session_type: 'assessment',
+          type: 'assessment',
+          assessment_title: a.assessment?.hero_title || a.assessment?.seo_title || 'Assessment'
+        }));
+
+        console.log(`✅ Found ${assessmentSessions.length} assessment sessions for admin dashboard`);
+      }
+    } catch (assessError) {
+      console.error('Error fetching assessment sessions (non-blocking):', assessError);
+    }
+
+    // Combine regular sessions and assessment sessions
+    const allSessions = [...(sessions || []), ...assessmentSessions]
+      .sort((a, b) => {
+        // Sort by the specified sort field
+        if (sort === 'created_at' || sort === 'scheduled_date') {
+          const aVal = a[sort] ? new Date(a[sort]) : new Date(0);
+          const bVal = b[sort] ? new Date(b[sort]) : new Date(0);
+          return order === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+        return 0;
+      });
+
+    // Apply pagination to combined results
+    const totalSessions = allSessions.length;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedSessions = allSessions.slice(startIndex, endIndex);
+
     res.json(
       successResponse({
-        sessions,
+        sessions: paginatedSessions,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count || sessions.length
+          total: totalSessions
         }
       })
     );

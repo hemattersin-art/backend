@@ -188,7 +188,8 @@ const getSessions = async (req, res) => {
 
       const { data: sessions, error, count } = await query;
 
-      // Also fetch assessment sessions assigned to this psychologist
+      // Also fetch assessment sessions assigned to this psychologist OR unassigned pending sessions
+      // Unassigned pending sessions (psychologist_id = null) can be scheduled by any psychologist
       let assessmentSessions = [];
       try {
         let assessQuery = supabaseAdmin
@@ -226,7 +227,7 @@ const getSessions = async (req, res) => {
               assigned_doctor_ids
             )
           `)
-          .eq('psychologist_id', psychologistId);
+          .or(`psychologist_id.eq.${psychologistId},and(psychologist_id.is.null,status.eq.pending)`);
         
         // Filter by status if provided (but don't filter if status is not provided)
         if (status) {
@@ -255,15 +256,16 @@ const getSessions = async (req, res) => {
           
           // Backfill missing pending assessment sessions so each package has 3 total
           try {
-            // Group by stable key (assessment_id + client_id + psychologist_id + payment_id)
+            // Group by stable key (assessment_id + client_id + payment_id)
+            // Note: psychologist_id is excluded from grouping since pending sessions have null psychologist_id
             const groups = new Map();
             (assessData || []).forEach(s => {
-              const key = `${s.assessment_id}_${s.client_id}_${s.psychologist_id}_${s.payment_id || 'nopay'}`;
+              const key = `${s.assessment_id}_${s.client_id}_${s.payment_id || 'nopay'}`;
               if (!groups.has(key)) groups.set(key, []);
               groups.get(key).push(s);
             });
 
-            for (const [key, sessions] of groups.entries()) {
+            for (const sessions of groups.values()) {
               const any = sessions[0];
               // Only consider booked packages (must have a booked session or a payment_id)
               const hasBooked = sessions.some(s => s.status === 'booked');
@@ -280,7 +282,8 @@ const getSessions = async (req, res) => {
                   .eq('id', first.id);
                 existingNumbers.add(1);
               }
-              // Create missing 2 and 3
+              // Create missing 2 and 3 - unassigned (psychologist_id = null)
+              // Any psychologist can schedule these sessions with any psychologist
               [2,3].forEach(n => {
                 if (!existingNumbers.has(n)) {
                   inserts.push({
@@ -288,7 +291,7 @@ const getSessions = async (req, res) => {
                     client_id: any.client_id,
                     assessment_id: any.assessment_id,
                     assessment_slug: any.assessment_slug,
-                    psychologist_id: any.psychologist_id,
+                    psychologist_id: null, // Unassigned - can be assigned to any psychologist when scheduled
                     scheduled_date: null,
                     scheduled_time: null,
                     amount: any.amount,
@@ -308,20 +311,69 @@ const getSessions = async (req, res) => {
                   .insert(inserts);
                 if (insertErr) {
                   console.warn('⚠️ Failed to backfill pending assessment sessions:', insertErr);
-                } else {
-                  // Refresh assessData for this group on success
-                  const { data: refreshed } = await supabaseAdmin
-                    .from('assessment_sessions')
-                    .select('*')
-                    .eq('assessment_id', any.assessment_id)
-                    .eq('client_id', any.client_id)
-                    .eq('psychologist_id', any.psychologist_id)
-                    .eq('payment_id', any.payment_id)
-                    .order('created_at', { ascending: false });
-                  // Replace entries in assessData by filtering out old group and adding refreshed
-                  assessData = (assessData || []).filter(s => s.assessment_id !== any.assessment_id || s.client_id !== any.client_id || s.psychologist_id !== any.psychologist_id || s.payment_id !== any.payment_id).concat(refreshed || []);
                 }
               }
+
+              // Always fetch the full package (3 sessions) so we have up-to-date data
+              let packageQuery = supabaseAdmin
+                .from('assessment_sessions')
+                .select(`
+                  id,
+                  assessment_id,
+                  assessment_slug,
+                  client_id,
+                  psychologist_id,
+                  scheduled_date,
+                  scheduled_time,
+                  status,
+                  amount,
+                  payment_id,
+                  session_number,
+                  created_at,
+                  updated_at,
+                  client:clients(
+                    id,
+                    first_name,
+                    last_name,
+                    child_name,
+                    child_age,
+                    phone_number,
+                    user:users(email)
+                  ),
+                  assessment:assessments(
+                    id,
+                    slug,
+                    hero_title,
+                    seo_title,
+                    assigned_doctor_ids
+                  )
+                `)
+                .eq('assessment_id', any.assessment_id)
+                .eq('client_id', any.client_id);
+
+              if (any.payment_id) {
+                packageQuery = packageQuery.eq('payment_id', any.payment_id);
+              } else {
+                packageQuery = packageQuery.is('payment_id', null);
+              }
+
+              const { data: fullPackage, error: fullPackageError } = await packageQuery.order('created_at', { ascending: false });
+              if (fullPackageError) {
+                console.warn('⚠️ Failed to fetch full assessment package:', fullPackageError);
+                continue;
+              }
+
+              const normalizedFullPackage = fullPackage || [];
+              const isSamePackage = (session) => {
+                const paymentMatch = any.payment_id
+                  ? session.payment_id === any.payment_id
+                  : (session.payment_id === null || session.payment_id === undefined);
+                return session.assessment_id === any.assessment_id &&
+                       session.client_id === any.client_id &&
+                       paymentMatch;
+              };
+
+              assessData = (assessData || []).filter(s => !isSamePackage(s)).concat(normalizedFullPackage);
             }
           } catch (bfErr) {
             console.warn('⚠️ Error during assessment sessions backfill:', bfErr);
@@ -507,6 +559,64 @@ const getAvailability = async (req, res) => {
         );
       }
 
+      // Get booked sessions to filter out from availability
+      let bookedSessionsQuery = supabaseAdmin
+        .from('sessions')
+        .select('scheduled_date, scheduled_time')
+        .eq('psychologist_id', psychologistId)
+        .in('status', ['booked', 'rescheduled', 'confirmed']);
+
+      if (date) {
+        bookedSessionsQuery = bookedSessionsQuery.eq('scheduled_date', date);
+      } else if (start_date && end_date) {
+        bookedSessionsQuery = bookedSessionsQuery.gte('scheduled_date', start_date).lte('scheduled_date', end_date);
+      }
+
+      const { data: bookedSessions, error: sessionsError } = await bookedSessionsQuery;
+
+      // Also get booked assessment sessions
+      let bookedAssessmentSessionsQuery = supabaseAdmin
+        .from('assessment_sessions')
+        .select('scheduled_date, scheduled_time')
+        .eq('psychologist_id', psychologistId)
+        .in('status', ['booked', 'reserved']);
+
+      if (date) {
+        bookedAssessmentSessionsQuery = bookedAssessmentSessionsQuery.eq('scheduled_date', date);
+      } else if (start_date && end_date) {
+        bookedAssessmentSessionsQuery = bookedAssessmentSessionsQuery.gte('scheduled_date', start_date).lte('scheduled_date', end_date);
+      }
+
+      const { data: bookedAssessmentSessions, error: assessmentSessionsError } = await bookedAssessmentSessionsQuery;
+
+      // Create a map of booked times by date: { 'YYYY-MM-DD': Set(['HH:MM', ...]) }
+      const bookedTimesByDate = new Map();
+      [...(bookedSessions || []), ...(bookedAssessmentSessions || [])].forEach(session => {
+        if (!session.scheduled_date || !session.scheduled_time) return;
+        const dateKey = session.scheduled_date;
+        const timeKey = typeof session.scheduled_time === 'string' 
+          ? session.scheduled_time.substring(0, 5) 
+          : session.scheduled_time;
+        if (!bookedTimesByDate.has(dateKey)) {
+          bookedTimesByDate.set(dateKey, new Set());
+        }
+        bookedTimesByDate.get(dateKey).add(timeKey);
+      });
+
+      // Filter out booked slots from availability
+      const filteredAvailability = (availability || []).map(dayAvailability => {
+        const bookedTimes = bookedTimesByDate.get(dayAvailability.date) || new Set();
+        const availableSlots = (dayAvailability.time_slots || []).filter(slot => {
+          const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
+          return !bookedTimes.has(slotTime);
+        });
+
+        return {
+          ...dayAvailability,
+          time_slots: availableSlots
+        };
+      });
+
       // Get psychologist's Google Calendar credentials to check for blocked slots
       const { data: psychologist, error: psychError } = await supabase
         .from('psychologists')
@@ -541,43 +651,84 @@ const getAvailability = async (req, res) => {
             calendarEndDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
           }
 
-          // Get Google Calendar busy slots
+          // Get Google Calendar busy slots (all events including external Google Meet sessions)
           const busySlots = await googleCalendarService.getBusyTimeSlots(
             psychologist.google_calendar_credentials,
             calendarStartDate,
             calendarEndDate
           );
 
-          // Filter for blocked slots (events with "🚫 BLOCKED" in title)
-          const blockedSlots = busySlots.filter(slot => 
-            slot.title && (slot.title.includes('🚫 BLOCKED') || slot.title.includes('BLOCKED'))
-          );
+          // Filter out events created by our own system to avoid circular blocking
+          // Block ALL external events, especially those with Google Meet links
+          const externalSlots = busySlots.filter(slot => {
+            const title = (slot.title || '').toLowerCase();
+            // Exclude our own system events
+            const isOurSystem = title.includes('littleminds') || 
+                               title.includes('therapy session') ||
+                               title.includes('assessment session') ||
+                               title.includes('session with');
+            
+            // Include all external events (especially Google Meet sessions)
+            // Google Meet events typically have 'hangoutsLink' or 'conferenceData' in the event
+            return !isOurSystem;
+          });
 
-          console.log(`📅 Found ${blockedSlots.length} blocked slots from Google Calendar`);
+          console.log(`📅 Found ${busySlots.length} total Google Calendar events, ${externalSlots.length} external events (including Google Meet sessions) to block`);
 
-          // Process availability data to mark blocked slots
-          const processedAvailability = (availability || []).map(dayAvailability => {
-            const dayBlockedSlots = blockedSlots.filter(slot => {
+          // Process availability data to remove external Google Calendar events (already filtered booked sessions above)
+          const processedAvailability = filteredAvailability.map(dayAvailability => {
+            // Get all external events for this date
+            const dayExternalEvents = externalSlots.filter(slot => {
               const slotDate = new Date(slot.start).toISOString().split('T')[0];
               return slotDate === dayAvailability.date;
             });
 
-            // Convert blocked slots to time format and remove from available slots
-            const blockedTimes = dayBlockedSlots.map(slot => {
-              const slotTime = new Date(slot.start).toTimeString().split(' ')[0].substring(0, 5);
-              return slotTime;
+            // Get already booked times for this date (from database sessions)
+            const bookedTimesForDate = bookedTimesByDate.get(dayAvailability.date) || new Set();
+            
+            // Convert external events to time slots and add to blocked times
+            // An event might span multiple time slots, so we need to check overlap
+            const googleCalendarBlockedTimes = new Set();
+            dayExternalEvents.forEach(event => {
+              const eventStart = new Date(event.start);
+              const eventEnd = new Date(event.end);
+              
+              // For each time slot in availability, check if it overlaps with this event
+              (dayAvailability.time_slots || []).forEach(slot => {
+                const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
+                const [slotHour, slotMinute] = slotTime.split(':').map(Number);
+                
+                // Create slot start and end times using the availability date (assuming 1-hour slots)
+                const availabilityDate = new Date(dayAvailability.date + 'T00:00:00');
+                const slotStart = new Date(availabilityDate);
+                slotStart.setHours(slotHour, slotMinute, 0, 0);
+                const slotEnd = new Date(slotStart);
+                slotEnd.setHours(slotHour + 1, slotMinute, 0, 0);
+                
+                // Check if slot overlaps with event
+                if (slotStart < eventEnd && slotEnd > eventStart) {
+                  googleCalendarBlockedTimes.add(slotTime);
+                }
+              });
             });
 
-            // Remove blocked time slots from availability
-            const availableSlots = (dayAvailability.time_slots || []).filter(slot => 
-              !blockedTimes.includes(slot)
-            );
+            // Combine booked times and Google Calendar blocked times
+            const allBlockedTimes = new Set([...bookedTimesForDate, ...googleCalendarBlockedTimes]);
+
+            // Remove all blocked time slots from availability (booked sessions + external Google Calendar events)
+            const availableSlots = (dayAvailability.time_slots || []).filter(slot => {
+              const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
+              return !allBlockedTimes.has(slotTime);
+            });
 
             return {
               ...dayAvailability,
               time_slots: availableSlots,
-              blocked_slots: blockedTimes,
-              total_blocked: blockedTimes.length
+              blocked_slots: Array.from(allBlockedTimes),
+              total_blocked: allBlockedTimes.size,
+              external_events: dayExternalEvents.length,
+              booked_sessions: bookedTimesForDate.size,
+              google_calendar_blocked: googleCalendarBlockedTimes.size
             };
           });
 
@@ -587,15 +738,15 @@ const getAvailability = async (req, res) => {
 
         } catch (calendarError) {
           console.error('Error checking Google Calendar for blocked slots:', calendarError);
-          // Return availability without Google Calendar data if it fails
+          // Return filtered availability (booked sessions already removed) without Google Calendar data if it fails
           res.json(
-            successResponse(availability || [])
+            successResponse(filteredAvailability || [])
           );
         }
       } else {
-        // No Google Calendar connected, return availability as-is
+        // No Google Calendar connected, return filtered availability (booked sessions already removed)
         res.json(
-          successResponse(availability || [])
+          successResponse(filteredAvailability || [])
         );
       }
 
@@ -1300,8 +1451,16 @@ const scheduleAssessmentSession = async (req, res) => {
       );
     }
 
-    // Decide which psychologist's availability to use
-    const targetPsychologistId = target_psychologist_id || assessmentSession.psychologist_id || psychologistId;
+    // Require target_psychologist_id to be provided (cannot be null)
+    // This ensures the session is assigned to a specific psychologist
+    if (!target_psychologist_id) {
+      return res.status(400).json(
+        errorResponse('target_psychologist_id is required to schedule this session')
+      );
+    }
+
+    // Use the provided target psychologist ID (any psychologist from the system)
+    const targetPsychologistId = target_psychologist_id;
 
     // Check conflicts for TARGET psychologist
     const { data: conflictingAssessmentSessions } = await supabaseAdmin
@@ -1355,12 +1514,13 @@ const scheduleAssessmentSession = async (req, res) => {
     console.log('✅ Assessment session scheduled successfully by psychologist:', updatedSession.id);
 
     // Block the booked slot from availability (best-effort)
+    // Use targetPsychologistId (the psychologist the session is assigned to), not the logged-in psychologist
     try {
       const hhmm = (scheduled_time || '').substring(0,5);
       const { data: avail } = await supabaseAdmin
         .from('availability')
         .select('id, time_slots')
-        .eq('psychologist_id', psychologistId)
+        .eq('psychologist_id', targetPsychologistId)
         .eq('date', scheduled_date)
         .single();
       if (avail && Array.isArray(avail.time_slots)) {
@@ -1439,22 +1599,36 @@ const deleteSession = async (req, res) => {
   }
 };
 
-// Delete an assessment session (owned by psychologist)
+// Delete an assessment session (owned by psychologist or admin)
 const deleteAssessmentSession = async (req, res) => {
   try {
-    const psychologistId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
     const { assessmentSessionId } = req.params;
 
-    const { data: existing, error: fetchError } = await supabaseAdmin
+    // Check if session exists
+    let query = supabaseAdmin
       .from('assessment_sessions')
-      .select('id')
-      .eq('id', assessmentSessionId)
-      .eq('psychologist_id', psychologistId)
-      .single();
+      .select('id, psychologist_id, status')
+      .eq('id', assessmentSessionId);
+
+    // If not admin, only allow deletion of sessions owned by the psychologist
+    if (userRole !== 'admin' && userRole !== 'superadmin') {
+      query = query.eq('psychologist_id', userId);
+    }
+
+    const { data: existing, error: fetchError } = await query.single();
 
     if (fetchError || !existing) {
       return res.status(404).json(
         errorResponse('Assessment session not found or access denied')
+      );
+    }
+
+    // Only allow deletion of sessions that are not completed (unless admin)
+    if (existing.status === 'completed' && userRole !== 'admin' && userRole !== 'superadmin') {
+      return res.status(400).json(
+        errorResponse('Cannot delete completed assessment sessions')
       );
     }
 

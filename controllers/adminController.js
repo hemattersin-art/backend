@@ -2053,6 +2053,163 @@ const createPsychologistPackages = async (req, res) => {
   }
 };
 
+// Approve assessment reschedule request
+const approveAssessmentRescheduleRequest = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const { new_date, new_time } = req.body;
+
+    // Get the notification
+    const { data: notification, error: notificationError } = await supabaseAdmin
+      .from('notifications')
+      .select('*')
+      .eq('id', notificationId)
+      .eq('type', 'assessment_reschedule_request')
+      .single();
+
+    if (notificationError || !notification) {
+      return res.status(404).json(
+        errorResponse('Reschedule request not found')
+      );
+    }
+
+    const assessmentSessionId = notification.assessment_session_id;
+    const metadata = notification.metadata || {};
+
+    // Use provided date/time or from metadata
+    const rescheduleDate = new_date || metadata.new_date;
+    const rescheduleTime = new_time || metadata.new_time;
+
+    if (!rescheduleDate || !rescheduleTime) {
+      return res.status(400).json(
+        errorResponse('New date and time are required')
+      );
+    }
+
+    // Get assessment session
+    const { data: assessmentSession, error: sessionError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('*')
+      .eq('id', assessmentSessionId)
+      .single();
+
+    if (sessionError || !assessmentSession) {
+      return res.status(404).json(
+        errorResponse('Assessment session not found')
+      );
+    }
+
+    // Check if new time slot is available
+    const targetPsychologistId = notification.psychologist_id || assessmentSession.psychologist_id;
+    
+    const { data: conflictingAssessmentSessions } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', rescheduleDate)
+      .eq('scheduled_time', rescheduleTime)
+      .in('status', ['reserved', 'booked', 'rescheduled'])
+      .neq('id', assessmentSessionId);
+
+    const { data: conflictingRegularSessions } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', rescheduleDate)
+      .eq('scheduled_time', rescheduleTime)
+      .in('status', ['booked', 'rescheduled', 'confirmed']);
+
+    if ((conflictingAssessmentSessions && conflictingAssessmentSessions.length > 0) ||
+        (conflictingRegularSessions && conflictingRegularSessions.length > 0)) {
+      return res.status(400).json(
+        errorResponse('Selected time slot is already booked')
+      );
+    }
+
+    // Update assessment session
+    const rescheduleCount = assessmentSession.reschedule_count || 0;
+    const updateData = {
+      scheduled_date: rescheduleDate,
+      scheduled_time: rescheduleTime,
+      status: 'rescheduled',
+      reschedule_count: rescheduleCount + 1,
+      psychologist_id: targetPsychologistId,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .update(updateData)
+      .eq('id', assessmentSessionId)
+      .select('*')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating assessment session:', updateError);
+      return res.status(500).json(
+        errorResponse('Failed to reschedule assessment session')
+      );
+    }
+
+    // Unblock old slot and block new slot
+    try {
+      if (assessmentSession.scheduled_date && assessmentSession.scheduled_time) {
+        const oldHhmm = (assessmentSession.scheduled_time || '').substring(0,5);
+        const { data: oldAvail } = await supabaseAdmin
+          .from('availability')
+          .select('id, time_slots')
+          .eq('psychologist_id', assessmentSession.psychologist_id)
+          .eq('date', assessmentSession.scheduled_date)
+          .single();
+        
+        if (oldAvail && Array.isArray(oldAvail.time_slots) && !oldAvail.time_slots.includes(oldHhmm)) {
+          const updatedSlots = [...oldAvail.time_slots, oldHhmm].sort();
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: updatedSlots, updated_at: new Date().toISOString() })
+            .eq('id', oldAvail.id);
+        }
+      }
+
+      const newHhmm = (rescheduleTime || '').substring(0,5);
+      const { data: newAvail } = await supabaseAdmin
+        .from('availability')
+        .select('id, time_slots')
+        .eq('psychologist_id', targetPsychologistId)
+        .eq('date', rescheduleDate)
+        .single();
+      
+      if (newAvail && Array.isArray(newAvail.time_slots)) {
+        const filtered = newAvail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== newHhmm);
+        if (filtered.length !== newAvail.time_slots.length) {
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+            .eq('id', newAvail.id);
+        }
+      }
+    } catch (availErr) {
+      console.warn('⚠️ Failed to update availability:', availErr?.message);
+    }
+
+    // Mark notification as read
+    await supabaseAdmin
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId);
+
+    console.log('✅ Assessment reschedule request approved:', updatedSession.id);
+
+    res.json(successResponse(updatedSession, 'Assessment reschedule request approved and session rescheduled successfully'));
+
+  } catch (error) {
+    console.error('Approve assessment reschedule request error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while approving reschedule request')
+    );
+  }
+};
+
 // Admin reschedule session
 const rescheduleSession = async (req, res) => {
   try {
@@ -3359,6 +3516,68 @@ const createManualBooking = async (req, res) => {
   }
 };
 
+// Get all reschedule requests (for admin dashboard)
+const getRescheduleRequests = async (req, res) => {
+  try {
+    const { status } = req.query; // 'pending', 'approved', 'rejected', or undefined for all
+
+    let query = supabaseAdmin
+      .from('notifications')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          email,
+          area_of_expertise
+        ),
+        assessment_session:assessment_sessions(
+          id,
+          session_number,
+          assessment:assessments(
+            id,
+            hero_title,
+            seo_title
+          )
+        )
+      `)
+      .in('type', ['reschedule_request', 'assessment_reschedule_request'])
+      .order('created_at', { ascending: false });
+
+    if (status === 'pending') {
+      query = query.eq('is_read', false);
+    } else if (status === 'approved') {
+      query = query.eq('is_read', true);
+    }
+
+    const { data: requests, error } = await query;
+
+    if (error) {
+      console.error('Get reschedule requests error:', error);
+      return res.status(500).json(
+        errorResponse('Failed to fetch reschedule requests')
+      );
+    }
+
+    res.json(successResponse(requests || [], 'Reschedule requests fetched successfully'));
+
+  } catch (error) {
+    console.error('Get reschedule requests error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching reschedule requests')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -3381,5 +3600,7 @@ module.exports = {
   getPsychologistAvailabilityForReschedule,
   getPsychologistCalendarEvents,
   handleRescheduleRequest,
-  createManualBooking
+  createManualBooking,
+  approveAssessmentRescheduleRequest,
+  getRescheduleRequests
 };

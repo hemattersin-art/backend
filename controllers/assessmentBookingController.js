@@ -429,9 +429,297 @@ const getAssessmentSessions = async (req, res) => {
   }
 };
 
+// Reschedule assessment session
+const rescheduleAssessmentSession = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { assessmentSessionId } = req.params;
+    const { new_date, new_time, psychologist_id } = req.body;
+
+    if (!new_date || !new_time) {
+      return res.status(400).json(errorResponse('Missing required fields: new_date, new_time'));
+    }
+
+    // Get assessment session
+    const { data: assessmentSession, error: fetchError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('*')
+      .eq('id', assessmentSessionId)
+      .single();
+
+    if (fetchError || !assessmentSession) {
+      return res.status(404).json(errorResponse('Assessment session not found'));
+    }
+
+    // Check permissions
+    if (userRole === 'client') {
+      // Client can only reschedule their own sessions
+      let { data: client } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!client) {
+        const fallback = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('id', userId)
+          .single();
+        client = fallback.data;
+      }
+
+      if (!client || assessmentSession.client_id !== client.id) {
+        return res.status(403).json(errorResponse('You can only reschedule your own sessions'));
+      }
+    } else if (userRole === 'psychologist') {
+      // Psychologist can only reschedule their own assigned sessions
+      if (assessmentSession.psychologist_id !== userId) {
+        return res.status(403).json(errorResponse('You can only reschedule your own sessions'));
+      }
+    }
+    // Admin can reschedule any session
+
+    // Check if session can be rescheduled
+    if (!['booked', 'rescheduled'].includes(assessmentSession.status)) {
+      return res.status(400).json(errorResponse(`Cannot reschedule session with status: ${assessmentSession.status}`));
+    }
+
+    // Check reschedule count (max 3)
+    const rescheduleCount = assessmentSession.reschedule_count || 0;
+    if (rescheduleCount >= 3) {
+      return res.status(400).json(errorResponse('Maximum reschedule limit (3) reached for this session'));
+    }
+
+    // Check 24-hour rule
+    const sessionDateTime = new Date(`${assessmentSession.scheduled_date}T${assessmentSession.scheduled_time}`);
+    const now = new Date();
+    const hoursUntilSession = (sessionDateTime - now) / (1000 * 60 * 60);
+    const requiresApproval = hoursUntilSession <= 24;
+
+    // Determine target psychologist (use provided one or keep existing)
+    const targetPsychologistId = psychologist_id || assessmentSession.psychologist_id;
+
+    if (requiresApproval && userRole !== 'admin') {
+      // Within 24 hours - create reschedule request for admin approval
+      console.log('⚠️ Assessment session is within 24 hours, creating admin approval request');
+      
+      // Get client and psychologist details
+      const { data: clientDetails } = await supabaseAdmin
+        .from('clients')
+        .select('first_name, last_name, child_name')
+        .eq('id', assessmentSession.client_id)
+        .single();
+
+      const { data: psychologistDetails } = await supabaseAdmin
+        .from('psychologists')
+        .select('first_name, last_name')
+        .eq('id', targetPsychologistId)
+        .single();
+
+      const clientName = clientDetails?.child_name || 
+        `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
+      const psychologistName = psychologistDetails ? 
+        `${psychologistDetails.first_name} ${psychologistDetails.last_name}` : 'Psychologist';
+
+      // Create admin notification for reschedule request
+      const adminNotificationData = {
+        type: 'assessment_reschedule_request',
+        title: 'Assessment Reschedule Request (Within 24 Hours)',
+        message: `${clientName} has requested to reschedule assessment session ${assessmentSession.session_number || ''} from ${assessmentSession.scheduled_date} at ${assessmentSession.scheduled_time} to ${new_date} at ${new_time}. This requires admin approval as it's within 24 hours.`,
+        session_id: null, // Not a regular session
+        assessment_session_id: assessmentSessionId,
+        client_id: assessmentSession.client_id,
+        psychologist_id: targetPsychologistId,
+        is_read: false,
+        created_at: new Date().toISOString(),
+        metadata: {
+          original_date: assessmentSession.scheduled_date,
+          original_time: assessmentSession.scheduled_time,
+          new_date: new_date,
+          new_time: new_time,
+          session_number: assessmentSession.session_number,
+          assessment_id: assessmentSession.assessment_id,
+          reason: 'Within 24-hour window - admin approval required'
+        }
+      };
+
+      const { error: notificationError } = await supabaseAdmin
+        .from('notifications')
+        .insert([adminNotificationData]);
+
+      if (notificationError) {
+        console.error('Error creating admin notification:', notificationError);
+        return res.status(500).json(errorResponse('Failed to create reschedule request'));
+      }
+
+      // Update session status to indicate reschedule request
+      await supabaseAdmin
+        .from('assessment_sessions')
+        .update({
+          status: 'reschedule_requested',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', assessmentSessionId);
+
+      return res.json(successResponse(
+        { 
+          session: assessmentSession,
+          requiresApproval: true,
+          hoursUntilSession: Math.round(hoursUntilSession * 100) / 100
+        },
+        'Reschedule request sent to admin for approval (within 24-hour window)'
+      ));
+    }
+
+    // Beyond 24 hours or admin - proceed with direct reschedule
+    console.log('✅ Assessment session is beyond 24 hours or admin, proceeding with direct reschedule');
+
+    // Check if new time slot is available
+    const { data: conflictingAssessmentSessions } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', new_date)
+      .eq('scheduled_time', new_time)
+      .in('status', ['reserved', 'booked', 'rescheduled'])
+      .neq('id', assessmentSessionId);
+
+    const { data: conflictingRegularSessions } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('psychologist_id', targetPsychologistId)
+      .eq('scheduled_date', new_date)
+      .eq('scheduled_time', new_time)
+      .in('status', ['booked', 'rescheduled', 'confirmed']);
+
+    if ((conflictingAssessmentSessions && conflictingAssessmentSessions.length > 0) ||
+        (conflictingRegularSessions && conflictingRegularSessions.length > 0)) {
+      return res.status(400).json(errorResponse('Selected time slot is already booked'));
+    }
+
+    // Update assessment session
+    const updateData = {
+      scheduled_date: new_date,
+      scheduled_time: new_time,
+      status: 'rescheduled',
+      reschedule_count: rescheduleCount + 1,
+      psychologist_id: targetPsychologistId, // Allow reassignment if different psychologist selected
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .update(updateData)
+      .eq('id', assessmentSessionId)
+      .select('*')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating assessment session:', updateError);
+      return res.status(500).json(errorResponse('Failed to reschedule assessment session'));
+    }
+
+    // Block the old slot from availability (unblock it)
+    try {
+      if (assessmentSession.scheduled_date && assessmentSession.scheduled_time) {
+        const oldHhmm = (assessmentSession.scheduled_time || '').substring(0,5);
+        const { data: oldAvail } = await supabaseAdmin
+          .from('availability')
+          .select('id, time_slots')
+          .eq('psychologist_id', assessmentSession.psychologist_id)
+          .eq('date', assessmentSession.scheduled_date)
+          .single();
+        
+        if (oldAvail && Array.isArray(oldAvail.time_slots) && !oldAvail.time_slots.includes(oldHhmm)) {
+          const updatedSlots = [...oldAvail.time_slots, oldHhmm].sort();
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: updatedSlots, updated_at: new Date().toISOString() })
+            .eq('id', oldAvail.id);
+        }
+      }
+    } catch (unblockErr) {
+      console.warn('⚠️ Failed to unblock old slot:', unblockErr?.message);
+    }
+
+    // Block the new slot from availability
+    try {
+      const newHhmm = (new_time || '').substring(0,5);
+      const { data: newAvail } = await supabaseAdmin
+        .from('availability')
+        .select('id, time_slots')
+        .eq('psychologist_id', targetPsychologistId)
+        .eq('date', new_date)
+        .single();
+      
+      if (newAvail && Array.isArray(newAvail.time_slots)) {
+        const filtered = newAvail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== newHhmm);
+        if (filtered.length !== newAvail.time_slots.length) {
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+            .eq('id', newAvail.id);
+        }
+      }
+    } catch (blockErr) {
+      console.warn('⚠️ Failed to block new slot:', blockErr?.message);
+    }
+
+    console.log('✅ Assessment session rescheduled successfully:', updatedSession.id);
+
+    res.json(successResponse(updatedSession, 'Assessment session rescheduled successfully'));
+
+  } catch (error) {
+    console.error('Reschedule assessment session error:', error);
+    res.status(500).json(errorResponse('Internal server error while rescheduling assessment session'));
+  }
+};
+
+// Delete assessment session (admin)
+const deleteAssessmentSession = async (req, res) => {
+  try {
+    const { assessmentSessionId } = req.params;
+
+    if (!assessmentSessionId) {
+      return res.status(400).json(errorResponse('assessmentSessionId is required'));
+    }
+
+    // Fetch the assessment session first
+    const { data: assessmentSession, error: fetchError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .select('*')
+      .eq('id', assessmentSessionId)
+      .single();
+
+    if (fetchError || !assessmentSession) {
+      return res.status(404).json(errorResponse('Assessment session not found'));
+    }
+
+    // Delete the session
+    const { error: deleteError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .delete()
+      .eq('id', assessmentSessionId);
+
+    if (deleteError) {
+      console.error('Error deleting assessment session:', deleteError);
+      return res.status(500).json(errorResponse('Failed to delete assessment session'));
+    }
+
+    return res.json(successResponse({ id: assessmentSessionId }, 'Assessment session deleted successfully'));
+  } catch (error) {
+    console.error('Delete assessment session error:', error);
+    return res.status(500).json(errorResponse('Internal server error while deleting assessment session'));
+  }
+};
+
 module.exports = {
   reserveAssessmentSlot,
   bookAssessment,
-  getAssessmentSessions
+  getAssessmentSessions,
+  rescheduleAssessmentSession,
+  deleteAssessmentSession
 };
 

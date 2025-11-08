@@ -492,19 +492,15 @@ const handlePaymentSuccess = async (req, res) => {
           // This is a fallback for old clients that might not have user_id set
         }
 
-        // Create 2 additional sessions with status 'pending' for the SAME psychologist who took the first session
-        // This psychologist will schedule all remaining sessions
+        // Create 2 additional sessions with status 'pending' - unassigned (psychologist_id = null)
+        // Any psychologist can schedule these sessions and assign them to any psychologist
         const additionalSessions = [];
-        
-        // Assign both session 2 and session 3 to the same psychologist who took the first session
-        const psychologistForPendingSessions = assessmentSession.psychologist_id;
 
-        console.log('🔍 Creating pending sessions - assigning to first session psychologist:', {
-          psychologist_id: psychologistForPendingSessions,
+        console.log('🔍 Creating pending sessions - unassigned (any psychologist can schedule):', {
           assessment_id: assessmentSession.assessment_id,
           user_id: actualUserId,
           client_id: assessmentSession.client_id,
-          note: 'All pending sessions will be assigned to the same psychologist who took the first session'
+          note: 'Pending sessions are unassigned - any psychologist can schedule them with any psychologist'
         });
 
         additionalSessions.push({
@@ -512,7 +508,7 @@ const handlePaymentSuccess = async (req, res) => {
           client_id: assessmentSession.client_id,
           assessment_id: assessmentSession.assessment_id,
           assessment_slug: assessmentSession.assessment_slug,
-          psychologist_id: psychologistForPendingSessions,
+          psychologist_id: null, // Unassigned - can be assigned to any psychologist when scheduled
           scheduled_date: null, // To be set by psychologist
           scheduled_time: null, // To be set by psychologist
           amount: assessmentPrice,
@@ -527,7 +523,7 @@ const handlePaymentSuccess = async (req, res) => {
           client_id: assessmentSession.client_id,
           assessment_id: assessmentSession.assessment_id,
           assessment_slug: assessmentSession.assessment_slug,
-          psychologist_id: psychologistForPendingSessions,
+          psychologist_id: null, // Unassigned - can be assigned to any psychologist when scheduled
           scheduled_date: null, // To be set by psychologist
           scheduled_time: null, // To be set by psychologist
           amount: assessmentPrice,
@@ -559,7 +555,7 @@ const handlePaymentSuccess = async (req, res) => {
           console.error('❌ Insert data attempted:', JSON.stringify(additionalSessions, null, 2));
           // Don't fail the payment, just log the error
         } else {
-          console.log('✅ Created 2 additional assessment sessions for psychologist to schedule:', newSessions.map(s => ({
+          console.log('✅ Created 2 additional unassigned assessment sessions (any psychologist can schedule):', newSessions.map(s => ({
             id: s.id,
             psychologist_id: s.psychologist_id,
             status: s.status,
@@ -1001,8 +997,213 @@ const getPaymentStatus = async (req, res) => {
   }
 };
 
+// Create cash payment for assessment
+const createCashPayment = async (req, res) => {
+  try {
+    const { 
+      scheduledDate, 
+      scheduledTime, 
+      psychologistId, 
+      clientId, 
+      amount, 
+      clientName,
+      clientEmail,
+      clientPhone,
+      assessmentSessionId,
+      assessmentType
+    } = req.body;
+
+    if (!scheduledDate || !scheduledTime || !psychologistId || !clientId || !amount || !assessmentSessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields for cash payment'
+      });
+    }
+
+    // Generate transaction ID
+    const txnid = generateTransactionId();
+
+    // Create payment record with status 'cash'
+    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
+      .from('payments')
+      .insert({
+        transaction_id: txnid,
+        client_id: clientId,
+        psychologist_id: psychologistId,
+        amount: amount,
+        currency: 'INR',
+        status: 'cash', // Cash payment status
+        payment_method: 'cash',
+        payu_params: {
+          udf1: scheduledDate,
+          udf2: psychologistId,
+          udf3: clientId,
+          udf5: scheduledTime,
+          udf6: assessmentSessionId,
+          udf7: assessmentType || 'assessment'
+        },
+        assessment_session_id: assessmentSessionId,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (paymentError || !paymentRecord) {
+      console.error('Error creating cash payment:', paymentError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create cash payment record'
+      });
+    }
+
+    // Process payment success (same as online payment)
+    // This will mark the assessment session as booked and create the 2 additional sessions
+    // Update assessment session status to booked
+    const { data: assessmentSession, error: assessError } = await supabaseAdmin
+      .from('assessment_sessions')
+      .update({
+        status: 'booked',
+        payment_id: paymentRecord.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assessmentSessionId)
+      .eq('status', 'reserved')
+      .select('*')
+      .single();
+
+    if (assessError || !assessmentSession) {
+      console.error('❌ Assessment session update failed:', assessError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update assessment session after cash payment'
+      });
+    }
+
+    console.log('✅ Assessment session booked successfully with cash payment:', assessmentSession.id);
+
+    // Block the booked slot from availability
+    try {
+      const hhmm = (assessmentSession.scheduled_time || '').substring(0,5);
+      const { data: avail } = await supabaseAdmin
+        .from('availability')
+        .select('id, time_slots')
+        .eq('psychologist_id', assessmentSession.psychologist_id)
+        .eq('date', assessmentSession.scheduled_date)
+        .single();
+      if (avail && Array.isArray(avail.time_slots)) {
+        const filtered = avail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== hhmm);
+        if (filtered.length !== avail.time_slots.length) {
+          await supabaseAdmin
+            .from('availability')
+            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
+            .eq('id', avail.id);
+          console.log('✅ Availability updated to block booked assessment slot', { date: assessmentSession.scheduled_date, time: hhmm });
+        }
+      }
+    } catch (blockErr) {
+      console.warn('⚠️ Failed to update availability after assessment booking:', blockErr?.message);
+    }
+
+    // Create 2 additional pending sessions (same logic as handlePaymentSuccess)
+    try {
+      const { data: assessmentData } = await supabaseAdmin
+        .from('assessments')
+        .select('assessment_price')
+        .eq('id', assessmentSession.assessment_id)
+        .single();
+
+      const { data: clientData } = await supabaseAdmin
+        .from('clients')
+        .select('user_id, id')
+        .eq('id', assessmentSession.client_id)
+        .single();
+
+      const assessmentPrice = assessmentData?.assessment_price || 5000;
+      const actualUserId = clientData?.user_id || assessmentSession.user_id;
+
+      const additionalSessions = [
+        {
+          user_id: actualUserId,
+          client_id: assessmentSession.client_id,
+          assessment_id: assessmentSession.assessment_id,
+          assessment_slug: assessmentSession.assessment_slug,
+          psychologist_id: null,
+          scheduled_date: null,
+          scheduled_time: null,
+          amount: assessmentPrice,
+          currency: 'INR',
+          status: 'pending',
+          payment_id: paymentRecord.id,
+          session_number: 2,
+          created_at: new Date().toISOString()
+        },
+        {
+          user_id: actualUserId,
+          client_id: assessmentSession.client_id,
+          assessment_id: assessmentSession.assessment_id,
+          assessment_slug: assessmentSession.assessment_slug,
+          psychologist_id: null,
+          scheduled_date: null,
+          scheduled_time: null,
+          amount: assessmentPrice,
+          currency: 'INR',
+          status: 'pending',
+          payment_id: paymentRecord.id,
+          session_number: 3,
+          created_at: new Date().toISOString()
+        }
+      ];
+
+      // Update first session to session_number 1
+      await supabaseAdmin
+        .from('assessment_sessions')
+        .update({ session_number: 1 })
+        .eq('id', assessmentSession.id);
+
+      // Insert the 2 additional sessions
+      const { data: newSessions, error: insertError } = await supabaseAdmin
+        .from('assessment_sessions')
+        .insert(additionalSessions)
+        .select('*');
+
+      if (insertError) {
+        console.error('❌ Error creating additional assessment sessions:', insertError);
+      } else {
+        console.log('✅ Created 2 additional unassigned assessment sessions (any psychologist can schedule):', newSessions.map(s => ({
+          id: s.id,
+          psychologist_id: s.psychologist_id,
+          status: s.status,
+          scheduled_date: s.scheduled_date
+        })));
+      }
+    } catch (error) {
+      console.error('❌ Error creating additional assessment sessions:', error);
+    }
+
+    // Update payment record
+    await supabaseAdmin
+      .from('payments')
+      .update({ status: 'cash', completed_at: new Date().toISOString() })
+      .eq('id', paymentRecord.id);
+
+    return res.json({
+      success: true,
+      message: 'Assessment booked successfully with cash payment. 2 additional sessions have been created for psychologists to schedule.',
+      data: { assessmentSessionId: assessmentSession.id }
+    });
+    
+  } catch (error) {
+    console.error('Error creating cash payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while processing cash payment'
+    });
+  }
+};
+
 module.exports = {
   createPaymentOrder,
+  createCashPayment,
   handlePaymentSuccess,
   handlePaymentFailure,
   getPaymentStatus

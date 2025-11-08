@@ -137,7 +137,11 @@ class GoogleCalendarService {
         end: new Date(event.end.dateTime || event.end.date),
         title: event.summary || 'Busy',
         source: 'google_calendar',
-        eventId: event.id
+        eventId: event.id,
+        hangoutsLink: event.hangoutsLink || null, // Google Meet link
+        conferenceData: event.conferenceData || null, // Conference data (includes Meet links)
+        location: event.location || null,
+        description: event.description || null
       }));
     } catch (error) {
       console.error('Error getting busy time slots:', error);

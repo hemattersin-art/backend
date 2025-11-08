@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
+const assessmentBookingController = require('../controllers/assessmentBookingController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { withCache } = require('../utils/cache');
 const multer = require('multer');
@@ -54,6 +55,12 @@ router.post('/bookings/manual', adminController.createManualBooking);
 
 // Reschedule request handling
 router.put('/reschedule-requests/:notificationId', adminController.handleRescheduleRequest);
+router.get('/reschedule-requests', adminController.getRescheduleRequests);
+router.put('/reschedule-requests/assessment/:notificationId/approve', adminController.approveAssessmentRescheduleRequest);
+
+// Assessment session rescheduling (admin can reschedule directly)
+router.put('/assessment-sessions/:assessmentSessionId/reschedule', assessmentBookingController.rescheduleAssessmentSession);
+router.delete('/assessment-sessions/:assessmentSessionId', assessmentBookingController.deleteAssessmentSession);
 
 // Psychologist calendar events
 router.get('/psychologists/:psychologistId/calendar-events', adminController.getPsychologistCalendarEvents);

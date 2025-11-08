@@ -39,12 +39,13 @@ const validateUserLogin = [
 const validateClientProfile = [
   body('first_name')
     .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('First name must be between 2 and 50 characters'),
+    .isLength({ min: 1, max: 50 })
+    .withMessage('First name must be between 1 and 50 characters'),
   body('last_name')
+    .optional({ nullable: true, checkFalsy: true })
     .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Last name must be between 2 and 50 characters'),
+    .isLength({ max: 50 })
+    .withMessage('Last name must be at most 50 characters'),
   body('phone_number')
     .matches(/^\+?[\d\s\-\(\)]+$/)
     .withMessage('Please provide a valid phone number'),

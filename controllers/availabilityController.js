@@ -259,26 +259,108 @@ const getAvailability = async (req, res) => {
 
     console.log(`📅 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions for psychologist ${psychologist_id}`);
 
-    // Combine availability with booked sessions - remove booked slots in real-time
+    // Also check Google Calendar for external events (including Google Meet sessions)
+    let externalGoogleCalendarEvents = [];
+    try {
+      const { data: psychologist } = await supabase
+        .from('psychologists')
+        .select('id, google_calendar_credentials')
+        .eq('id', psychologist_id)
+        .single();
+
+      if (psychologist && psychologist.google_calendar_credentials) {
+        const calendarStartDate = start_date ? new Date(start_date) : new Date();
+        const calendarEndDate = end_date ? new Date(end_date) : new Date();
+        
+        // Get all Google Calendar events
+        const busySlots = await googleCalendarService.getBusyTimeSlots(
+          psychologist.google_calendar_credentials,
+          calendarStartDate,
+          calendarEndDate
+        );
+
+        // Filter out events created by our own system
+        externalGoogleCalendarEvents = busySlots.filter(slot => {
+          const title = (slot.title || '').toLowerCase();
+          const isOurSystem = title.includes('littleminds') || 
+                             title.includes('therapy session') ||
+                             title.includes('assessment session') ||
+                             title.includes('session with');
+          return !isOurSystem;
+        });
+
+        console.log(`📅 Found ${externalGoogleCalendarEvents.length} external Google Calendar events (including Google Meet sessions) for psychologist ${psychologist_id}`);
+      }
+    } catch (googleError) {
+      console.warn('⚠️ Error checking Google Calendar for external events:', googleError);
+      // Continue without blocking if Google Calendar check fails
+    }
+
+    // Combine availability with booked sessions and external Google Calendar events - remove booked slots in real-time
     const availabilityWithBookings = availability.map(avail => {
-      const bookedTimes = allBookedSessions
-        .filter(session => session.scheduled_date === avail.date)
-        .map(session => session.scheduled_time);
+      // Normalize booked times to HH:MM format for comparison
+      const bookedTimesSet = new Set();
+      allBookedSessions
+        .filter(session => session.scheduled_date === avail.date && session.scheduled_time)
+        .forEach(session => {
+          const timeStr = session.scheduled_time;
+          // Normalize to HH:MM format (remove seconds if present)
+          const normalizedTime = typeof timeStr === 'string' 
+            ? timeStr.substring(0, 5) 
+            : String(timeStr).substring(0, 5);
+          bookedTimesSet.add(normalizedTime);
+        });
 
-      // Filter out booked time slots from available slots
-      const availableSlots = avail.time_slots.filter(slot => 
-        !bookedTimes.includes(slot)
-      );
+      // Also check external Google Calendar events for this date
+      const dayExternalEvents = externalGoogleCalendarEvents.filter(event => {
+        const eventDate = new Date(event.start).toISOString().split('T')[0];
+        return eventDate === avail.date;
+      });
 
-      console.log(`📅 Date ${avail.date}: ${avail.time_slots.length} total slots, ${bookedTimes.length} booked, ${availableSlots.length} available`);
+      // Block time slots that overlap with external Google Calendar events
+      dayExternalEvents.forEach(event => {
+        const eventStart = new Date(event.start);
+        const eventEnd = new Date(event.end);
+        
+        // For each time slot in availability, check if it overlaps with this event
+        (avail.time_slots || []).forEach(slot => {
+          const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
+          const [slotHour, slotMinute] = slotTime.split(':').map(Number);
+          
+          // Create slot start and end times using the availability date (assuming 1-hour slots)
+          const availabilityDate = new Date(avail.date + 'T00:00:00');
+          const slotStart = new Date(availabilityDate);
+          slotStart.setHours(slotHour, slotMinute, 0, 0);
+          const slotEnd = new Date(slotStart);
+          slotEnd.setHours(slotHour + 1, slotMinute, 0, 0);
+          
+          // Check if slot overlaps with event
+          if (slotStart < eventEnd && slotEnd > eventStart) {
+            bookedTimesSet.add(slotTime);
+          }
+        });
+      });
+
+      // Filter out booked time slots and external Google Calendar events from available slots
+      const availableSlots = (avail.time_slots || []).filter(slot => {
+        if (!slot) return false;
+        // Normalize slot time to HH:MM format for comparison
+        const slotTime = typeof slot === 'string' 
+          ? slot.substring(0, 5) 
+          : String(slot).substring(0, 5);
+        return !bookedTimesSet.has(slotTime);
+      });
+
+      console.log(`📅 Date ${avail.date}: ${(avail.time_slots || []).length} total slots, ${bookedTimesSet.size} blocked (${allBookedSessions.filter(s => s.scheduled_date === avail.date).length} booked sessions + ${dayExternalEvents.length} external Google Calendar events), ${availableSlots.length} available`);
 
       return {
         ...avail,
-        time_slots: availableSlots, // Update time_slots to only show available slots
+        time_slots: availableSlots, // Update time_slots to only show available slots (booked slots and external events removed)
         available_slots: availableSlots,
-        booked_slots: bookedTimes,
-        total_slots: avail.time_slots.length,
-        available_count: availableSlots.length
+        booked_slots: Array.from(bookedTimesSet),
+        total_slots: (avail.time_slots || []).length,
+        available_count: availableSlots.length,
+        external_events: dayExternalEvents.length
       };
     });
 

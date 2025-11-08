@@ -30,7 +30,7 @@ const getProfile = async (req, res) => {
       const { data: clientByUserId, error: errorByUserId } = await supabase
         .from('clients')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', req.user.user_id)
         .single();
 
       if (clientByUserId && !errorByUserId) {
@@ -97,49 +97,40 @@ const updateProfile = async (req, res) => {
     let client = null;
     let error = null;
 
-    // New system: client has user_id reference to users table
-    if (userRole === 'client' && req.user.user_id) {
-      // User ID in token is from users table, client has user_id
-      // Update by user_id
-      const { data: updatedClient, error: updateError } = await supabaseAdmin
-        .from('clients')
-        .update({
-          ...updateData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .select('*')
-        .single();
+    if (userRole === 'client') {
+      // Attempt updates using different identifiers (user_id then id)
+      const updateAttempts = [
+        req.user.user_id ? { column: 'user_id', value: req.user.user_id } : null,
+        req.user.client_id ? { column: 'id', value: req.user.client_id } : null,
+        { column: 'id', value: userId }
+      ].filter(Boolean);
 
-      client = updatedClient;
-      error = updateError;
-    } else if (userRole === 'client') {
-      // Try new system: lookup by user_id first
-      let { data: updatedClient, error: updateError } = await supabaseAdmin
-        .from('clients')
-        .update({
-          ...updateData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .select('*')
-        .single();
+      for (const attempt of updateAttempts) {
+        try {
+          const { data: updatedClient, error: updateError } = await supabaseAdmin
+            .from('clients')
+            .update({
+              ...updateData,
+              updated_at: new Date().toISOString()
+            })
+            .eq(attempt.column, attempt.value)
+            .select('*')
+            .single();
 
-      if (updateError || !updatedClient) {
-        // Fallback to old system: update by id (backward compatibility)
-        ({ data: updatedClient, error: updateError } = await supabaseAdmin
-          .from('clients')
-          .update({
-            ...updateData,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', userId)
-          .select('*')
-          .single());
+          if (!updateError && updatedClient) {
+            client = updatedClient;
+            error = null;
+            break;
+          }
+
+          // Record the last error but continue trying other identifiers
+          if (updateError) {
+            error = updateError;
+          }
+        } catch (attemptError) {
+          error = attemptError;
+        }
       }
-
-      client = updatedClient;
-      error = updateError;
     } else {
       error = { message: 'User is not a client' };
     }
