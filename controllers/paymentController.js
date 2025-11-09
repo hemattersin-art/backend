@@ -7,6 +7,7 @@ const {
   validatePayUResponse 
 } = require('../config/payu');
 const meetLinkService = require('../utils/meetLinkService');
+const assessmentSessionService = require('../services/assessmentSessionService');
 const { addMinutesToTime } = require('../utils/helpers');
 const emailService = require('../utils/emailService');
 
@@ -440,6 +441,18 @@ const handlePaymentSuccess = async (req, res) => {
 
       console.log('✅ Assessment session booked successfully:', assessmentSession.id);
 
+      let sessionWithMeet = assessmentSession;
+      try {
+        const { session: enrichedSession } = await assessmentSessionService.finalizeAssessmentSessionBooking(assessmentSession.id, {
+          durationMinutes: 50
+        });
+        if (enrichedSession) {
+          sessionWithMeet = enrichedSession;
+        }
+      } catch (notifyError) {
+        console.error('⚠️ Failed to finalize assessment session notifications:', notifyError?.message || notifyError);
+      }
+
       // Block the booked slot from availability (best-effort)
       try {
         const hhmm = (assessmentSession.scheduled_time || '').substring(0,5);
@@ -576,7 +589,7 @@ const handlePaymentSuccess = async (req, res) => {
       return res.json({
         success: true,
         message: 'Assessment session booked successfully. 2 additional sessions have been created for psychologists to schedule.',
-        data: { assessmentSessionId: assessmentSession.id }
+        data: { assessmentSessionId: assessmentSession.id, session: sessionWithMeet }
       });
     }
 

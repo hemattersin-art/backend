@@ -6,6 +6,7 @@ const {
   formatDate,
   formatTime
 } = require('../utils/helpers');
+const assessmentSessionService = require('../services/assessmentSessionService');
 
 // Get psychologist profile
 const getProfile = async (req, res) => {
@@ -1537,8 +1538,20 @@ const scheduleAssessmentSession = async (req, res) => {
       console.warn('⚠️ Failed to update availability after scheduling:', blockErr?.message);
     }
 
+    let sessionWithMeet = updatedSession;
+    try {
+      const { session: enrichedSession } = await assessmentSessionService.finalizeAssessmentSessionBooking(updatedSession.id, {
+        durationMinutes: 50
+      });
+      if (enrichedSession) {
+        sessionWithMeet = enrichedSession;
+      }
+    } catch (notifyError) {
+      console.error('⚠️ Failed to finalize assessment session notifications:', notifyError?.message || notifyError);
+    }
+
     res.json(
-      successResponse(updatedSession, 'Assessment session scheduled successfully')
+      successResponse(sessionWithMeet, 'Assessment session scheduled successfully')
     );
 
   } catch (error) {
