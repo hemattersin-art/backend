@@ -20,10 +20,10 @@ const getAllBetterParentingAdmin = async (req, res) => {
     const { data: rows, error, count } = await query.range(offset, offset + limit - 1);
     if (error) throw error;
 
-    return res.json(successResponse('Pages retrieved', {
+    return res.json(successResponse({
       pages: rows || [],
       pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / limit) }
-    }));
+    }, 'Pages retrieved'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to fetch pages', err.message));
   }
@@ -49,10 +49,10 @@ const getAllBetterParenting = async (req, res) => {
     const { data: rows, error, count } = await query.range(offset, offset + limit - 1);
     if (error) throw error;
 
-    return res.json(successResponse('Pages retrieved', {
+    return res.json(successResponse({
       pages: rows || [],
       pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / limit) }
-    }));
+    }, 'Pages retrieved'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to fetch pages', err.message));
   }
@@ -69,7 +69,7 @@ const getBetterParentingBySlug = async (req, res) => {
       .eq('status', 'published')
       .single();
     if (error) throw error;
-    return res.json(successResponse('Page retrieved', data));
+    return res.json(successResponse(data, 'Page retrieved'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to fetch page', err.message));
   }
@@ -85,7 +85,7 @@ const getBetterParentingById = async (req, res) => {
       .eq('id', id)
       .single();
     if (error) throw error;
-    return res.json(successResponse('Page retrieved', data));
+    return res.json(successResponse(data, 'Page retrieved'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to fetch page', err.message));
   }
@@ -183,7 +183,7 @@ const createBetterParenting = async (req, res) => {
       finalRow = updatedRow;
     }
 
-    return res.status(201).json(successResponse('Page created', finalRow));
+    return res.status(201).json(successResponse(finalRow, 'Page created'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to create page', err.message));
   }
@@ -246,7 +246,7 @@ const updateBetterParenting = async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
-    return res.json(successResponse('Page updated', data));
+    return res.json(successResponse(data, 'Page updated'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to update page', err.message));
   }
@@ -261,7 +261,7 @@ const deleteBetterParenting = async (req, res) => {
       .delete()
       .eq('id', id);
     if (error) throw error;
-    return res.json(successResponse('Page deleted'));
+    return res.json(successResponse(null, 'Page deleted'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to delete page', err.message));
   }

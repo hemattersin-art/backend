@@ -1763,25 +1763,25 @@ const getClientPackages = async (req, res) => {
 
     const fetchClientPackages = async () => {
       return await supabase
-        .from('client_packages')
-        .select(`
-          *,
-          package:packages(
-            id,
-            package_type,
-            description,
-            session_count,
-            price
-          ),
-          psychologist:psychologists(
-            id,
-            first_name,
-            last_name,
-            area_of_expertise
-          )
-        `)
-        .eq('client_id', clientId)
-        .order('purchased_at', { ascending: false });
+      .from('client_packages')
+      .select(`
+        *,
+        package:packages(
+          id,
+          package_type,
+          description,
+          session_count,
+          price
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          area_of_expertise
+        )
+      `)
+      .eq('client_id', clientId)
+      .order('purchased_at', { ascending: false });
     };
 
     let { data: clientPackages, error: packagesError } = await fetchClientPackages();

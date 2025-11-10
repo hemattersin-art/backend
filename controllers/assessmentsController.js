@@ -22,10 +22,10 @@ const getAllAssessmentsAdmin = async (req, res) => {
     if (error) {
       // Handle missing table gracefully
       if (error.code === '42P01') {
-        return res.json(successResponse('Assessments retrieved', {
+        return res.json(successResponse({
           assessments: [],
           pagination: { page: parseInt(page), limit: parseInt(limit), total: 0, totalPages: 0 }
-        }));
+        }, 'Assessments retrieved'));
       }
       throw error;
     }
@@ -66,10 +66,10 @@ const getAllAssessmentsAdmin = async (req, res) => {
       }
     }
 
-    res.json(successResponse('Assessments retrieved', {
+    res.json(successResponse({
       assessments: rows || [],
       pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / limit) }
-    }));
+    }, 'Assessments retrieved'));
   } catch (err) {
     // Gracefully return empty when table/rls not ready yet
     return res.json(successResponse({
@@ -98,18 +98,18 @@ const getAllAssessments = async (req, res) => {
     const { data: rows, error, count } = await query.range(offset, offset + limit - 1);
     if (error) {
       if (error.code === '42P01') {
-        return res.json(successResponse('Assessments retrieved', {
+        return res.json(successResponse({
           assessments: [],
           pagination: { page: parseInt(page), limit: parseInt(limit), total: 0, totalPages: 0 }
-        }));
+        }, 'Assessments retrieved'));
       }
       throw error;
     }
 
-    res.json(successResponse('Assessments retrieved', {
+    res.json(successResponse({
       assessments: rows || [],
       pagination: { page: parseInt(page), limit: parseInt(limit), total: count || 0, totalPages: Math.ceil((count || 0) / limit) }
-    }));
+    }, 'Assessments retrieved'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to fetch assessments', err.message));
   }
@@ -145,7 +145,7 @@ const getAssessmentBySlug = async (req, res) => {
       data.assigned_doctor_ids = [];
     }
     
-    res.json(successResponse('Assessment retrieved', data));
+    res.json(successResponse(data, 'Assessment retrieved'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to fetch assessment', err.message));
   }
@@ -180,7 +180,7 @@ const getAssessmentById = async (req, res) => {
       data.assigned_doctor_ids = [];
     }
     
-    res.json(successResponse('Assessment retrieved', data));
+    res.json(successResponse(data, 'Assessment retrieved'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to fetch assessment', err.message));
   }
@@ -282,7 +282,7 @@ const createAssessment = async (req, res) => {
       finalRow = updatedRow;
     }
 
-    res.status(201).json(successResponse('Assessment created', finalRow));
+    res.status(201).json(successResponse(finalRow, 'Assessment created'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to create assessment', err.message));
   }
@@ -364,7 +364,7 @@ const updateAssessment = async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
-    res.json(successResponse('Assessment updated', data));
+    res.json(successResponse(data, 'Assessment updated'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to update assessment', err.message));
   }
@@ -376,7 +376,7 @@ const deleteAssessment = async (req, res) => {
     const { id } = req.params;
     const { error } = await supabaseAdmin.from('assessments').delete().eq('id', id);
     if (error) throw error;
-    res.json(successResponse('Assessment deleted'));
+    res.json(successResponse(null, 'Assessment deleted'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to delete assessment', err.message));
   }

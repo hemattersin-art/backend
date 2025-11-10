@@ -25,7 +25,7 @@ const getAllCounsellingServicesAdmin = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling services', error.message));
     }
 
-    res.json(successResponse('Counselling services retrieved successfully', {
+    res.json(successResponse({
       services: services || [],
       pagination: {
         page: parseInt(page),
@@ -33,7 +33,7 @@ const getAllCounsellingServicesAdmin = async (req, res) => {
         total: count || 0,
         totalPages: Math.ceil((count || 0) / limit)
       }
-    }));
+    }, 'Counselling services retrieved successfully'));
   } catch (error) {
     console.error('Error fetching counselling services:', error);
     res.status(500).json(errorResponse('Failed to fetch counselling services', error.message));
@@ -65,7 +65,7 @@ const getAllCounsellingServices = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling services', error.message));
     }
 
-    res.json(successResponse('Counselling services retrieved successfully', {
+    res.json(successResponse({
       services: services || [],
       pagination: {
         page: parseInt(page),
@@ -73,7 +73,7 @@ const getAllCounsellingServices = async (req, res) => {
         total: count || 0,
         totalPages: Math.ceil((count || 0) / limit)
       }
-    }));
+    }, 'Counselling services retrieved successfully'));
   } catch (error) {
     console.error('Error fetching counselling services:', error);
     res.status(500).json(errorResponse('Failed to fetch counselling services', error.message));
@@ -100,7 +100,7 @@ const getCounsellingServiceBySlug = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling service', error.message));
     }
 
-    res.json(successResponse('Counselling service retrieved successfully', service));
+    res.json(successResponse(service, 'Counselling service retrieved successfully'));
   } catch (error) {
     console.error('Error fetching counselling service:', error);
     res.status(500).json(errorResponse('Failed to fetch counselling service', error.message));
@@ -131,7 +131,7 @@ const getCounsellingServiceById = async (req, res) => {
       service.left_image_url = '/360_F_262015638_nxpC4t1wbe8cLiVX3eholwctgVItTqF6.png';
     }
 
-    res.json(successResponse('Counselling service retrieved successfully', service));
+    res.json(successResponse(service, 'Counselling service retrieved successfully'));
   } catch (error) {
     console.error('Error fetching counselling service:', error);
     res.status(500).json(errorResponse('Failed to fetch counselling service', error.message));
@@ -222,7 +222,7 @@ const createCounsellingService = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to create counselling service', error.message));
     }
 
-    res.status(201).json(successResponse('Counselling service created successfully', service));
+    res.status(201).json(successResponse(service, 'Counselling service created successfully'));
   } catch (error) {
     console.error('Error creating counselling service:', error);
     res.status(500).json(errorResponse('Failed to create counselling service', error.message));
@@ -316,7 +316,7 @@ const updateCounsellingService = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to update counselling service', error.message));
     }
 
-    res.json(successResponse('Counselling service updated successfully', service));
+    res.json(successResponse(service, 'Counselling service updated successfully'));
   } catch (error) {
     console.error('Error updating counselling service:', error);
     res.status(500).json(errorResponse('Failed to update counselling service', error.message));
@@ -353,7 +353,7 @@ const deleteCounsellingService = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to delete counselling service', error.message));
     }
 
-    res.json(successResponse('Counselling service deleted successfully'));
+    res.json(successResponse(null, 'Counselling service deleted successfully'));
   } catch (error) {
     console.error('Error deleting counselling service:', error);
     res.status(500).json(errorResponse('Failed to delete counselling service', error.message));
@@ -398,10 +398,10 @@ const uploadCounsellingImage = async (req, res) => {
     // Get public URL
     const publicUrl = getCounsellingImageUrl(fileName);
 
-    res.json(successResponse('Image uploaded successfully', {
+    res.json(successResponse({
       url: publicUrl,
       filename: fileName
-    }));
+    }, 'Image uploaded successfully'));
   } catch (error) {
     console.error('Error uploading counselling image:', error);
     res.status(500).json(errorResponse('Failed to upload image', error.message));

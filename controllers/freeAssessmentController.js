@@ -1,8 +1,70 @@
 const supabase = require('../config/supabase');
-const { successResponse, errorResponse, addMinutesToTime } = require('../utils/helpers');
+const { supabaseAdmin } = require('../config/supabase');
+const { successResponse, errorResponse, addMinutesToTime, hashPassword } = require('../utils/helpers');
 const { createRealMeetLink } = require('../utils/meetEventHelper'); // Use real Meet link creation
 const meetLinkService = require('../utils/meetLinkService'); // New Meet Link Service
 const emailService = require('../utils/emailService');
+
+const DEFAULT_ASSESSMENT_DOCTOR = {
+  email: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'koottfordeveloper@gmail.com',
+  firstName: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_FIRST_NAME || 'Assessment',
+  lastName: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_LAST_NAME || 'Specialist',
+};
+
+const ensureAssessmentPsychologist = async () => {
+  try {
+    const { data: existing, error } = await supabaseAdmin
+      .from('psychologists')
+      .select('id, email, first_name, last_name')
+      .eq('email', DEFAULT_ASSESSMENT_DOCTOR.email)
+      .single();
+
+    if (existing && !error) {
+      return existing;
+    }
+  } catch (lookupError) {
+    if (lookupError?.code !== 'PGRST116') {
+      console.error('Failed to lookup default assessment psychologist:', lookupError);
+    }
+  }
+
+  try {
+    const passwordHash = await hashPassword(
+      process.env.FREE_ASSESSMENT_PSYCHOLOGIST_PASSWORD || 'Assessments@123'
+    );
+
+    const { data: inserted, error: insertError } = await supabaseAdmin
+      .from('psychologists')
+      .insert([{
+        email: DEFAULT_ASSESSMENT_DOCTOR.email,
+        password_hash: passwordHash,
+        first_name: DEFAULT_ASSESSMENT_DOCTOR.firstName,
+        last_name: DEFAULT_ASSESSMENT_DOCTOR.lastName,
+        phone: '',
+        ug_college: 'N/A',
+        pg_college: 'N/A',
+        phd_college: 'N/A',
+        area_of_expertise: ['Assessments'],
+        description: 'Default specialist for free assessment sessions.',
+        experience_years: 0,
+        individual_session_price: 0,
+        cover_image_url: null,
+        personality_traits: ['Supportive', 'Assessment-focused']
+      }])
+      .select('id, email, first_name, last_name')
+      .single();
+
+    if (insertError) {
+      console.error('Failed to create default assessment psychologist:', insertError);
+      throw insertError;
+    }
+
+    return inserted;
+  } catch (createError) {
+    console.error('Error ensuring default assessment psychologist:', createError);
+    return null;
+  }
+};
 
 // Get client's free assessment status
 const getFreeAssessmentStatus = async (req, res) => {
@@ -75,12 +137,12 @@ const getFreeAssessmentStatus = async (req, res) => {
       );
     }
 
-    const availableAssessments = 20 - client.free_assessment_count;
+    const availableAssessments = 3 - client.free_assessment_count;
     const nextAssessmentNumber = client.free_assessment_count + 1;
 
     res.json(
       successResponse({
-        totalAssessments: 20,
+        totalAssessments: 3,
         usedAssessments: client.free_assessment_count,
         availableAssessments,
         canBook: availableAssessments > 0,
@@ -304,6 +366,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
           console.log(`🔍 Date ${dateStr} allSlots:`, allSlots);
           totalSlots = allSlots.length;
           
+          const maxBookingsPerSlot = Math.max(1, (typeof dateConfig?.maxBookingsPerSlot === 'number' ? dateConfig.maxBookingsPerSlot : 1));
           // Check availability for each configured slot
           allSlots.forEach(slot => {
             // Convert to HH:MM:SS for comparison
@@ -311,7 +374,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
             const bookingKey = `${dateStr}_${time24Hour}`;
             const currentBookings = bookingCounts[bookingKey] || 0;
             
-            if (currentBookings < 3) { // Default max bookings per slot
+            if (currentBookings < maxBookingsPerSlot) { // Default max bookings per slot
               availableSlots++;
             }
           });
@@ -325,8 +388,9 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
           timeslots.forEach(timeslot => {
             const bookingKey = `${dateStr}_${timeslot.time_slot}`;
             const currentBookings = bookingCounts[bookingKey] || 0;
+            const maxBookingsPerSlot = Math.max(1, timeslot.max_bookings_per_slot || 1);
             
-            if (currentBookings < timeslot.max_bookings_per_slot) {
+            if (currentBookings < maxBookingsPerSlot) {
               availableSlots++;
             }
           });
@@ -394,7 +458,7 @@ const convertTo24Hour = (time12Hour) => {
 };
 
 // Normalize any time string to HH:MM:SS (supports HH:MM, HH:MM:SS, and 12-hour with AM/PM)
-const toHms24 = (t) => {
+function toHms24(t) {
   try {
     if (!t || typeof t !== 'string') return '00:00:00';
     const s = t.trim();
@@ -418,7 +482,60 @@ const toHms24 = (t) => {
   } catch (e) {
     return '00:00:00';
   }
-};
+}
+
+async function removeTimeSlotFromDateConfig(date, time) {
+  try {
+    const normalizedTime = toHms24(time);
+    if (!normalizedTime) {
+      return;
+    }
+
+    const { data: config, error: fetchError } = await supabaseAdmin
+      .from('free_assessment_date_configs')
+      .select('id, time_slots')
+      .eq('date', date)
+      .eq('is_active', true)
+      .single();
+
+    if (fetchError) {
+      if (fetchError.code !== 'PGRST116') {
+        console.error('❌ Failed to fetch date config for slot removal:', fetchError);
+      }
+      return;
+    }
+
+    if (!config) {
+      return;
+    }
+
+    const existingSlots = Array.isArray(config.time_slots) ? config.time_slots : [];
+    const updatedSlots = existingSlots.filter(slot => slot !== normalizedTime);
+
+    if (updatedSlots.length === existingSlots.length) {
+      return;
+    }
+
+    const updatePayload = {
+      time_slots: updatedSlots,
+      updated_at: new Date().toISOString(),
+      is_active: updatedSlots.length > 0
+    };
+
+    const { error: updateError } = await supabaseAdmin
+      .from('free_assessment_date_configs')
+      .update(updatePayload)
+      .eq('id', config.id);
+
+    if (updateError) {
+      console.error('❌ Failed to update date config after booking:', updateError);
+    } else {
+      console.log(`✅ Removed booked slot ${normalizedTime} from free assessment config on ${date}`);
+    }
+  } catch (error) {
+    console.error('❌ Error removing time slot from date config:', error);
+  }
+}
 
 // Get available time slots for free assessments
 const getAvailableTimeSlots = async (req, res) => {
@@ -617,13 +734,14 @@ const getAvailableTimeSlots = async (req, res) => {
           return hasTimeSlot && isNotBooked;
         });
 
+        const maxBookingsForSlot = Math.max(1, timeslot.max_bookings_per_slot || 1);
         // Check if we haven't reached the maximum bookings for this slot
-        if (availablePsychologists.length > 0 && bookedPsychologists.length < 20) { // Changed from timeslot.max_bookings_per_slot to 20
+        if (availablePsychologists.length > 0 && bookedPsychologists.length < maxBookingsForSlot) {
           availableSlots.push({
             time: timeslot.time_slot,
             displayTime: (() => { try { const [hh,mm] = timeslot.time_slot.split(':'); const h = parseInt(hh,10); const m = parseInt(mm,10)||0; const ampm = h>=12?'PM':'AM'; const h12 = h%12||12; return `${h12}:${m.toString().padStart(2,'0')} ${ampm}`;} catch { return timeslot.time_slot; } })(),
             availablePsychologists: availablePsychologists.length,
-            maxBookings: 20,
+            maxBookings: maxBookingsForSlot,
             currentBookings: bookedPsychologists.length,
             psychologists: availablePsychologists.map(p => ({
               id: p.psychologist.id,
@@ -707,7 +825,7 @@ const bookFreeAssessment = async (req, res) => {
     }
 
     // Check if client can book free assessment
-    if (client.free_assessment_count >= 20) {
+    if (client.free_assessment_count >= 3) {
       return res.status(400).json(
         errorResponse('No free assessments available')
       );
@@ -795,14 +913,14 @@ const bookFreeAssessment = async (req, res) => {
       );
     }
 
-    // Find the next available assessment number (1..20) skipping used numbers
+    // Find the next available assessment number (1..3) skipping used numbers
     let nextAssessmentNumber = 1;
     const usedNumbers = (existingAssessments || []).map(a => a.assessment_number);
     
     console.log('🔍 Raw existing assessments:', existingAssessments);
     console.log('🔍 Used numbers:', usedNumbers);
     
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 3; i++) {
       if (!usedNumbers.includes(i)) {
         nextAssessmentNumber = i;
         break;
@@ -816,22 +934,41 @@ const bookFreeAssessment = async (req, res) => {
       totalExisting: existingAssessments.length
     });
 
-    // Check if user has already used all 20 assessments
-    if (usedNumbers.length >= 20) {
+    // Check if user has already used all free assessments
+    if (usedNumbers.length >= 3) {
       return res.status(400).json(
-        errorResponse('You have already used all 20 free assessments')
+        errorResponse('You have already used all free assessments')
       );
     }
 
     // If no next number found (shouldn't happen), return error
-    if (nextAssessmentNumber > 20) {
+    if (nextAssessmentNumber > 3) {
       return res.status(400).json(
         errorResponse('No free assessments available')
       );
     }
 
-    // Do not assign to a specific psychologist; mark as unassigned for admin triage
-    console.log('🔄 Creating free assessment record (unassigned)...');
+    const defaultPsychologist = await ensureAssessmentPsychologist();
+    const defaultPsychologistId = defaultPsychologist?.id || null;
+    const assessmentPsychologistPayload = defaultPsychologist
+      ? {
+          id: defaultPsychologist.id,
+          first_name: defaultPsychologist.first_name || DEFAULT_ASSESSMENT_DOCTOR.firstName,
+          last_name: defaultPsychologist.last_name || DEFAULT_ASSESSMENT_DOCTOR.lastName,
+          email: defaultPsychologist.email || DEFAULT_ASSESSMENT_DOCTOR.email
+        }
+      : null;
+
+    if (!defaultPsychologistId) {
+      console.warn('⚠️ Default assessment psychologist missing; proceeding without assignment.');
+    } else {
+      console.log('✅ Default assessment psychologist:', {
+        id: defaultPsychologistId,
+        email: defaultPsychologist.email
+      });
+    }
+
+    console.log('🔄 Creating free assessment record (auto-assigned)...');
     const { data: assessment, error: assessmentError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .insert({
@@ -841,7 +978,7 @@ const bookFreeAssessment = async (req, res) => {
         assessment_number: nextAssessmentNumber,
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
-        psychologist_id: null,
+        psychologist_id: defaultPsychologistId,
         status: 'booked'
       })
       .select()
@@ -860,18 +997,19 @@ const bookFreeAssessment = async (req, res) => {
     console.log('🔄 Creating session placeholder for free assessment...');
     const sessionData = {
       client_id: userId,
-      psychologist_id: null, // unassigned
+      psychologist_id: defaultPsychologistId,
       scheduled_date: scheduledDate,
       scheduled_time: scheduledTime,
       status: 'booked',
       price: 0,
       session_type: 'free_assessment'
     };
+    let meetLink = null;
 
     try {
       const meetSessionData = {
         summary: `Free Assessment` ,
-        description: `Free 20-minute assessment session (doctor to be assigned)`,
+        description: `Free 20-minute assessment session with our assessment specialist`,
         startDate: scheduledDate,
         startTime: scheduledTime,
         endTime: addMinutesToTime(scheduledTime, 20),
@@ -890,19 +1028,33 @@ const bookFreeAssessment = async (req, res) => {
         }
       } catch (_) {}
 
+      if (defaultPsychologist?.email) {
+        if (!meetSessionData.attendees.includes(defaultPsychologist.email)) {
+          meetSessionData.attendees.push(defaultPsychologist.email);
+        }
+      }
+
       // Create meet link (OAuth preferred; will add attendee to client calendar)
       const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData);
-      if (meetResult.success) {
-        sessionData.google_calendar_event_id = meetResult.eventId;
-        sessionData.google_meet_link = meetResult.meetLink;
-        sessionData.google_meet_join_url = meetResult.meetLink;
-        sessionData.google_meet_start_url = meetResult.meetLink;
-        console.log('✅ Meet link created for free assessment (unassigned)');
+      if (meetResult?.success && meetResult.meetLink) {
+        meetLink = meetResult.meetLink;
+        sessionData.google_calendar_event_id = meetResult.eventId || null;
+        sessionData.google_meet_link = meetLink;
+        sessionData.google_meet_join_url = meetLink;
+        sessionData.google_meet_start_url = meetLink;
+        console.log('✅ Meet link created for free assessment (auto-assigned)');
       } else {
-        console.log('⚠️ Meet link creation failed; continuing without link');
+        meetLink = meetResult?.meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
+        if (meetLink) {
+          sessionData.google_meet_link = meetLink;
+          sessionData.google_meet_join_url = meetLink;
+          sessionData.google_meet_start_url = meetLink;
+        }
+        console.log('⚠️ Meet link creation failed; using fallback');
       }
     } catch (e) {
       console.error('❌ Error creating meet link placeholder:', e);
+      meetLink = meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
     }
 
     const { data: session, error: sessionError } = await supabase
@@ -956,26 +1108,30 @@ const bookFreeAssessment = async (req, res) => {
     try {
       await emailService.sendFreeAssessmentConfirmation({
         clientName: 'Client',
-        psychologistName: 'To be assigned',
+        psychologistName: assessmentPsychologistPayload
+          ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
+          : 'Assessment Specialist',
         assessmentDate: scheduledDate,
         assessmentTime: scheduledTime,
         assessmentNumber: nextAssessmentNumber,
         clientEmail: userRowForEmail?.email,
-        psychologistEmail: null,
+        psychologistEmail: assessmentPsychologistPayload?.email || null,
         googleMeetLink: session?.google_meet_link || null
       });
     } catch (emailError) {
       console.error('Error sending confirmation email:', emailError);
     }
 
+    await removeTimeSlotFromDateConfig(scheduledDate, scheduledTime);
+
     res.json(
       successResponse({
         assessmentId: assessment.id,
         assessmentNumber: nextAssessmentNumber,
-        psychologist: null,
+        psychologist: assessmentPsychologistPayload,
         scheduledDate,
         scheduledTime,
-        meetLink: null
+        meetLink: meetLink || 'https://meet.google.com/new?hs=122&authuser=0'
       }, 'Free assessment booked successfully')
     );
 
@@ -1108,6 +1264,9 @@ const adminListFreeAssessments = async (req, res) => {
         } catch (e) {
           // ignore, leave meetLink null
         }
+      }
+      if (!meetLink) {
+        meetLink = 'https://meet.google.com/new?hs=122&authuser=0';
       }
       assessments.push({
         id: a.id,

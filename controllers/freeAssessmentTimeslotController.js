@@ -197,7 +197,7 @@ const addMultipleTimeslots = async (req, res) => {
       return {
         time_slot: normalizedTime,
         is_active: slot.is_active !== undefined ? !!slot.is_active : (slot.isActive !== undefined ? !!slot.isActive : true),
-        max_bookings_per_slot: slot.max_bookings_per_slot || slot.maxBookingsPerSlot || 3,
+        max_bookings_per_slot: slot.max_bookings_per_slot || slot.maxBookingsPerSlot || 1,
       };
     }).filter(s => !!s.time_slot);
 
@@ -245,7 +245,7 @@ const addMultipleTimeslots = async (req, res) => {
     const timeslotsToInsert = newTimeslots.map(slot => ({
       time_slot: slot.time_slot,
       is_active: slot.is_active !== undefined ? slot.is_active : true,
-      max_bookings_per_slot: slot.max_bookings_per_slot || 3
+      max_bookings_per_slot: slot.max_bookings_per_slot || 1
     }));
 
     const { data: insertedTimeslots, error } = await supabaseAdmin
@@ -281,7 +281,7 @@ const addMultipleTimeslots = async (req, res) => {
 // Add new timeslot
 const addTimeslot = async (req, res) => {
   try {
-    const { timeSlot, isActive = true, maxBookingsPerSlot = 3 } = req.body;
+    const { timeSlot, isActive = true, maxBookingsPerSlot = 1 } = req.body;
 
     if (!timeSlot) {
       return res.status(400).json(
