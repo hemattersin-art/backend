@@ -15,11 +15,11 @@ const {
 // Get client's free assessment status
 router.get('/status', authenticateToken, getFreeAssessmentStatus);
 
-// Get available time slots for free assessments
-router.get('/available-slots', authenticateToken, getAvailableTimeSlots);
+// Get available time slots for free assessments (public)
+router.get('/available-slots', getAvailableTimeSlots);
 
-// Get free assessment availability range for calendar
-router.get('/availability-range', authenticateToken, getFreeAssessmentAvailabilityRange);
+// Get free assessment availability range for calendar (public)
+router.get('/availability-range', getFreeAssessmentAvailabilityRange);
 
 // Book a free assessment
 router.post('/book', authenticateToken, bookFreeAssessment);

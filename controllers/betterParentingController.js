@@ -195,7 +195,15 @@ const updateBetterParenting = async (req, res) => {
     const { id } = req.params;
     const src = req.body || {};
 
+    const slugify = (val = '') => val
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
     const updateData = {
+      slug: src.slug,
       status: src.status,
       menu_order: src.menu_order,
       seo_title: src.seo_title,
@@ -238,6 +246,25 @@ const updateBetterParenting = async (req, res) => {
         safeUpdate[k] = updateData[k];
       }
     });
+
+    if (safeUpdate.slug !== undefined) {
+      const normalizedSlug = slugify(safeUpdate.slug);
+      if (!normalizedSlug) {
+        return res.status(400).json(errorResponse('Slug cannot be empty.'));
+      }
+      if (normalizedSlug !== existingRow.slug) {
+        const { data: existingSlug } = await supabaseAdmin
+          .from('better_parenting')
+          .select('id')
+          .eq('slug', normalizedSlug)
+          .neq('id', id)
+          .maybeSingle();
+        if (existingSlug) {
+          return res.status(400).json(errorResponse('Another better parenting page already uses this slug.'));
+        }
+      }
+      safeUpdate.slug = normalizedSlug;
+    }
 
     const { data, error } = await supabaseAdmin
       .from('better_parenting')

@@ -234,6 +234,7 @@ const updateCounsellingService = async (req, res) => {
   try {
     const { id } = req.params;
     const {
+      slug,
       status,
       category,
       menu_order,
@@ -271,9 +272,33 @@ const updateCounsellingService = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling service', fetchError.message));
     }
 
+    const slugify = (val) => (val || '')
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
     // Build update data
-    // Note: slug is intentionally excluded from updates to prevent broken links
     const updateData = {};
+    if (slug !== undefined) {
+      const normalizedSlug = slugify(slug);
+      if (!normalizedSlug) {
+        return res.status(400).json(errorResponse('Slug cannot be empty.'));
+      }
+      if (normalizedSlug !== existingService.slug) {
+        const { data: existingSlug } = await supabase
+          .from('counselling_services')
+          .select('id')
+          .eq('slug', normalizedSlug)
+          .neq('id', id)
+          .maybeSingle();
+        if (existingSlug) {
+          return res.status(400).json(errorResponse('Another counselling service already uses this slug.'));
+        }
+        updateData.slug = normalizedSlug;
+      }
+    }
     if (status !== undefined) updateData.status = status;
     if (category !== undefined) updateData.category = category;
     if (menu_order !== undefined) updateData.menu_order = menu_order;

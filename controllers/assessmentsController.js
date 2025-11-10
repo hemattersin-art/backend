@@ -302,7 +302,15 @@ const updateAssessment = async (req, res) => {
       return arr;
     };
 
+    const slugify = (val = '') => val
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
     const updateData = {
+      slug: src.slug,
       status: src.status,
       category: src.category,
       menu_order: src.menu_order,
@@ -356,6 +364,25 @@ const updateAssessment = async (req, res) => {
         delete updateData[k];
       }
     });
+
+    if (updateData.slug !== undefined) {
+      const normalizedSlug = slugify(updateData.slug);
+      if (!normalizedSlug) {
+        return res.status(400).json(errorResponse('Slug cannot be empty.', ''));
+      }
+      if (normalizedSlug !== existingRow.slug) {
+        const { data: existingSlug } = await supabaseAdmin
+          .from('assessments')
+          .select('id')
+          .eq('slug', normalizedSlug)
+          .neq('id', id)
+          .maybeSingle();
+        if (existingSlug) {
+          return res.status(400).json(errorResponse('Another assessment already uses this slug.'));
+        }
+      }
+      updateData.slug = normalizedSlug;
+    }
 
     const { data, error } = await supabaseAdmin
       .from('assessments')
