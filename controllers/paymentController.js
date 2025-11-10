@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
+const { ensureClientPackageRecord } = require('../services/packageService');
 const { 
   getPayUConfig, 
   generatePayUHash, 
@@ -827,38 +828,32 @@ const handlePaymentSuccess = async (req, res) => {
     );
 
     // If package booking, create client package record
-    if (packageId && packageId !== 'individual') {
+    if (actualPackageId && actualPackageId !== 'individual') {
       console.log('📦 Creating client package record...');
       try {
         const { data: packageData } = await supabase
           .from('packages')
           .select('*')
-          .eq('id', packageId)
+          .eq('id', actualPackageId)
           .single();
 
         if (packageData) {
-          const clientPackageData = {
-            client_id: clientId,
-            psychologist_id: psychologistId,
-            package_id: packageId,
-            package_type: packageData.package_type,
-            total_sessions: packageData.session_count,
-            remaining_sessions: packageData.session_count - 1, // First session already booked
-            total_amount: packageData.price,
-            amount_paid: packageData.price,
-            status: 'active',
-            purchased_at: new Date().toISOString(),
-            first_session_id: session.id
-          };
-
-          const { error: clientPackageError } = await supabase
-            .from('client_packages')
-            .insert([clientPackageData]);
+          const { created, error: clientPackageError } = await ensureClientPackageRecord({
+            clientId,
+            psychologistId: actualPsychologistId,
+            packageId: actualPackageId,
+            sessionId: session.id,
+            purchasedAt: new Date().toISOString(),
+            packageData,
+            consumedSessions: 1
+          });
 
           if (clientPackageError) {
             console.error('❌ Client package creation failed:', clientPackageError);
-          } else {
+          } else if (created) {
             console.log('✅ Client package record created successfully');
+          } else {
+            console.log('ℹ️ Client package record already existed for this session');
           }
         }
       } catch (packageError) {

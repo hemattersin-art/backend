@@ -1,5 +1,6 @@
 const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
+const { deriveSessionCount, ensureClientPackageRecord } = require('../services/packageService');
 const { 
   successResponse, 
   errorResponse,
@@ -1760,27 +1761,30 @@ const getClientPackages = async (req, res) => {
 
     const clientId = client.id;
 
-    // Get client packages with package details
-    const { data: clientPackages, error: packagesError } = await supabase
-      .from('client_packages')
-      .select(`
-        *,
-        package:packages(
-          id,
-          package_type,
-          description,
-          session_count,
-          price
-        ),
-        psychologist:psychologists(
-          id,
-          first_name,
-          last_name,
-          area_of_expertise
-        )
-      `)
-      .eq('client_id', clientId)
-      .order('purchased_at', { ascending: false });
+    const fetchClientPackages = async () => {
+      return await supabase
+        .from('client_packages')
+        .select(`
+          *,
+          package:packages(
+            id,
+            package_type,
+            description,
+            session_count,
+            price
+          ),
+          psychologist:psychologists(
+            id,
+            first_name,
+            last_name,
+            area_of_expertise
+          )
+        `)
+        .eq('client_id', clientId)
+        .order('purchased_at', { ascending: false });
+    };
+
+    let { data: clientPackages, error: packagesError } = await fetchClientPackages();
 
     if (packagesError) {
       console.error('Error fetching client packages:', packagesError);
@@ -1789,9 +1793,100 @@ const getClientPackages = async (req, res) => {
       );
     }
 
+    const existingPackageIds = new Set(
+      (clientPackages || []).map(pkg => pkg.package_id || pkg.id).filter(Boolean)
+    );
+
+    const { data: packageSessions, error: packageSessionsError } = await supabase
+      .from('sessions')
+      .select('id, package_id, psychologist_id, status, scheduled_date, created_at')
+      .eq('client_id', clientId)
+      .not('package_id', 'is', null);
+
+    if (packageSessionsError) {
+      console.error('Error fetching package sessions:', packageSessionsError);
+    } else if (packageSessions && packageSessions.length > 0) {
+      let backfillAdded = false;
+      const sessionsByPackage = packageSessions.reduce((acc, session) => {
+        if (!session.package_id) return acc;
+        if (!acc.has(session.package_id)) {
+          acc.set(session.package_id, []);
+        }
+        acc.get(session.package_id).push(session);
+        return acc;
+      }, new Map());
+
+      for (const [packageId, sessionsForPackage] of sessionsByPackage.entries()) {
+        if (existingPackageIds.has(packageId)) continue;
+
+        try {
+          const { data: packageRecord } = await supabase
+            .from('packages')
+            .select('*')
+            .eq('id', packageId)
+            .single();
+
+          if (!packageRecord) continue;
+
+          const completedSessions = sessionsForPackage.filter(
+            (session) => !['cancelled'].includes(session.status)
+          ).length;
+          const earliestSession = sessionsForPackage.reduce((earliest, session) => {
+            if (!earliest) return session;
+            const earliestDate = new Date(earliest.scheduled_date || earliest.created_at || 0);
+            const sessionDate = new Date(session.scheduled_date || session.created_at || 0);
+            return sessionDate < earliestDate ? session : earliest;
+          }, null);
+
+          const psychologistId = earliestSession?.psychologist_id || packageRecord.psychologist_id;
+
+          const { created, error: backfillError } = await ensureClientPackageRecord({
+            clientId,
+            psychologistId,
+            packageId,
+            sessionId: earliestSession?.id || null,
+            purchasedAt: earliestSession?.created_at || new Date().toISOString(),
+            packageData: packageRecord,
+            consumedSessions: Math.max(completedSessions, 1)
+          });
+
+          if (backfillError) {
+            console.error('Failed to backfill client package:', backfillError);
+          } else if (created) {
+            console.log('✅ Backfilled client package for package_id:', packageId);
+            backfillAdded = true;
+          }
+        } catch (backfillException) {
+          console.error('Exception while backfilling client package:', backfillException);
+        }
+      }
+
+      if (backfillAdded) {
+        const refetch = await fetchClientPackages();
+        if (!refetch.error && refetch.data) {
+          clientPackages = refetch.data;
+        }
+      }
+    }
+
+    const normalizedPackages = (clientPackages || []).map(pkg => {
+      const totalSessions = deriveSessionCount(pkg);
+
+      const remainingSessions = Number.isFinite(pkg.remaining_sessions) && pkg.remaining_sessions >= 0
+        ? pkg.remaining_sessions
+        : Math.max(totalSessions - 1, 0);
+
+      return {
+        ...pkg,
+        total_sessions: totalSessions,
+        remaining_sessions: remainingSessions,
+        status: remainingSessions === 0 ? 'completed' : (pkg.status || 'active')
+      };
+    });
+
     res.json(
       successResponse({
-        packages: clientPackages || []
+        clientPackages: normalizedPackages
       })
     );
 
@@ -1983,11 +2078,17 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
+    const totalSessions = deriveSessionCount(clientPackage);
+    const currentRemaining = Number.isFinite(clientPackage.remaining_sessions)
+      ? clientPackage.remaining_sessions
+      : Math.max(totalSessions - 1, 0);
+    const updatedRemaining = Math.max(currentRemaining - 1, 0);
+
     // Update remaining sessions in client package
     const { error: updateError } = await supabase
       .from('client_packages')
       .update({
-        remaining_sessions: clientPackage.remaining_sessions - 1,
+        remaining_sessions: updatedRemaining,
         updated_at: new Date().toISOString()
       })
       .eq('id', package_id);
