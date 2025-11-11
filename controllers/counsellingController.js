@@ -84,13 +84,18 @@ const getAllCounsellingServices = async (req, res) => {
 const getCounsellingServiceBySlug = async (req, res) => {
   try {
     const { slug } = req.params;
+    const { preview } = req.query;
 
-    const { data: service, error } = await supabase
+    let query = supabase
       .from('counselling_services')
       .select('*')
-      .eq('slug', slug)
-      .eq('status', 'published')
-      .single();
+      .eq('slug', slug);
+
+    if (!preview) {
+      query = query.eq('status', 'published');
+    }
+
+    const { data: service, error } = await query.single();
 
     if (error) {
       if (error.code === 'PGRST116') {
@@ -287,16 +292,7 @@ const updateCounsellingService = async (req, res) => {
         return res.status(400).json(errorResponse('Slug cannot be empty.'));
       }
       if (normalizedSlug !== existingService.slug) {
-        const { data: existingSlug } = await supabase
-          .from('counselling_services')
-          .select('id')
-          .eq('slug', normalizedSlug)
-          .neq('id', id)
-          .maybeSingle();
-        if (existingSlug) {
-          return res.status(400).json(errorResponse('Another counselling service already uses this slug.'));
-        }
-        updateData.slug = normalizedSlug;
+        return res.status(400).json(errorResponse('Slug cannot be changed once created.'));
       }
     }
     if (status !== undefined) updateData.status = status;

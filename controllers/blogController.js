@@ -291,32 +291,7 @@ const updateBlog = async (req, res) => {
       throw fetchError;
     }
 
-    let slug = existingBlog.slug;
     let published_at = existingBlog.published_at;
-
-    // If title is being updated, generate new slug
-    if (title && title !== existingBlog.title) {
-      slug = generateSlug(title);
-      
-      // Check if new slug already exists
-      const { data: slugCheck } = await supabase
-        .from('blogs')
-        .select('slug')
-        .eq('slug', slug)
-        .neq('id', id)
-        .single();
-
-      if (slugCheck) {
-        let counter = 1;
-        let newSlug = `${slug}-${counter}`;
-        
-        while (await supabase.from('blogs').select('id').eq('slug', newSlug).neq('id', id).single()) {
-          counter++;
-          newSlug = `${slug}-${counter}`;
-        }
-        slug = newSlug;
-      }
-    }
 
     // Handle status change to published
     if (status === 'published' && existingBlog.status !== 'published') {
@@ -361,7 +336,6 @@ const updateBlog = async (req, res) => {
     if (tags !== undefined) updateData.tags = Array.isArray(tags) ? tags : [];
     if (read_time_minutes !== undefined) updateData.read_time_minutes = read_time_minutes;
     
-    updateData.slug = slug;
     updateData.published_at = published_at;
 
     const { data: blog, error } = await supabase
@@ -587,18 +561,18 @@ const createTestBlog = async (req, res) => {
           content: 'Remember that every child is unique, and what works for one child may not work for another. Patience, understanding, and professional guidance when needed can make all the difference in a child\'s psychological well-being.'
         }
       ],
-      featured_image_url: '/uploads/blog/child-psychology-featured.jpg',
+      featured_image_url: 'https://images.unsplash.com/photo-1508931135232-2235b554f494?auto=format&fit=crop&w=1600&q=80',
       content_images: [
         {
-          src: '/uploads/blog/therapy-session.jpg',
+          src: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80',
           alt: 'Child therapy session with therapist'
         },
         {
-          src: '/uploads/blog/play-therapy.jpg',
+          src: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80',
           alt: 'Children engaging in play therapy activities'
         },
         {
-          src: '/uploads/blog/family-counseling.jpg',
+          src: 'https://images.unsplash.com/photo-1485921325833-277379c1b6e5?auto=format&fit=crop&w=1200&q=80',
           alt: 'Family counseling session with therapist'
         }
       ],

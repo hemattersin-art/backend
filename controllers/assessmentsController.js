@@ -310,7 +310,6 @@ const updateAssessment = async (req, res) => {
       .replace(/(^-|-$)/g, '');
 
     const updateData = {
-      slug: src.slug,
       status: src.status,
       category: src.category,
       menu_order: src.menu_order,
@@ -365,23 +364,14 @@ const updateAssessment = async (req, res) => {
       }
     });
 
-    if (updateData.slug !== undefined) {
-      const normalizedSlug = slugify(updateData.slug);
+    if (src.slug !== undefined) {
+      const normalizedSlug = slugify(src.slug);
       if (!normalizedSlug) {
         return res.status(400).json(errorResponse('Slug cannot be empty.', ''));
       }
       if (normalizedSlug !== existingRow.slug) {
-        const { data: existingSlug } = await supabaseAdmin
-          .from('assessments')
-          .select('id')
-          .eq('slug', normalizedSlug)
-          .neq('id', id)
-          .maybeSingle();
-        if (existingSlug) {
-          return res.status(400).json(errorResponse('Another assessment already uses this slug.'));
-        }
+        return res.status(400).json(errorResponse('Slug cannot be changed once created.'));
       }
-      updateData.slug = normalizedSlug;
     }
 
     const { data, error } = await supabaseAdmin

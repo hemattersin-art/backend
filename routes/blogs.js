@@ -21,7 +21,7 @@ router.get('/admin', authenticateToken, requireAdmin, getAllBlogs); // Get all b
 router.get('/admin/:id', authenticateToken, requireAdmin, getBlogById);
 router.post('/admin', authenticateToken, requireAdmin, createBlog);
 router.put('/admin/:id', authenticateToken, requireAdmin, updateBlog);
-router.delete('/admin/:id', authenticateToken, requireSuperAdmin, deleteBlog);
+router.delete('/admin/:id', authenticateToken, requireAdmin, deleteBlog);
 
 // Image upload route
 router.post('/admin/upload-image', authenticateToken, requireAdmin, upload.single('image'), uploadBlogImage);
