@@ -157,7 +157,9 @@ const createCounsellingService = async (req, res) => {
       therapists_heading,
       hero_image_url,
       benefits = [],
+      benefits_title,
       types = [],
+      types_title,
       faqs = [],
       testimonials = [],
       info_cards = [],
@@ -206,7 +208,9 @@ const createCounsellingService = async (req, res) => {
         therapists_heading,
         hero_image_url,
         benefits: validateJsonArray(benefits, 'benefits'),
+        benefits_title,
         types: validateJsonArray(types, 'types'),
+        types_title,
         faqs: validateJsonArray(faqs, 'faqs'),
         testimonials: validateJsonArray(testimonials, 'testimonials'),
         info_cards: validateJsonArray(info_cards, 'info_cards'),
@@ -249,7 +253,9 @@ const updateCounsellingService = async (req, res) => {
       therapists_heading,
       hero_image_url,
       benefits,
+      benefits_title,
       types,
+      types_title,
       faqs,
       testimonials,
       info_cards,
@@ -304,7 +310,9 @@ const updateCounsellingService = async (req, res) => {
     if (therapists_heading !== undefined) updateData.therapists_heading = therapists_heading;
     if (hero_image_url !== undefined) updateData.hero_image_url = hero_image_url;
     if (benefits !== undefined) updateData.benefits = benefits;
+    if (benefits_title !== undefined) updateData.benefits_title = benefits_title;
     if (types !== undefined) updateData.types = types;
+    if (types_title !== undefined) updateData.types_title = types_title;
     if (faqs !== undefined) updateData.faqs = faqs;
     if (testimonials !== undefined) updateData.testimonials = testimonials;
     if (info_cards !== undefined) updateData.info_cards = info_cards;
