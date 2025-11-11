@@ -72,7 +72,7 @@ const getAllBlogs = async (req, res) => {
     // Transform blog data
     const formattedBlogs = blogs.map(blog => ({
       ...blog,
-      featured_image_url: blog.featured_image_url || '/images/blog-default.jpg',
+      featured_image_url: blog.featured_image_url || '/mainlogo.webp',
       tags: blog.tags || [],
       read_time_minutes: blog.read_time_minutes || 5
     }));
@@ -119,7 +119,7 @@ const getBlogBySlug = async (req, res) => {
 
     res.json(successResponse('Blog retrieved successfully', {
       ...blog,
-      featured_image_url: blog.featured_image_url || '/images/blog-default.jpg',
+      featured_image_url: blog.featured_image_url || '/mainlogo.webp',
       tags: blog.tags || []
     }));
   } catch (error) {
@@ -169,14 +169,7 @@ const createBlog = async (req, res) => {
       author_name,
       status = 'draft',
       tags = [],
-      categories = [],
-      read_time_minutes,
-      // SEO fields
-      seo_title,
-      seo_description,
-      focus_keyword,
-      meta_keywords = [],
-      canonical_url
+      read_time_minutes: incomingReadTime
     } = req.body;
 
     if (!title || (!content && !structured_content)) {
@@ -207,6 +200,8 @@ const createBlog = async (req, res) => {
 
     const published_at = status === 'published' ? new Date().toISOString() : null;
 
+    let computedReadTime = incomingReadTime;
+
     // Process structured content if provided
     let processedStructuredContent = null;
     if (structured_content && Array.isArray(structured_content)) {
@@ -219,8 +214,8 @@ const createBlog = async (req, res) => {
       processedStructuredContent = processContent(structured_content);
       
       // Calculate reading time if not provided
-      if (!read_time_minutes) {
-        read_time_minutes = calculateReadingTime(processedStructuredContent);
+      if (!computedReadTime) {
+        computedReadTime = calculateReadingTime(processedStructuredContent);
       }
     }
 
@@ -245,15 +240,8 @@ const createBlog = async (req, res) => {
         status,
         published_at,
         tags: Array.isArray(tags) ? tags : [],
-        categories: Array.isArray(categories) ? categories : [],
-        read_time_minutes: read_time_minutes || 5,
-        view_count: 0,
-        // SEO fields
-        seo_title: seo_title || title,
-        seo_description: seo_description || excerpt,
-        focus_keyword: focus_keyword || '',
-        meta_keywords: Array.isArray(meta_keywords) ? meta_keywords : [],
-        canonical_url: canonical_url || null
+        read_time_minutes: computedReadTime || 5,
+        view_count: 0
       }])
       .select('*')
       .single();
@@ -263,14 +251,8 @@ const createBlog = async (req, res) => {
     res.status(201).json(successResponse('Blog created successfully', {
       ...blog,
       tags: blog.tags || [],
-      categories: blog.categories || [],
       structured_content: blog.structured_content || [],
-      content_images: blog.content_images || [],
-      seo_title: blog.seo_title || blog.title,
-      seo_description: blog.seo_description || blog.excerpt,
-      focus_keyword: blog.focus_keyword || '',
-      meta_keywords: blog.meta_keywords || [],
-      canonical_url: blog.canonical_url || null
+      content_images: blog.content_images || []
     }));
   } catch (error) {
     console.error('Error creating blog:', error);
