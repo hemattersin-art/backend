@@ -632,8 +632,9 @@ const login = async (req, res) => {
             );
           }
         } else {
+          // User not found - suggest signup
           return res.status(401).json(
-            errorResponse('Invalid email or password')
+            errorResponse('User not found. New to Little Care? Sign up first')
           );
         }
       }
@@ -641,7 +642,7 @@ const login = async (req, res) => {
 
     if (!user) {
       return res.status(401).json(
-        errorResponse('Invalid email or password')
+        errorResponse('User not found. New to Little Care? Sign up first')
       );
     }
 
