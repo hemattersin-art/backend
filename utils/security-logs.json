@@ -526,5 +526,2185 @@
     "timestamp": "2025-10-24T14:28:59.580Z",
     "url": "/api/security/test",
     "id": 1761316139580.378
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.949Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238949.236
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.952Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238952.8945
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.952Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238952.8037
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.953Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238953.2156
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.954Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238954.2153
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.955Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238955.8662
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.956Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238956.7952
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.958Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238958.1758
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.959Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238959.4607
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.961Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238961.847
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.962Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238962.7996
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.963Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238963.7185
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.964Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238964.7593
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.966Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238966.4424
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.967Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238967.4688
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.969Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238969.0696
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.970Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238970.2559
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.972Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238972.3188
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.973Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238973.7874
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.975Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238975.3174
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.976Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238976.7754
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.977Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238977.6694
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.979Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238979.1401
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.980Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238980.4775
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.982Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238982.9888
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.983Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238983.5613
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.984Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238984.0547
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.985Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238985.1367
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.986Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238986.7297
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.988Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238988.4478
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.989Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238989.5496
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.991Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238991.6077
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.993Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238993.1738
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.995Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238995.746
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.996Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238996.0615
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.997Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238997.8054
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:58.999Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058238999.4438
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.000Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239000.8506
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.001Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239001.507
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.003Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239003.122
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.004Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239004.6912
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.005Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239005.6392
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.006Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239006.793
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.008Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239008.5225
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.009Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239009.0586
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.010Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239010.0674
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.012Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239012.0361
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.013Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239013.882
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.014Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239014.8135
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.016Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239016.4673
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.017Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239017.9026
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.019Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239019.4053
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.020Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239020.6335
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.021Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239021.1455
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.022Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239022.91
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.024Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239024.3882
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.025Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239025.4116
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.026Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239026.7146
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.027Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239027.29
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.028Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239028.1953
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.029Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239029.6948
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.030Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239030.513
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.032Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239032.6133
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.033Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239033.4648
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.034Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239034.7795
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.036Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239036.176
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.037Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239037.569
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.038Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239038.0828
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.039Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239039.756
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.041Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239041.9277
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.042Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239042.3416
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.044Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239044.6428
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.045Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239045.5298
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.048Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239048.6707
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.050Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239050.8123
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.052Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239052.829
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.053Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239053.5107
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.054Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239054.6912
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.055Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239055.0796
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.057Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239057.7922
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.058Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239058.5486
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.060Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239060.904
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.061Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239061.574
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.063Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239063.5796
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.065Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239065.3152
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.067Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239067.73
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.068Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239068.4468
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.070Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239070.3972
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.072Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239072.5247
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.074Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239074.5981
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.076Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239076.9688
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.078Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239078.8174
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.080Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239080.1416
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.082Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239082.001
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.085Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239085.2898
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.087Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239087.6875
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.089Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239089.007
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.091Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239091.5378
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.093Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239093.2488
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.094Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239094.581
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.096Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239096.616
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.097Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239097.0505
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.099Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239099.1658
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.101Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239101.4756
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.103Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239103.308
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.104Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239104.9749
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.105Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239105.4038
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.107Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239107.863
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.109Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239109.9092
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.112Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239112.5269
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.113Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239113.923
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.115Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239115.1406
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.116Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239116.932
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.118Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239118.1907
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.120Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239120.572
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.122Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239122.509
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.123Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239123.1787
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.125Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239125.3064
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.128Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239128.0188
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.129Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239129.1785
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.131Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239131.9514
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.132Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239132.4893
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.134Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239134.9653
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.137Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239137.687
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.138Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239138.0654
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.139Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239139.2815
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.141Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239141.0972
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.143Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239143.6797
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.144Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058239144.3948
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.146Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239146.7083
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:23:59.148Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058239148.3962
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.098Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493098.878
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.100Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493100.7817
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.102Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493102.3665
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.103Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493103.9648
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.104Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493104.872
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.105Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493105.8193
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.106Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493106.4429
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.108Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493108.7004
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.109Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493109.192
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.110Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493110.2122
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.112Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493112.4917
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.113Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493113.5093
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.115Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493115.1763
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.116Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493116.9822
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.118Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493118.1936
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.120Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493120.3625
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.122Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493122.777
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.124Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493124.1316
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.126Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493126.8433
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.128Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493128.4424
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.133Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493133.2954
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.135Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493135.4429
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.137Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493137.4043
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.138Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493138.6184
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.140Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493140.1558
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.141Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493141.8423
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.143Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493143.8162
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.144Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493144.3547
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.146Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493146.8645
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.147Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493147.028
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.149Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493149.311
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.150Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493150.8396
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.152Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493152.4597
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.153Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493153.9492
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.155Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493155.4102
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.156Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493156.231
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.158Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493158.245
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.159Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493159.1128
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.161Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493161.1663
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.162Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493162.4248
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.165Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493165.009
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.168Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493168.0142
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.170Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493170.006
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.173Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493173.123
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.175Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493175.1777
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.178Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493178.9712
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.179Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493179.815
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.182Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493182.154
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.185Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493185.9016
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.187Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493187.6558
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.189Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493189.4248
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.190Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493190.5015
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.194Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493194.1182
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.198Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493198.406
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.200Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493200.4429
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.202Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493202.6033
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.205Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493206.5686
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.207Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493207.2822
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.211Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493211.9385
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.213Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493213.068
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.214Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493214.6387
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.216Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493216.279
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.218Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493218.2385
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.221Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493221.7793
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.223Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493223.15
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.225Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493225.8933
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.227Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493227.2844
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.229Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493229.731
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.232Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493232.6853
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.234Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493234.7793
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.236Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493236.5596
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.239Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493239.4546
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.242Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493242.9072
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.243Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493243.4639
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.246Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493246.8691
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.249Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493249.7551
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.251Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493251.3389
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.255Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493255.553
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.258Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493258.9473
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.260Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493260.9392
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.262Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493262.3508
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.265Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493265.2983
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.267Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493267.6074
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.270Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493270.0464
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.273Z",
+    "url": "/api/clients/profile",
+    "method": "GET",
+    "id": 1763058493273.2366
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.275Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493275.2563
+  },
+  {
+    "type": "BLOCKED_REQUEST",
+    "ip": "::1",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "reason": "RATE_LIMIT_EXCEEDED",
+    "timestamp": "2025-11-13T18:28:13.278Z",
+    "url": "/api/auth/profile",
+    "method": "GET",
+    "id": 1763058493278.332
   }
 ]
