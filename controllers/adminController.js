@@ -66,6 +66,39 @@ const getAllUsers = async (req, res) => {
         );
       }
 
+      // Sort by display_order first (ascending, nulls last), then by created_at (descending)
+      if (psychologists && psychologists.length > 0) {
+        psychologists.sort((a, b) => {
+          // Handle null/undefined display_order values
+          const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
+          const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
+          
+          // If only one has display_order, the one with display_order comes first
+          if (aOrder !== null && bOrder === null) {
+            return -1; // a comes before b
+          }
+          if (aOrder === null && bOrder !== null) {
+            return 1; // b comes before a
+          }
+          
+          // If both have display_order, sort by display_order ascending
+          if (aOrder !== null && bOrder !== null) {
+            if (aOrder !== bOrder) {
+              return aOrder - bOrder;
+            }
+            // If display_order is equal, sort by created_at descending
+            const dateA = new Date(a.created_at);
+            const dateB = new Date(b.created_at);
+            return dateB - dateA;
+          }
+          
+          // If both are null (no display_order), sort by created_at descending
+          const dateA = new Date(a.created_at);
+          const dateB = new Date(b.created_at);
+          return dateB - dateA;
+        });
+      }
+
       console.log('Successfully fetched psychologists:', psychologists?.length || 0);
       if (psychologists && psychologists.length > 0) {
         console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
@@ -92,7 +125,8 @@ const getAllUsers = async (req, res) => {
         area_of_expertise: psych.area_of_expertise || [],
         personality_traits: psych.personality_traits || [], // NEW
         availability: [], // Will be populated below
-        cover_image_url: psych.cover_image_url || null
+        cover_image_url: psych.cover_image_url || null,
+        display_order: psych.display_order || null // Display order for sorting
       }));
 
       // Fetch availability data for all psychologists
@@ -315,6 +349,39 @@ const getAllPsychologists = async (req, res) => {
       );
     }
 
+    // Sort by display_order first (ascending, nulls last), then by created_at (descending)
+    if (psychologists && psychologists.length > 0) {
+      psychologists.sort((a, b) => {
+        // Handle null/undefined display_order values
+        const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
+        const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
+        
+        // If only one has display_order, the one with display_order comes first
+        if (aOrder !== null && bOrder === null) {
+          return -1; // a comes before b
+        }
+        if (aOrder === null && bOrder !== null) {
+          return 1; // b comes before a
+        }
+        
+        // If both have display_order, sort by display_order ascending
+        if (aOrder !== null && bOrder !== null) {
+          if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+          }
+          // If display_order is equal, sort by created_at descending
+          const dateA = new Date(a.created_at);
+          const dateB = new Date(b.created_at);
+          return dateB - dateA;
+        }
+        
+        // If both are null (no display_order), sort by created_at descending
+        const dateA = new Date(a.created_at);
+        const dateB = new Date(b.created_at);
+        return dateB - dateA;
+      });
+    }
+
     console.log('Successfully fetched psychologists:', psychologists?.length || 0);
     if (psychologists && psychologists.length > 0) {
       console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
@@ -341,7 +408,8 @@ const getAllPsychologists = async (req, res) => {
       area_of_expertise: psych.area_of_expertise || [],
       personality_traits: psych.personality_traits || [], // NEW
       availability: [], // Will be populated below
-      cover_image_url: psych.cover_image_url || null
+      cover_image_url: psych.cover_image_url || null,
+      display_order: psych.display_order || null // Display order for sorting
     }));
 
     // Extract individual price from dedicated field or description field
@@ -875,7 +943,8 @@ const createPsychologist = async (req, res) => {
       packages, // New field for dynamic packages
       price, // Individual session price
       cover_image_url, // Doctor's profile image
-      personality_traits // NEW: array of strings like ['Happy','Energetic']
+      personality_traits, // NEW: array of strings like ['Happy','Energetic']
+      display_order // Display order for sorting
     } = req.body;
 
     // Keep email as-is (don't normalize dots away)
@@ -916,7 +985,8 @@ const createPsychologist = async (req, res) => {
         description,
         experience_years: experience_years || 0,
         individual_session_price: price ? parseInt(price) : null,
-        cover_image_url: cover_image_url || null
+        cover_image_url: cover_image_url || null,
+        display_order: display_order ? parseInt(display_order) : null
       }])
       .select('*')
       .single();
@@ -1068,6 +1138,11 @@ const updatePsychologist = async (req, res) => {
     // Remove fields that are not in the psychologists table
     // Capture password separately so we can update the linked user record
     const { price, availability, packages, password, ...psychologistUpdateData } = updateData;
+    
+    // Convert display_order to integer if provided
+    if (psychologistUpdateData.display_order !== undefined) {
+      psychologistUpdateData.display_order = psychologistUpdateData.display_order ? parseInt(psychologistUpdateData.display_order) : null;
+    }
 
     // Update psychologist profile
     const { data: updatedPsychologist, error: updateError } = await supabase

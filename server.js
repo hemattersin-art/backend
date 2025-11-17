@@ -442,6 +442,7 @@ app.get('/api/public/psychologists', async (req, res) => {
         phone,
         cover_image_url,
         individual_session_price,
+        display_order,
         created_at
       `)
       .order('created_at', { ascending: false });
@@ -449,6 +450,53 @@ app.get('/api/public/psychologists', async (req, res) => {
     if (psychologistsError) {
       console.error('Error fetching psychologists:', psychologistsError);
       throw new Error('Failed to fetch psychologists');
+    }
+
+    // Sort by display_order first (ascending, nulls last), then by created_at (descending)
+    if (psychologists && psychologists.length > 0) {
+      // Debug: Log display_order values before sorting
+      console.log('📊 Display orders before sorting:', psychologists.map(p => ({
+        name: `${p.first_name} ${p.last_name}`,
+        display_order: p.display_order,
+        created_at: p.created_at
+      })));
+      
+      psychologists.sort((a, b) => {
+        // Handle null/undefined display_order values
+        const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
+        const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
+        
+        // If only one has display_order, the one with display_order comes first
+        if (aOrder !== null && bOrder === null) {
+          return -1; // a comes before b
+        }
+        if (aOrder === null && bOrder !== null) {
+          return 1; // b comes before a
+        }
+        
+        // If both have display_order, sort by display_order ascending
+        if (aOrder !== null && bOrder !== null) {
+          if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+          }
+          // If display_order is equal, sort by created_at descending
+          const dateA = new Date(a.created_at);
+          const dateB = new Date(b.created_at);
+          return dateB - dateA;
+        }
+        
+        // If both are null (no display_order), sort by created_at descending
+        const dateA = new Date(a.created_at);
+        const dateB = new Date(b.created_at);
+        return dateB - dateA;
+      });
+      
+      // Debug: Log display_order values after sorting
+      console.log('📊 Display orders after sorting:', psychologists.map(p => ({
+        name: `${p.first_name} ${p.last_name}`,
+        display_order: p.display_order,
+        created_at: p.created_at
+      })));
     }
 
     console.log('Successfully fetched psychologists:', psychologists?.length || 0);
