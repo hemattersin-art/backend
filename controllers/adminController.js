@@ -923,6 +923,8 @@ const searchUsers = async (req, res) => {
 };
 
 // Create psychologist (admin only)
+const defaultAvailabilityService = require('../utils/defaultAvailabilityService');
+
 const createPsychologist = async (req, res) => {
   try {
     console.log('=== createPsychologist function called ===');
@@ -1046,7 +1048,21 @@ const createPsychologist = async (req, res) => {
       console.log('📦 No packages specified - psychologist will have no packages initially');
     }
 
-    // Handle availability if provided
+    // Set default availability (8 AM to 10 PM for 3 weeks)
+    // This will only add dates that don't already exist
+    try {
+      const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologist.id);
+      if (defaultAvailResult.success) {
+        console.log(`✅ Default availability set for psychologist ${psychologist.id}: ${defaultAvailResult.message}`);
+      } else {
+        console.warn(`⚠️ Failed to set default availability: ${defaultAvailResult.message}`);
+      }
+    } catch (defaultAvailError) {
+      console.error('Error setting default availability:', defaultAvailError);
+      // Continue even if default availability fails
+    }
+
+    // Handle custom availability if provided (allows doctors to remove/block slots)
     if (availability && availability.length > 0) {
       try {
         const availabilityRecords = [];
@@ -1062,6 +1078,7 @@ const createPsychologist = async (req, res) => {
               const day = String(date.getDate()).padStart(2, '0');
               const dateString = `${year}-${month}-${day}`;
               
+              // Update existing availability or create new one
               availabilityRecords.push({
                 psychologist_id: psychologist.id,
                 date: dateString, // Use local date formatting
@@ -1072,18 +1089,35 @@ const createPsychologist = async (req, res) => {
         });
 
         if (availabilityRecords.length > 0) {
-          const { error: availabilityError } = await supabase
+          // Use upsert to update existing or create new
+          for (const record of availabilityRecords) {
+            const { data: existing } = await supabase
             .from('availability')
-            .insert(availabilityRecords);
+              .select('id')
+              .eq('psychologist_id', record.psychologist_id)
+              .eq('date', record.date)
+              .single();
 
-          if (availabilityError) {
-            console.error('Availability creation error:', availabilityError);
-            // Continue without availability if it fails
+            if (existing) {
+              // Update existing
+              await supabase
+                .from('availability')
+                .update({
+                  time_slots: record.time_slots,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', existing.id);
+            } else {
+              // Insert new
+              await supabase
+                .from('availability')
+                .insert(record);
+            }
           }
         }
       } catch (availabilityError) {
-        console.error('Exception while creating availability:', availabilityError);
-        // Continue without availability if it fails
+        console.error('Exception while creating custom availability:', availabilityError);
+        // Continue without custom availability if it fails
       }
     }
 
@@ -1429,7 +1463,19 @@ const updatePsychologist = async (req, res) => {
       }
     }
 
-    // Handle availability updates
+    // Ensure default availability exists (3 weeks from today)
+    // This will only add dates that don't already exist
+    try {
+      const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologistId);
+      if (defaultAvailResult.success) {
+        console.log(`✅ Default availability ensured for psychologist ${psychologistId}: ${defaultAvailResult.message}`);
+      }
+    } catch (defaultAvailError) {
+      console.error('Error ensuring default availability:', defaultAvailError);
+      // Continue even if default availability fails
+    }
+
+    // Handle availability updates (allows doctors to remove/block slots from defaults)
     if (availability && Array.isArray(availability) && availability.length > 0) {
       console.log('📅 Availability provided for update - count:', availability?.length || 0);
       
@@ -1518,31 +1564,53 @@ const updatePsychologist = async (req, res) => {
         }
 
         if (availabilityRecords.length > 0) {
-          // Delete existing availability first
-          const { error: deleteError } = await supabase
+          // Update or insert availability records (don't delete all - only update specific dates)
+          // This allows doctors to remove slots from defaults without losing other dates
+          for (const record of availabilityRecords) {
+            const { data: existing } = await supabase
             .from('availability')
-            .delete()
-            .eq('psychologist_id', psychologistId);
+              .select('id')
+              .eq('psychologist_id', record.psychologist_id)
+              .eq('date', record.date)
+              .single();
 
-          if (deleteError) {
-            console.error('Error deleting existing availability:', deleteError);
+            if (existing) {
+              // Update existing availability (doctor is removing slots from defaults)
+              const { error: updateError } = await supabase
+                .from('availability')
+                .update({
+                  time_slots: record.time_slots,
+                  is_available: true,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', existing.id);
+              
+              if (updateError) {
+                console.error(`Error updating availability for ${record.date}:`, updateError);
           } else {
-            console.log('✅ Existing availability deleted');
+                console.log(`✅ Updated availability for ${record.date}`);
           }
-
-          // Insert ONLY the new availability records (no preservation of old ones)
-          const { data: newAvailability, error: insertError } = await supabase
+            } else {
+              // Insert new availability (for dates not in defaults)
+              const { error: insertError } = await supabase
             .from('availability')
-            .insert(availabilityRecords)
-            .select('*');
+                .insert({
+                  ...record,
+                  is_available: true,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                });
 
           if (insertError) {
-            console.error('Error inserting new availability:', insertError);
+                console.error(`Error inserting availability for ${record.date}:`, insertError);
           } else {
-            console.log(`✅ ${newAvailability.length} availability records created successfully`);
+                console.log(`✅ Created availability for ${record.date}`);
           }
+            }
+          }
+          console.log(`✅ Updated ${availabilityRecords.length} availability records`);
         } else {
-          console.log('⚠️ No valid availability records to insert');
+          console.log('⚠️ No valid availability records to update');
         }
       } catch (error) {
         console.error('Error handling availability updates:', error);
@@ -3653,6 +3721,36 @@ const getRescheduleRequests = async (req, res) => {
   }
 };
 
+// Daily task to add next day availability (called at 12 AM)
+const addNextDayAvailability = async (req, res) => {
+  try {
+    const result = await defaultAvailabilityService.addNextDayAvailability();
+    if (result.success) {
+      res.json(successResponse(result, 'Next day availability added successfully'));
+    } else {
+      res.status(500).json(errorResponse(result.message || 'Failed to add next day availability'));
+    }
+  } catch (error) {
+    console.error('Error in addNextDayAvailability endpoint:', error);
+    res.status(500).json(errorResponse('Internal server error while adding next day availability'));
+  }
+};
+
+// Update all existing psychologists with default availability
+const updateAllPsychologistsAvailability = async (req, res) => {
+  try {
+    const result = await defaultAvailabilityService.updateAllPsychologistsAvailability();
+    if (result.success) {
+      res.json(successResponse(result, `Updated ${result.updated} psychologists with default availability`));
+    } else {
+      res.status(500).json(errorResponse(result.message || 'Failed to update psychologists availability'));
+    }
+  } catch (error) {
+    console.error('Error in updateAllPsychologistsAvailability endpoint:', error);
+    res.status(500).json(errorResponse('Internal server error while updating psychologists availability'));
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -3674,6 +3772,8 @@ module.exports = {
   rescheduleSession,
   getPsychologistAvailabilityForReschedule,
   getPsychologistCalendarEvents,
+  addNextDayAvailability,
+  updateAllPsychologistsAvailability,
   handleRescheduleRequest,
   createManualBooking,
   approveAssessmentRescheduleRequest,

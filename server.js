@@ -31,6 +31,7 @@ const freeAssessmentTimeslotRoutes = require('./routes/freeAssessmentTimeslots')
 const emailVerificationRoutes = require('./routes/emailVerification');
 const calendarSyncService = require('./services/calendarSyncService');
 const sessionReminderService = require('./services/sessionReminderService');
+const dailyAvailabilityService = require('./services/dailyAvailabilityService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
@@ -1157,6 +1158,9 @@ app.listen(PORT, () => {
   
   // Start Session Reminder service (12-hour WhatsApp reminders)
   sessionReminderService.start();
+  
+  // Start Daily Availability service (adds next day at 12 AM)
+  dailyAvailabilityService.start();
 });
 
 module.exports = app;

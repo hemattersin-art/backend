@@ -38,6 +38,10 @@ router.post('/psychologists', adminController.createPsychologist);
 router.put('/psychologists/:psychologistId', adminController.updatePsychologist);
 router.delete('/psychologists/:psychologistId', adminController.deletePsychologist);
 
+// Availability management
+router.post('/availability/add-next-day', adminController.addNextDayAvailability);
+router.post('/availability/update-all', adminController.updateAllPsychologistsAvailability);
+
 // Package management for psychologists
 router.post('/psychologists/:psychologistId/packages', adminController.createPsychologistPackages);
 
