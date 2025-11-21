@@ -421,11 +421,42 @@ app.post('/api/test/create-psychologist', async (req, res) => {
 });
 
 // Public endpoint to get all psychologists (no authentication required)
+const formatPublicPsychologist = (psych) => {
+  if (!psych) return null;
+
+  let extractedPrice = psych.individual_session_price;
+  if (!extractedPrice) {
+    const priceMatch = psych.description?.match(/Individual Session Price: [₹\$](\d+(?:\.\d+)?)/);
+    extractedPrice = priceMatch ? parseInt(priceMatch[1]) : null;
+  }
+
+  return {
+    id: psych.id,
+    name: `${psych.first_name} ${psych.last_name}`.trim(),
+    first_name: psych.first_name,
+    last_name: psych.last_name,
+    email: psych.email,
+    phone: psych.phone || 'N/A',
+    area_of_expertise: psych.area_of_expertise || [],
+    personality_traits: psych.personality_traits || [],
+    experience_years: psych.experience_years || 0,
+    designation: psych.designation || '',
+    languages_json: psych.languages_json || null,
+    ug_college: psych.ug_college || 'N/A',
+    pg_college: psych.pg_college || 'N/A',
+    phd_college: psych.phd_college || 'N/A',
+    description: psych.description || 'Professional psychologist dedicated to helping clients achieve mental wellness.',
+    profile_picture_url: null,
+    cover_image_url: psych.cover_image_url,
+    price: extractedPrice
+  };
+};
+
+// ... existing /api/public/psychologists route (use helper)
 app.get('/api/public/psychologists', async (req, res) => {
   try {
     const supabase = require('./config/supabase');
 
-    // Fetch psychologists directly from psychologists table
     const { data: psychologists, error: psychologistsError } = await supabase
       .from('psychologists')
       .select(`
@@ -444,7 +475,9 @@ app.get('/api/public/psychologists', async (req, res) => {
         cover_image_url,
         individual_session_price,
         display_order,
-        created_at
+        created_at,
+        designation,
+        languages_json
       `)
       .order('created_at', { ascending: false });
 
@@ -453,9 +486,7 @@ app.get('/api/public/psychologists', async (req, res) => {
       throw new Error('Failed to fetch psychologists');
     }
 
-    // Sort by display_order first (ascending, nulls last), then by created_at (descending)
     if (psychologists && psychologists.length > 0) {
-      // Debug: Log display_order values before sorting
       console.log('📊 Display orders before sorting:', psychologists.map(p => ({
         name: `${p.first_name} ${p.last_name}`,
         display_order: p.display_order,
@@ -463,36 +494,25 @@ app.get('/api/public/psychologists', async (req, res) => {
       })));
       
       psychologists.sort((a, b) => {
-        // Handle null/undefined display_order values
         const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
         const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
         
-        // If only one has display_order, the one with display_order comes first
-        if (aOrder !== null && bOrder === null) {
-          return -1; // a comes before b
-        }
-        if (aOrder === null && bOrder !== null) {
-          return 1; // b comes before a
-        }
+        if (aOrder !== null && bOrder === null) return -1;
+        if (aOrder === null && bOrder !== null) return 1;
         
-        // If both have display_order, sort by display_order ascending
         if (aOrder !== null && bOrder !== null) {
           if (aOrder !== bOrder) {
             return aOrder - bOrder;
           }
-          // If display_order is equal, sort by created_at descending
           const dateA = new Date(a.created_at);
           const dateB = new Date(b.created_at);
           return dateB - dateA;
         }
-        
-        // If both are null (no display_order), sort by created_at descending
         const dateA = new Date(a.created_at);
         const dateB = new Date(b.created_at);
         return dateB - dateA;
       });
       
-      // Debug: Log display_order values after sorting
       console.log('📊 Display orders after sorting:', psychologists.map(p => ({
         name: `${p.first_name} ${p.last_name}`,
         display_order: p.display_order,
@@ -502,47 +522,7 @@ app.get('/api/public/psychologists', async (req, res) => {
 
     console.log('Successfully fetched psychologists:', psychologists?.length || 0);
 
-    // Individual price is stored directly in the psychologist record
-    // No need to fetch from packages table since it doesn't exist
-
-    // Format the response
-
-    // Format the response
-    const formattedPsychologists = psychologists.map(psych => {
-      // Use dedicated individual_session_price field, fallback to description extraction
-      let extractedPrice = psych.individual_session_price;
-      
-      // Fallback: Try to extract price from description if individual_session_price is null
-      if (!extractedPrice) {
-        const priceMatch = psych.description?.match(/Individual Session Price: [₹\$](\d+(?:\.\d+)?)/);
-        extractedPrice = priceMatch ? parseInt(priceMatch[1]) : null;
-      }
-      
-      console.log(`🔍 Price extraction for ${psych.first_name}:`, {
-        individual_session_price: psych.individual_session_price,
-        description_length: psych.description?.length || 0,
-        extractedPrice: extractedPrice
-      });
-      
-      return {
-        id: psych.id,
-        name: `${psych.first_name} ${psych.last_name}`.trim(),
-        first_name: psych.first_name,
-        last_name: psych.last_name,
-        email: psych.email,
-        phone: psych.phone || 'N/A',
-        area_of_expertise: psych.area_of_expertise || [],
-        personality_traits: psych.personality_traits || [],
-        experience_years: psych.experience_years || 0,
-        ug_college: psych.ug_college || 'N/A',
-        pg_college: psych.pg_college || 'N/A',
-        phd_college: psych.phd_college || 'N/A',
-        description: psych.description || 'Professional psychologist dedicated to helping clients achieve mental wellness.',
-        profile_picture_url: null,
-        cover_image_url: psych.cover_image_url,
-        price: extractedPrice
-      };
-    });
+    const formattedPsychologists = psychologists.map(formatPublicPsychologist);
 
     res.json({
       success: true,
@@ -555,6 +535,46 @@ app.get('/api/public/psychologists', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch psychologists',
+      message: error.message
+    });
+  }
+});
+
+app.get('/api/public/psychologists/:psychologistId/details', async (req, res) => {
+  try {
+    const supabase = require('./config/supabase');
+    const { psychologistId } = req.params;
+
+    const { data: psychologist, error } = await supabase
+      .from('psychologists')
+      .select(`
+        *,
+        individual_session_price
+      `)
+      .eq('id', psychologistId)
+      .single();
+
+    if (error || !psychologist) {
+      console.error('Error fetching psychologist details:', error);
+      return res.status(404).json({
+        success: false,
+        error: 'Psychologist not found'
+      });
+    }
+
+    const formattedPsychologist = formatPublicPsychologist(psychologist);
+
+    res.json({
+      success: true,
+      data: {
+        psychologist: formattedPsychologist
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching psychologist details:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch psychologist details',
       message: error.message
     });
   }
