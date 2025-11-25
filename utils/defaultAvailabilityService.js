@@ -1,21 +1,18 @@
 const supabase = require('../config/supabase');
 
 /**
- * Generate default time slots from 8 AM to 10 PM (1 hour each)
+ * Generate default time slots: 10 AM to 1 PM and 2 PM to 5 PM (IST)
  * Returns array of time strings in 12-hour format
  */
 const generateDefaultTimeSlots = () => {
-  const slots = [];
-  for (let hour = 8; hour <= 22; hour++) {
-    if (hour === 12) {
-      slots.push('12:00 PM');
-    } else if (hour < 12) {
-      slots.push(`${hour}:00 AM`);
-    } else {
-      slots.push(`${hour - 12}:00 PM`);
-    }
-  }
-  return slots;
+  // Morning slots: 10 AM to 1 PM
+  const morningSlots = ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM'];
+  
+  // Afternoon slots: 2 PM to 5 PM
+  const afternoonSlots = ['2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM'];
+  
+  // Combine both time ranges
+  return [...morningSlots, ...afternoonSlots];
 };
 
 /**

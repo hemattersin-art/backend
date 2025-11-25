@@ -8,7 +8,7 @@ const defaultAvailabilityService = require('../utils/defaultAvailabilityService'
 
 async function main() {
   console.log('🚀 Starting to update all psychologists with default availability...');
-  console.log('📅 This will add availability from today to 3 weeks ahead (8 AM - 10 PM daily)');
+  console.log('📅 This will add availability from today to 3 weeks ahead (10 AM - 1 PM and 2 PM - 5 PM daily)');
   console.log('');
   
   try {
@@ -24,8 +24,8 @@ async function main() {
       console.log('');
       console.log('📝 Each psychologist now has:');
       console.log('   - Availability from today to 3 weeks ahead');
-      console.log('   - Time slots: 8:00 AM to 10:00 PM (1 hour intervals)');
-      console.log('   - Total: 15 time slots per day');
+      console.log('   - Time slots: 10:00 AM to 1:00 PM and 2:00 PM to 5:00 PM (IST)');
+      console.log('   - Total: 8 time slots per day');
       console.log('');
       process.exit(0);
     } else {

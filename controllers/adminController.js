@@ -1050,7 +1050,7 @@ const createPsychologist = async (req, res) => {
       console.log('📦 No packages specified - psychologist will have no packages initially');
     }
 
-    // Set default availability (8 AM to 10 PM for 3 weeks)
+    // Set default availability (10 AM to 1 PM and 2 PM to 5 PM for 3 weeks)
     // This will only add dates that don't already exist
     try {
       const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologist.id);
@@ -1637,8 +1637,17 @@ const updatePsychologist = async (req, res) => {
       }
     }
 
+    // Invalidate frontend cache by updating cache version timestamp
+    // This will force frontend to refresh cached psychologist data
+    const cacheInvalidationTimestamp = Date.now();
+    console.log('🔄 Cache invalidation triggered for psychologist update:', cacheInvalidationTimestamp);
+
     res.json(
-      successResponse(updatedPsychologist, 'Psychologist updated successfully')
+      successResponse({
+        ...updatedPsychologist,
+        cache_invalidated: true,
+        cache_timestamp: cacheInvalidationTimestamp
+      }, 'Psychologist updated successfully')
     );
 
   } catch (error) {
@@ -1691,8 +1700,16 @@ const deletePsychologist = async (req, res) => {
       );
     }
 
+    // Invalidate frontend cache when psychologist is deleted
+    const cacheInvalidationTimestamp = Date.now();
+    console.log('🔄 Cache invalidation triggered for psychologist deletion:', cacheInvalidationTimestamp);
+
     res.json(
-      successResponse(null, 'Psychologist deleted successfully')
+      successResponse({
+        deleted: true,
+        cache_invalidated: true,
+        cache_timestamp: cacheInvalidationTimestamp
+      }, 'Psychologist deleted successfully')
     );
 
   } catch (error) {

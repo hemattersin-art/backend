@@ -430,6 +430,38 @@ const formatPublicPsychologist = (psych) => {
     extractedPrice = priceMatch ? parseInt(priceMatch[1]) : null;
   }
 
+  // Default languages for all psychologists
+  const defaultLanguages = ['English', 'Malayalam'];
+  
+  // Parse existing languages_json if it exists
+  let existingLanguages = [];
+  if (psych.languages_json) {
+    try {
+      if (typeof psych.languages_json === 'string') {
+        existingLanguages = JSON.parse(psych.languages_json);
+      } else if (Array.isArray(psych.languages_json)) {
+        existingLanguages = psych.languages_json;
+      }
+    } catch (error) {
+      console.error('Error parsing languages_json:', error);
+    }
+  }
+  
+  
+  // Merge default languages with existing languages, removing duplicates
+  const allLanguages = [...defaultLanguages];
+  if (Array.isArray(existingLanguages)) {
+    existingLanguages.forEach(lang => {
+      const langStr = String(lang).trim();
+      if (langStr && !allLanguages.some(l => l.toLowerCase() === langStr.toLowerCase())) {
+        allLanguages.push(langStr);
+      }
+    });
+  }
+  
+  // Convert to JSON string for storage
+  const mergedLanguagesJson = JSON.stringify(allLanguages);
+
   return {
     id: psych.id,
     name: `${psych.first_name} ${psych.last_name}`.trim(),
@@ -441,7 +473,7 @@ const formatPublicPsychologist = (psych) => {
     personality_traits: psych.personality_traits || [],
     experience_years: psych.experience_years || 0,
     designation: psych.designation || '',
-    languages_json: psych.languages_json || null,
+    languages_json: mergedLanguagesJson,
     ug_college: psych.ug_college || 'N/A',
     pg_college: psych.pg_college || 'N/A',
     phd_college: psych.phd_college || 'N/A',
@@ -527,7 +559,8 @@ app.get('/api/public/psychologists', async (req, res) => {
     res.json({
       success: true,
       data: {
-        psychologists: formattedPsychologists
+        psychologists: formattedPsychologists,
+        cache_version: Date.now() // Include cache version for frontend cache invalidation
       }
     });
   } catch (error) {
@@ -536,6 +569,45 @@ app.get('/api/public/psychologists', async (req, res) => {
       success: false,
       error: 'Failed to fetch psychologists',
       message: error.message
+    });
+  }
+});
+
+// Public endpoint to get cache version (for cache invalidation)
+app.get('/api/public/psychologists/cache-version', async (req, res) => {
+  try {
+    // Get the most recent update timestamp from psychologists table
+    const supabase = require('./config/supabase');
+    const { data: latestPsychologist, error } = await supabase
+      .from('psychologists')
+      .select('updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+      console.error('Error fetching cache version:', error);
+    }
+
+    const cacheVersion = latestPsychologist?.updated_at 
+      ? new Date(latestPsychologist.updated_at).getTime()
+      : Date.now();
+
+    res.json({
+      success: true,
+      data: {
+        cache_version: cacheVersion,
+        timestamp: Date.now()
+      }
+    });
+  } catch (error) {
+    console.error('Error getting cache version:', error);
+    res.json({
+      success: true,
+      data: {
+        cache_version: Date.now(),
+        timestamp: Date.now()
+      }
     });
   }
 });

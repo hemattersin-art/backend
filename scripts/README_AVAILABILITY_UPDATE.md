@@ -28,9 +28,9 @@ node scripts/updateAllPsychologistsAvailability.js
 
 - Updates ALL existing psychologists in the database
 - Adds default availability from today to 3 weeks ahead
-- Time slots: 8:00 AM to 10:00 PM (1 hour intervals)
+- Time slots: 10:00 AM to 1:00 PM and 2:00 PM to 5:00 PM (IST)
 - Only adds dates that don't already exist (won't overwrite existing availability)
-- Each day gets 15 time slots (8 AM, 9 AM, 10 AM, ..., 10 PM)
+- Each day gets 8 time slots (10 AM, 11 AM, 12 PM, 1 PM, 2 PM, 3 PM, 4 PM, 5 PM)
 
 ## Daily Automatic Updates
 
