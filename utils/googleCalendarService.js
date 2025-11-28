@@ -168,12 +168,32 @@ class GoogleCalendarService {
         endDate
       );
 
-      // Filter out events created by our own system to avoid circular blocking
-      const externalEvents = busySlots.filter(slot => 
-        !slot.title.includes('LittleMinds') && 
-        !slot.title.includes('Session') &&
-        !slot.title.includes('Therapy')
-      );
+      // Filter logic:
+      // 1. Block ALL external events that have Google Meet links (regardless of title)
+      // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
+      // 3. Exclude public holidays
+      const externalEvents = busySlots.filter(slot => {
+        const title = slot.title.toLowerCase();
+        const hasGoogleMeet = slot.hangoutsLink || (slot.conferenceData && slot.conferenceData.entryPoints);
+        
+        // Exclude our system events
+        const isSystemEvent = 
+          title.includes('littleminds') || 
+          title.includes('little care') ||
+          title.includes('kuttikal');
+        
+        // Exclude public holidays (common patterns)
+        const isPublicHoliday = 
+          title.includes('holiday') ||
+          title.includes('public holiday') ||
+          title.includes('national holiday') ||
+          title.includes('festival') ||
+          title.includes('celebration') ||
+          title.includes('observance');
+        
+        // Include if has Google Meet link and is not a system event or public holiday
+        return hasGoogleMeet && !isSystemEvent && !isPublicHoliday;
+      });
 
       return {
         success: true,

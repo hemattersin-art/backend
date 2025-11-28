@@ -279,14 +279,33 @@ const getAvailability = async (req, res) => {
           calendarEndDate
         );
 
-        // Filter out events created by our own system
+        // Filter logic (matches calendarSyncService):
+        // 1. Block ALL external events that have Google Meet links (regardless of title)
+        // 2. Include manually blocked slots from psychologist dashboard
+        // 3. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
+        // 4. Exclude public holidays
         externalGoogleCalendarEvents = busySlots.filter(slot => {
           const title = (slot.title || '').toLowerCase();
-          const isOurSystem = title.includes('littleminds') || 
-                             title.includes('therapy session') ||
-                             title.includes('assessment session') ||
-                             title.includes('session with');
-          return !isOurSystem;
+          const hasGoogleMeet = slot.hangoutsLink || (slot.conferenceData && slot.conferenceData.entryPoints);
+          const isBlockedSlot = title.includes('🚫 blocked') || title.includes('blocked');
+          
+          // Exclude our system events
+          const isSystemEvent = 
+            title.includes('littleminds') || 
+            title.includes('little care') ||
+            title.includes('kuttikal');
+          
+          // Exclude public holidays (common patterns)
+          const isPublicHoliday = 
+            title.includes('holiday') ||
+            title.includes('public holiday') ||
+            title.includes('national holiday') ||
+            title.includes('festival') ||
+            title.includes('celebration') ||
+            title.includes('observance');
+          
+          // Include if has Google Meet link or is manually blocked, and is not a system event or public holiday
+          return (hasGoogleMeet || isBlockedSlot) && !isSystemEvent && !isPublicHoliday;
         });
 
         console.log(`📅 Found ${externalGoogleCalendarEvents.length} external Google Calendar events (including Google Meet sessions) for psychologist ${psychologist_id}`);
@@ -644,6 +663,44 @@ const syncGoogleCalendar = async (req, res) => {
       );
     }
 
+    // Helper function to normalize time format to HH:MM (24-hour)
+    const normalizeTimeTo24Hour = (timeStr) => {
+      if (!timeStr) return null;
+      
+      // If already in HH:MM format (24-hour), return as is
+      const hhmmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})$/);
+      if (hhmmMatch) {
+        return `${hhmmMatch[1].padStart(2, '0')}:${hhmmMatch[2]}`;
+      }
+      
+      // If in HH:MM-HH:MM format, extract first part
+      const rangeMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})-/);
+      if (rangeMatch) {
+        return `${rangeMatch[1].padStart(2, '0')}:${rangeMatch[2]}`;
+      }
+      
+      // If in 12-hour format (e.g., "2:30 PM" or "2:30PM")
+      const ampmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (ampmMatch) {
+        let hours = parseInt(ampmMatch[1], 10);
+        const minutes = ampmMatch[2];
+        const period = ampmMatch[3].toUpperCase();
+        
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes}`;
+      }
+      
+      // Try to extract HH:MM from any string
+      const extractMatch = String(timeStr).match(/(\d{1,2}):(\d{2})/);
+      if (extractMatch) {
+        return `${extractMatch[1].padStart(2, '0')}:${extractMatch[2]}`;
+      }
+      
+      return null;
+    };
+
     // Block conflicting time slots in availability
     const blockedSlots = [];
     const errors = [];
@@ -652,6 +709,12 @@ const syncGoogleCalendar = async (req, res) => {
       try {
         const eventDate = event.start.toISOString().split('T')[0];
         const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
+        const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
+        
+        if (!normalizedEventTime) {
+          console.warn(`⚠️ Could not normalize event time: ${eventTime} for event ${event.title}`);
+          continue;
+        }
         
         // Get current availability for this date
         const { data: availability } = await supabase
@@ -662,8 +725,11 @@ const syncGoogleCalendar = async (req, res) => {
           .single();
 
         if (availability) {
-          // Remove conflicting time slot
-          const updatedSlots = availability.time_slots.filter(slot => slot !== eventTime);
+          // Remove conflicting time slot - normalize both slot and eventTime for comparison
+          const updatedSlots = availability.time_slots.filter(slot => {
+            const normalizedSlot = normalizeTimeTo24Hour(slot);
+            return normalizedSlot !== normalizedEventTime;
+          });
           
           if (updatedSlots.length !== availability.time_slots.length) {
             await supabase
@@ -676,9 +742,11 @@ const syncGoogleCalendar = async (req, res) => {
 
             blockedSlots.push({
               date: eventDate,
-              time: eventTime,
+              time: normalizedEventTime,
               reason: event.title
             });
+            
+            console.log(`✅ Blocked time slot ${normalizedEventTime} on ${eventDate} due to external event: ${event.title}`);
           }
         }
       } catch (error) {

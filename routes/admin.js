@@ -69,6 +69,9 @@ router.delete('/assessment-sessions/:assessmentSessionId', assessmentBookingCont
 // Psychologist calendar events
 router.get('/psychologists/:psychologistId/calendar-events', adminController.getPsychologistCalendarEvents);
 
+// Check calendar sync status
+router.get('/psychologists/:psychologistId/calendar-sync-status', adminController.checkCalendarSyncStatus);
+
 // Manual trigger for session reminders (admin only, for testing)
 router.post('/trigger-session-reminders', async (req, res) => {
   try {

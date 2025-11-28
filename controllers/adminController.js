@@ -2948,6 +2948,183 @@ const getPsychologistCalendarEvents = async (req, res) => {
   }
 };
 
+// Check calendar sync status for a psychologist
+const checkCalendarSyncStatus = async (req, res) => {
+  try {
+    const { psychologistId } = req.params;
+    const { date } = req.query; // Optional: specific date to check, defaults to tomorrow
+
+    // Find psychologist
+    const { data: psychologist, error: psychError } = await supabase
+      .from('psychologists')
+      .select('id, first_name, last_name, email, google_calendar_credentials')
+      .eq('id', psychologistId)
+      .single();
+
+    if (psychError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    if (!psychologist.google_calendar_credentials) {
+      return res.json(
+        successResponse({
+          psychologist: {
+            id: psychologist.id,
+            name: `${psychologist.first_name} ${psychologist.last_name}`,
+            email: psychologist.email
+          },
+          googleCalendarConnected: false,
+          message: 'Google Calendar not connected'
+        }, 'Calendar sync check completed')
+      );
+    }
+
+    // Get target date (tomorrow by default, or specified date)
+    const targetDate = date ? new Date(date) : new Date();
+    if (!date) {
+      targetDate.setDate(targetDate.getDate() + 1);
+    }
+    targetDate.setHours(0, 0, 0, 0);
+    
+    const targetDateEnd = new Date(targetDate);
+    targetDateEnd.setHours(23, 59, 59, 999);
+
+    const targetDateStr = targetDate.toISOString().split('T')[0];
+
+    const googleCalendarService = require('../utils/googleCalendarService');
+
+    // 1. Get external events from Google Calendar
+    const syncResult = await googleCalendarService.syncCalendarEvents(
+      psychologist,
+      targetDate,
+      targetDateEnd
+    );
+
+    if (!syncResult.success) {
+      return res.status(500).json(
+        errorResponse(`Failed to sync calendar: ${syncResult.error}`)
+      );
+    }
+
+    // 2. Get availability for target date
+    const { data: availability, error: availError } = await supabase
+      .from('availability')
+      .select('id, date, time_slots, is_available, updated_at')
+      .eq('psychologist_id', psychologist.id)
+      .eq('date', targetDateStr)
+      .single();
+
+    // Helper function to normalize time format
+    const normalizeTimeTo24Hour = (timeStr) => {
+      if (!timeStr) return null;
+      const hhmmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})$/);
+      if (hhmmMatch) {
+        return `${hhmmMatch[1].padStart(2, '0')}:${hhmmMatch[2]}`;
+      }
+      const rangeMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})-/);
+      if (rangeMatch) {
+        return `${rangeMatch[1].padStart(2, '0')}:${rangeMatch[2]}`;
+      }
+      const ampmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (ampmMatch) {
+        let hours = parseInt(ampmMatch[1], 10);
+        const minutes = ampmMatch[2];
+        const period = ampmMatch[3].toUpperCase();
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+        return `${hours.toString().padStart(2, '0')}:${minutes}`;
+      }
+      const extractMatch = String(timeStr).match(/(\d{1,2}):(\d{2})/);
+      if (extractMatch) {
+        return `${extractMatch[1].padStart(2, '0')}:${extractMatch[2]}`;
+      }
+      return null;
+    };
+
+    // 3. Analyze external events
+    const externalEvents = syncResult.externalEvents.map(event => {
+      const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
+      const eventEndTime = event.end.toTimeString().split(' ')[0].substring(0, 5);
+      const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
+      const hasMeetLink = event.hangoutsLink || (event.conferenceData && event.conferenceData.entryPoints);
+      
+      let status = 'unknown';
+      let inAvailability = false;
+      
+      if (availability && availability.time_slots) {
+        inAvailability = availability.time_slots.some(slot => {
+          const normalizedSlot = normalizeTimeTo24Hour(slot);
+          return normalizedSlot === normalizedEventTime;
+        });
+        
+        if (inAvailability) {
+          status = 'not_blocked';
+        } else {
+          status = 'blocked';
+        }
+      } else {
+        status = 'no_availability_record';
+      }
+
+      return {
+        title: event.title,
+        start: event.start.toISOString(),
+        end: event.end.toISOString(),
+        time: eventTime,
+        endTime: eventEndTime,
+        normalizedTime: normalizedEventTime,
+        hasGoogleMeet: !!hasMeetLink,
+        meetLink: event.hangoutsLink || (event.conferenceData?.entryPoints?.[0]?.uri || null),
+        status: status,
+        inAvailability: inAvailability
+      };
+    });
+
+    // 4. Summary
+    const summary = {
+      totalExternalEvents: syncResult.externalEvents.length,
+      eventsWithGoogleMeet: externalEvents.filter(e => e.hasGoogleMeet).length,
+      blockedEvents: externalEvents.filter(e => e.status === 'blocked').length,
+      notBlockedEvents: externalEvents.filter(e => e.status === 'not_blocked').length,
+      noAvailabilityRecord: externalEvents.filter(e => e.status === 'no_availability_record').length
+    };
+
+    res.json(
+      successResponse({
+        psychologist: {
+          id: psychologist.id,
+          name: `${psychologist.first_name} ${psychologist.last_name}`,
+          email: psychologist.email
+        },
+        date: targetDateStr,
+        googleCalendarConnected: true,
+        availability: availability ? {
+          exists: true,
+          totalSlots: availability.time_slots?.length || 0,
+          timeSlots: availability.time_slots || [],
+          lastUpdated: availability.updated_at
+        } : {
+          exists: false,
+          error: availError?.message || 'No availability record found'
+        },
+        externalEvents: externalEvents,
+        summary: summary,
+        issues: summary.notBlockedEvents > 0 ? [
+          `${summary.notBlockedEvents} external event(s) are still in availability and should be blocked`
+        ] : []
+      }, 'Calendar sync status checked successfully')
+    );
+
+  } catch (error) {
+    console.error('Check calendar sync status error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while checking calendar sync status')
+    );
+  }
+};
+
 // Handle reschedule request approval/rejection
 const handleRescheduleRequest = async (req, res) => {
   try {
@@ -3776,6 +3953,7 @@ module.exports = {
   getUserDetails,
   updateUserRole,
   deactivateUser,
+  checkCalendarSyncStatus,
   getPlatformStats,
   searchUsers,
   createPsychologist,

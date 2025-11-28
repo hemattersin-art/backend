@@ -124,28 +124,97 @@ class CalendarSyncService {
       throw new Error(syncResult.error);
     }
 
+    // Helper function to normalize time format to HH:MM (24-hour)
+    const normalizeTimeTo24Hour = (timeStr) => {
+      if (!timeStr) return null;
+      
+      // If already in HH:MM format (24-hour), return as is
+      const hhmmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})$/);
+      if (hhmmMatch) {
+        return `${hhmmMatch[1].padStart(2, '0')}:${hhmmMatch[2]}`;
+      }
+      
+      // If in HH:MM-HH:MM format, extract first part
+      const rangeMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})-/);
+      if (rangeMatch) {
+        return `${rangeMatch[1].padStart(2, '0')}:${rangeMatch[2]}`;
+      }
+      
+      // If in 12-hour format (e.g., "2:30 PM" or "2:30PM")
+      const ampmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (ampmMatch) {
+        let hours = parseInt(ampmMatch[1], 10);
+        const minutes = ampmMatch[2];
+        const period = ampmMatch[3].toUpperCase();
+        
+        if (period === 'PM' && hours !== 12) hours += 12;
+        if (period === 'AM' && hours === 12) hours = 0;
+        
+        return `${hours.toString().padStart(2, '0')}:${minutes}`;
+      }
+      
+      // Try to extract HH:MM from any string
+      const extractMatch = String(timeStr).match(/(\d{1,2}):(\d{2})/);
+      if (extractMatch) {
+        return `${extractMatch[1].padStart(2, '0')}:${extractMatch[2]}`;
+      }
+      
+      return null;
+    };
+
     // Block conflicting time slots in availability
     const blockedSlots = [];
     const errors = [];
 
     for (const event of syncResult.externalEvents) {
       try {
-        const eventDate = event.start.toISOString().split('T')[0];
-        const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
+        // Extract date in local timezone to match availability dates (which are stored in local timezone)
+        // Use the date part of the local date, not UTC
+        const eventStartLocal = new Date(event.start);
+        const year = eventStartLocal.getFullYear();
+        const month = String(eventStartLocal.getMonth() + 1).padStart(2, '0');
+        const day = String(eventStartLocal.getDate()).padStart(2, '0');
+        const eventDate = `${year}-${month}-${day}`;
+        
+        const eventTime = eventStartLocal.toTimeString().split(' ')[0].substring(0, 5);
+        const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
+        
+        if (!normalizedEventTime) {
+          console.warn(`⚠️ Could not normalize event time: ${eventTime} for event ${event.title}`);
+          continue;
+        }
         
         // Get current availability for this date
-        const { data: availability } = await supabase
+        const { data: availability, error: availError } = await supabase
           .from('availability')
-          .select('id, time_slots')
+          .select('id, date, time_slots')
           .eq('psychologist_id', psychologist.id)
           .eq('date', eventDate)
           .single();
+        
+        // Debug: Log what we're checking
+        if (availability) {
+          console.log(`🔍 Checking event "${event.title}" at ${normalizedEventTime} on ${eventDate} against availability date ${availability.date} with slots: ${JSON.stringify(availability.time_slots)}`);
+        } else if (availError && availError.code !== 'PGRST116') {
+          console.warn(`⚠️ Error fetching availability for ${eventDate}:`, availError.message);
+        }
 
         if (availability) {
-          // Remove conflicting time slot
-          const updatedSlots = availability.time_slots.filter(slot => slot !== eventTime);
+          // Remove conflicting time slot - normalize both slot and eventTime for comparison
+          const updatedSlots = availability.time_slots.filter(slot => {
+            const normalizedSlot = normalizeTimeTo24Hour(slot);
+            const shouldKeep = normalizedSlot !== normalizedEventTime;
+            
+            // Debug logging for mismatches
+            if (!shouldKeep) {
+              console.log(`🔍 Found matching slot: "${slot}" (normalized: ${normalizedSlot}) matches event time ${normalizedEventTime} for "${event.title}"`);
+            }
+            
+            return shouldKeep;
+          });
           
           if (updatedSlots.length !== availability.time_slots.length) {
+            const removedCount = availability.time_slots.length - updatedSlots.length;
             await supabase
               .from('availability')
               .update({ 
@@ -156,10 +225,21 @@ class CalendarSyncService {
 
             blockedSlots.push({
               date: eventDate,
-              time: eventTime,
+              time: normalizedEventTime,
               reason: event.title
             });
+            
+            console.log(`✅ Blocked ${removedCount} time slot(s) (${normalizedEventTime}) on ${eventDate} due to external event: ${event.title}`);
+          } else {
+            // Debug: log why slot wasn't blocked
+            const slotTimes = availability.time_slots.map(s => {
+              const norm = normalizeTimeTo24Hour(s);
+              return `${s} (→${norm})`;
+            }).join(', ');
+            console.log(`⚠️  Event time ${normalizedEventTime} (${event.title}) did not match any slots: [${slotTimes}]`);
           }
+        } else {
+          console.log(`ℹ️  No availability record found for date ${eventDate}, skipping event ${event.title} at ${normalizedEventTime}`);
         }
       } catch (error) {
         console.error(`Error blocking slot for event ${event.title}:`, error);

@@ -274,35 +274,72 @@ class AvailabilityCalendarService {
 
       console.log(`🔒 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions in date range`);
 
-      // Check Google Calendar for external bookings if credentials exist
+      // Check Google Calendar for external bookings if credentials exist (REAL-TIME CHECK)
+      // This ensures external events are blocked even if added between 30-min sync intervals
       let googleCalendarEvents = [];
       if (psychologist.google_calendar_credentials) {
         try {
-          console.log(`📅 Checking Google Calendar for external bookings...`);
-          const busySlots = await googleCalendarService.getBusyTimeSlots(
+          console.log(`📅 Real-time Google Calendar check for external bookings (${startDate} to ${endDate})...`);
+          const calendarCheckStart = Date.now();
+          
+          // Use Promise.race with timeout to prevent slow Google Calendar API from blocking the response
+          const calendarCheckPromise = googleCalendarService.getBusyTimeSlots(
             psychologist.google_calendar_credentials,
             new Date(startDate),
             new Date(endDate)
           );
           
-          // Filter out events created by our own system to avoid circular blocking
-          // BUT INCLUDE blocked time slots created by psychologist dashboard
+          // Timeout after 3 seconds - if Google Calendar is slow, continue without it
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Google Calendar check timeout')), 3000)
+          );
+          
+          const busySlots = await Promise.race([calendarCheckPromise, timeoutPromise]);
+          const calendarCheckTime = Date.now() - calendarCheckStart;
+          console.log(`✅ Google Calendar check completed in ${calendarCheckTime}ms`);
+          
+          // Filter logic:
+          // 1. Block ALL external events that have Google Meet links (regardless of title)
+          // 2. Include manually blocked slots from psychologist dashboard
+          // 3. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
+          // 4. Exclude public holidays
           googleCalendarEvents = busySlots.filter(slot => {
             const title = slot.title.toLowerCase();
+            const hasGoogleMeet = slot.hangoutsLink || (slot.conferenceData && slot.conferenceData.entryPoints);
             const isBlockedSlot = title.includes('🚫 blocked') || title.includes('blocked');
-            const isSystemEvent = title.includes('littleminds') || 
-                                 title.includes('session') ||
-                                 title.includes('therapy') ||
-                                 title.includes('kuttikal');
             
-            // Include blocked slots, exclude system events
-            return isBlockedSlot || !isSystemEvent;
+            // Exclude our system events
+            const isSystemEvent = 
+              title.includes('littleminds') || 
+              title.includes('little care') ||
+              title.includes('kuttikal');
+            
+            // Exclude public holidays (common patterns)
+            const isPublicHoliday = 
+              title.includes('holiday') ||
+              title.includes('public holiday') ||
+              title.includes('national holiday') ||
+              title.includes('festival') ||
+              title.includes('celebration') ||
+              title.includes('observance');
+            
+            // Block ALL external events that have Google Meet links
+            // Also include manually blocked slots from psychologist dashboard
+            // Exclude system events and public holidays
+            return (hasGoogleMeet || isBlockedSlot) && !isSystemEvent && !isPublicHoliday;
           });
           
-          console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events`);
+          console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events to block`);
         } catch (calendarError) {
-          console.error('Error checking Google Calendar:', calendarError);
-          // Continue without Google Calendar data if it fails
+          // If Google Calendar check fails or times out, log but continue without blocking
+          // This ensures the page still loads quickly even if Google Calendar is slow/unavailable
+          if (calendarError.message === 'Google Calendar check timeout') {
+            console.warn('⚠️ Google Calendar check timed out (>3s), continuing without real-time blocking');
+          } else {
+            console.error('⚠️ Error checking Google Calendar (continuing without blocking):', calendarError.message);
+          }
+          // Continue without Google Calendar data if it fails - availability will still show
+          // The 30-minute background sync will eventually update the database
         }
       } else {
         console.log(`📅 No Google Calendar credentials found for psychologist ${psychologistId}`);

@@ -659,19 +659,33 @@ const getAvailability = async (req, res) => {
             calendarEndDate
           );
 
-          // Filter out events created by our own system to avoid circular blocking
-          // Block ALL external events, especially those with Google Meet links
+          // Filter logic (matches calendarSyncService):
+          // 1. Block ALL external events that have Google Meet links (regardless of title)
+          // 2. Include manually blocked slots from psychologist dashboard
+          // 3. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
+          // 4. Exclude public holidays
           const externalSlots = busySlots.filter(slot => {
             const title = (slot.title || '').toLowerCase();
-            // Exclude our own system events
-            const isOurSystem = title.includes('littleminds') || 
-                               title.includes('therapy session') ||
-                               title.includes('assessment session') ||
-                               title.includes('session with');
+            const hasGoogleMeet = slot.hangoutsLink || (slot.conferenceData && slot.conferenceData.entryPoints);
+            const isBlockedSlot = title.includes('🚫 blocked') || title.includes('blocked');
             
-            // Include all external events (especially Google Meet sessions)
-            // Google Meet events typically have 'hangoutsLink' or 'conferenceData' in the event
-            return !isOurSystem;
+            // Exclude our system events
+            const isSystemEvent = 
+              title.includes('littleminds') || 
+              title.includes('little care') ||
+              title.includes('kuttikal');
+            
+            // Exclude public holidays (common patterns)
+            const isPublicHoliday = 
+              title.includes('holiday') ||
+              title.includes('public holiday') ||
+              title.includes('national holiday') ||
+              title.includes('festival') ||
+              title.includes('celebration') ||
+              title.includes('observance');
+            
+            // Include if has Google Meet link or is manually blocked, and is not a system event or public holiday
+            return (hasGoogleMeet || isBlockedSlot) && !isSystemEvent && !isPublicHoliday;
           });
 
           console.log(`📅 Found ${busySlots.length} total Google Calendar events, ${externalSlots.length} external events (including Google Meet sessions) to block`);
