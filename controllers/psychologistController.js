@@ -660,14 +660,11 @@ const getAvailability = async (req, res) => {
           );
 
           // Filter logic (matches calendarSyncService):
-          // 1. Block ALL external events that have Google Meet links (regardless of title)
-          // 2. Include manually blocked slots from psychologist dashboard
-          // 3. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
-          // 4. Exclude public holidays
+          // 1. Block ALL external events (regardless of Google Meet link)
+          // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
+          // 3. Exclude public holidays
           const externalSlots = busySlots.filter(slot => {
             const title = (slot.title || '').toLowerCase();
-            const hasGoogleMeet = slot.hangoutsLink || (slot.conferenceData && slot.conferenceData.entryPoints);
-            const isBlockedSlot = title.includes('🚫 blocked') || title.includes('blocked');
             
             // Exclude our system events
             const isSystemEvent = 
@@ -684,8 +681,8 @@ const getAvailability = async (req, res) => {
               title.includes('celebration') ||
               title.includes('observance');
             
-            // Include if has Google Meet link or is manually blocked, and is not a system event or public holiday
-            return (hasGoogleMeet || isBlockedSlot) && !isSystemEvent && !isPublicHoliday;
+            // Block ALL events that are NOT system events and NOT public holidays
+            return !isSystemEvent && !isPublicHoliday;
           });
 
           console.log(`📅 Found ${busySlots.length} total Google Calendar events, ${externalSlots.length} external events (including Google Meet sessions) to block`);
