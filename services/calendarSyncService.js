@@ -5,17 +5,22 @@ const googleCalendarService = require('../utils/googleCalendarService');
 class CalendarSyncService {
   constructor() {
     this.isRunning = false;
+    // Track last sync time per psychologist to avoid unnecessary syncs
+    this.lastSyncTimes = new Map();
+    // Sync interval in minutes (configurable via env, default 10 minutes)
+    this.syncIntervalMinutes = parseInt(process.env.CALENDAR_SYNC_INTERVAL_MINUTES) || 10;
   }
 
   /**
    * Start the calendar sync service
-   * Runs every 30 minutes to sync Google Calendar events
+   * Runs at configurable intervals (default 10 minutes) to sync Google Calendar events
+   * Optimized to reduce server load by staggering syncs and skipping recently synced psychologists
    */
   start() {
-    console.log('🔄 Starting Google Calendar sync service...');
+    console.log(`🔄 Starting Google Calendar sync service (interval: ${this.syncIntervalMinutes} minutes)...`);
     
-    // Run every 30 minutes
-    cron.schedule('*/30 * * * *', async () => {
+    // Run at configurable interval (default 10 minutes - good balance between responsiveness and server load)
+    cron.schedule(`*/${this.syncIntervalMinutes} * * * *`, async () => {
       if (this.isRunning) {
         console.log('⏭️  Calendar sync already running, skipping...');
         return;
@@ -58,16 +63,43 @@ class CalendarSyncService {
 
       const syncResults = [];
       const errors = [];
+      const skipped = [];
 
-      // Sync each psychologist's calendar
-      for (const psychologist of psychologists) {
+      // Sync each psychologist's calendar with delays to avoid overwhelming the server
+      for (let i = 0; i < psychologists.length; i++) {
+        const psychologist = psychologists[i];
+        
+        // Skip if synced recently (within last 5 minutes) to reduce load
+        const lastSync = this.lastSyncTimes.get(psychologist.id);
+        const now = Date.now();
+        const fiveMinutesAgo = now - (5 * 60 * 1000);
+        
+        if (lastSync && lastSync > fiveMinutesAgo) {
+          const minutesSinceSync = Math.floor((now - lastSync) / (60 * 1000));
+          console.log(`⏭️  Skipping ${psychologist.first_name} ${psychologist.last_name} - synced ${minutesSinceSync} minutes ago`);
+          skipped.push({
+            psychologist: `${psychologist.first_name} ${psychologist.last_name}`,
+            reason: `Synced ${minutesSinceSync} minutes ago`
+          });
+          continue;
+        }
+        
         try {
-          console.log(`🔄 Syncing calendar for ${psychologist.first_name} ${psychologist.last_name}...`);
+          console.log(`🔄 Syncing calendar for ${psychologist.first_name} ${psychologist.last_name} (${i + 1}/${psychologists.length})...`);
           
           const result = await this.syncPsychologistCalendar(psychologist);
           syncResults.push(result);
           
+          // Update last sync time
+          this.lastSyncTimes.set(psychologist.id, now);
+          
           console.log(`✅ Synced calendar for ${psychologist.first_name} ${psychologist.last_name}`);
+          
+          // Add delay between syncs to avoid rate limiting and reduce server load
+          // 2 second delay between each psychologist (except the last one)
+          if (i < psychologists.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         } catch (error) {
           console.error(`❌ Error syncing calendar for ${psychologist.first_name} ${psychologist.last_name}:`, error);
           errors.push({
@@ -77,10 +109,14 @@ class CalendarSyncService {
         }
       }
 
-      console.log(`✅ Calendar sync completed. ${syncResults.length} successful, ${errors.length} errors`);
+      console.log(`✅ Calendar sync completed. ${syncResults.length} successful, ${skipped.length} skipped, ${errors.length} errors`);
       
       if (errors.length > 0) {
         console.error('❌ Sync errors:', errors);
+      }
+      
+      if (skipped.length > 0) {
+        console.log(`ℹ️  Skipped ${skipped.length} psychologists (recently synced)`);
       }
 
     } catch (error) {
@@ -282,7 +318,12 @@ class CalendarSyncService {
         throw new Error('Psychologist has no Google Calendar credentials');
       }
 
-      return await this.syncPsychologistCalendar(psychologist);
+      const result = await this.syncPsychologistCalendar(psychologist);
+      
+      // Update last sync time for manual syncs too
+      this.lastSyncTimes.set(psychologistId, Date.now());
+      
+      return result;
     } catch (error) {
       console.error(`Error syncing psychologist ${psychologistId}:`, error);
       throw error;

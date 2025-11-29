@@ -306,6 +306,20 @@ const getAvailability = async (req, res) => {
         });
 
         console.log(`📅 Found ${externalGoogleCalendarEvents.length} external Google Calendar events (including Google Meet sessions) for psychologist ${psychologist_id}`);
+        
+        // Trigger background sync to update database if external events found
+        // This ensures slots are blocked immediately in the database, not just filtered in the response
+        if (externalGoogleCalendarEvents.length > 0) {
+          // Run sync in background (don't await - don't block the response)
+          const calendarSyncService = require('../services/calendarSyncService');
+          calendarSyncService.syncPsychologistById(psychologist.id, calendarStartDate, calendarEndDate)
+            .then(result => {
+              console.log(`✅ Background calendar sync completed for psychologist ${psychologist_id}: ${result.blockedSlots?.length || 0} slots blocked`);
+            })
+            .catch(syncError => {
+              console.warn(`⚠️ Background calendar sync failed for psychologist ${psychologist_id}:`, syncError.message);
+            });
+        }
       }
     } catch (googleError) {
       console.warn('⚠️ Error checking Google Calendar for external events:', googleError);

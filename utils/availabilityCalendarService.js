@@ -325,6 +325,24 @@ class AvailabilityCalendarService {
           });
           
           console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events to block`);
+          
+          // Trigger background sync to update database if external events found
+          // This ensures slots are blocked immediately in the database for future requests
+          // Run asynchronously - don't await (don't block the response)
+          if (googleCalendarEvents.length > 0) {
+            const calendarSyncService = require('../services/calendarSyncService');
+            const syncStartDate = new Date(startDate);
+            const syncEndDate = new Date(endDate);
+            
+            // Run sync in background (don't await - don't block the response)
+            calendarSyncService.syncPsychologistById(psychologistId, syncStartDate, syncEndDate)
+              .then(result => {
+                console.log(`✅ Background calendar sync completed for psychologist ${psychologistId}: ${result.blockedSlots?.length || 0} slots blocked`);
+              })
+              .catch(syncError => {
+                console.warn(`⚠️ Background calendar sync failed for psychologist ${psychologistId}:`, syncError.message);
+              });
+          }
         } catch (calendarError) {
           // If Google Calendar check fails or times out, log but continue without blocking
           // This ensures the page still loads quickly even if Google Calendar is slow/unavailable
@@ -334,7 +352,7 @@ class AvailabilityCalendarService {
             console.error('⚠️ Error checking Google Calendar (continuing without blocking):', calendarError.message);
           }
           // Continue without Google Calendar data if it fails - availability will still show
-          // The 30-minute background sync will eventually update the database
+          // The scheduled background sync will eventually update the database
         }
       } else {
         console.log(`📅 No Google Calendar credentials found for psychologist ${psychologistId}`);
