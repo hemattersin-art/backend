@@ -1,12 +1,12 @@
 const supabase = require('../config/supabase');
 
 /**
- * Generate default time slots: 10 AM to 1 PM and 2 PM to 5 PM (IST)
+ * Generate default time slots: 10 AM to 12 PM and 2 PM to 5 PM (IST)
  * Returns array of time strings in 12-hour format
  */
 const generateDefaultTimeSlots = () => {
-  // Morning slots: 10 AM to 1 PM
-  const morningSlots = ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM'];
+  // Morning slots: 10 AM to 12 PM
+  const morningSlots = ['10:00 AM', '11:00 AM', '12:00 PM'];
   
   // Afternoon slots: 2 PM to 5 PM
   const afternoonSlots = ['2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM'];
@@ -194,6 +194,111 @@ const addNextDayAvailability = async () => {
 };
 
 /**
+ * Clean up past availability records
+ * Removes all availability records for dates before today
+ * This should be run daily to prevent database bloat
+ * @returns {Promise<Object>} Result object with deletion count
+ */
+const cleanupPastAvailability = async () => {
+  try {
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+    
+    console.log(`🧹 Starting cleanup of past availability records (before ${todayStr})...`);
+    
+    // Count records before deletion (for logging)
+    const { count: totalCount, error: countError } = await supabase
+      .from('availability')
+      .select('id', { count: 'exact', head: true })
+      .lt('date', todayStr);
+    
+    if (countError) {
+      console.error('Error counting past availability records:', countError);
+      // Continue with deletion even if count fails
+      console.log('⚠️  Could not count records, proceeding with deletion...');
+    }
+    
+    if (totalCount === 0) {
+      console.log('✅ No past availability records to clean up');
+      return { 
+        success: true, 
+        message: 'No past availability records found',
+        deleted: 0 
+      };
+    }
+    
+    console.log(`   Found ${totalCount} past availability records to delete`);
+    
+    // Delete records in batches to avoid timeout with large datasets
+    const batchSize = 500;
+    let deletedCount = 0;
+    let hasMore = true;
+    let offset = 0;
+    
+    while (hasMore) {
+      // Get batch of IDs to delete
+      const { data: batch, error: fetchError } = await supabase
+        .from('availability')
+        .select('id')
+        .lt('date', todayStr)
+        .range(offset, offset + batchSize - 1);
+      
+      if (fetchError) {
+        console.error('Error fetching batch for deletion:', fetchError);
+        return { success: false, message: 'Failed to fetch records for deletion', error: fetchError };
+      }
+      
+      if (!batch || batch.length === 0) {
+        hasMore = false;
+        break;
+      }
+      
+      // Delete this batch
+      const idsToDelete = batch.map(record => record.id);
+      const { error: deleteError } = await supabase
+        .from('availability')
+        .delete()
+        .in('id', idsToDelete);
+      
+      if (deleteError) {
+        console.error('Error deleting batch:', deleteError);
+        return { success: false, message: 'Failed to delete batch', error: deleteError };
+      }
+      
+      deletedCount += batch.length;
+      offset += batchSize;
+      
+      // Log progress every 500 records
+      if (deletedCount % 500 === 0) {
+        console.log(`   🧹 Deleted ${deletedCount} records...`);
+      }
+      
+      // If batch is smaller than batchSize, we're done
+      if (batch.length < batchSize) {
+        hasMore = false;
+      }
+    }
+    
+    console.log(`✅ Cleanup completed: Deleted ${deletedCount} past availability records`);
+    return {
+      success: true,
+      message: `Successfully deleted ${deletedCount} past availability records`,
+      deleted: deletedCount
+    };
+    
+  } catch (error) {
+    console.error('Error in cleanupPastAvailability:', error);
+    return { 
+      success: false, 
+      message: 'Error cleaning up past availability', 
+      error: error.message 
+    };
+  }
+};
+
+/**
  * Update all existing psychologists with default availability
  * @returns {Promise<Object>} Result object
  */
@@ -243,6 +348,7 @@ module.exports = {
   generateAvailabilityRecords,
   setDefaultAvailability,
   addNextDayAvailability,
+  cleanupPastAvailability,
   updateAllPsychologistsAvailability
 };
 

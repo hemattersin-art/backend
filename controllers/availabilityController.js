@@ -707,15 +707,79 @@ const syncGoogleCalendar = async (req, res) => {
     const blockedSlots = [];
     const errors = [];
 
+    // Helper function to convert UTC date to IST (Asia/Kolkata)
+    const toIST = (date) => {
+      if (!date) return null;
+      // Convert to IST timezone explicitly
+      const istString = new Date(date).toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      // Parse the IST string back to components
+      const [datePart, timePart] = istString.split(', ');
+      const [month, day, year] = datePart.split('/');
+      const [hour, minute, second] = timePart.split(':');
+      
+      // Create date string in YYYY-MM-DD format
+      const dateStr = `${year}-${month}-${day}`;
+      
+      // Get time components as numbers
+      const hourNum = parseInt(hour, 10);
+      const minuteNum = parseInt(minute, 10);
+      
+      return {
+        dateStr,
+        year,
+        month,
+        day,
+        hour: hourNum,
+        minute: minuteNum,
+        minutesFromMidnight: hourNum * 60 + minuteNum
+      };
+    };
+
     for (const event of syncResult.externalEvents) {
       try {
-        const eventDate = event.start.toISOString().split('T')[0];
-        const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
+        // Convert event start and end times to IST explicitly
+        const eventStartIST = toIST(event.start);
+        const eventEndIST = toIST(event.end);
+        
+        if (!eventStartIST || !eventEndIST) {
+          console.warn(`⚠️ Could not convert event "${event.title}" to IST`);
+          continue;
+        }
+        
+        const eventDate = eventStartIST.dateStr;
+        const eventTime = `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`;
         const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
         
         if (!normalizedEventTime) {
           console.warn(`⚠️ Could not normalize event time: ${eventTime} for event ${event.title}`);
           continue;
+        }
+        
+        // Calculate event duration in minutes from midnight in IST
+        let eventStartMinutes = eventStartIST.minutesFromMidnight;
+        let eventEndMinutes = eventEndIST.minutesFromMidnight;
+        
+        // Handle events that span midnight or multiple days
+        if (eventEndMinutes < eventStartMinutes) {
+          eventEndMinutes = eventEndMinutes + (24 * 60);
+        }
+        
+        // Handle multi-day events
+        const startDate = new Date(event.start);
+        const endDate = new Date(event.end);
+        const daysDiff = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
+        if (daysDiff > 0) {
+          eventEndMinutes = 24 * 60 - 1; // End of day
         }
         
         // Get current availability for this date
@@ -727,13 +791,37 @@ const syncGoogleCalendar = async (req, res) => {
           .single();
 
         if (availability) {
-          // Remove conflicting time slot - normalize both slot and eventTime for comparison
+          // Helper function to convert slot time to minutes from midnight
+          const slotToMinutes = (slotStr) => {
+            const normalizedSlot = normalizeTimeTo24Hour(slotStr);
+            if (!normalizedSlot) return null;
+            
+            const [hours, minutes] = normalizedSlot.split(':').map(Number);
+            return hours * 60 + minutes;
+          };
+          
+          // Remove ALL conflicting time slots that fall within the event duration
+          const slotsToBlock = [];
           const updatedSlots = availability.time_slots.filter(slot => {
-            const normalizedSlot = normalizeTimeTo24Hour(slot);
-            return normalizedSlot !== normalizedEventTime;
+            const slotMinutes = slotToMinutes(slot);
+            
+            if (slotMinutes === null) {
+              return true; // Keep slots we can't parse
+            }
+            
+            // Check if slot overlaps with event duration
+            // We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
+            const overlaps = slotMinutes >= eventStartMinutes && slotMinutes < eventEndMinutes;
+            
+            if (overlaps) {
+              slotsToBlock.push(slot);
+              return false; // Remove this slot
+            }
+            
+            return true; // Keep this slot
           });
           
-          if (updatedSlots.length !== availability.time_slots.length) {
+          if (slotsToBlock.length > 0) {
             await supabase
               .from('availability')
               .update({ 
@@ -742,13 +830,16 @@ const syncGoogleCalendar = async (req, res) => {
               })
               .eq('id', availability.id);
 
-            blockedSlots.push({
-              date: eventDate,
-              time: normalizedEventTime,
-              reason: event.title
+            // Add all blocked slots to the report
+            slotsToBlock.forEach(slot => {
+              blockedSlots.push({
+                date: eventDate,
+                time: slot,
+                reason: event.title
+              });
             });
             
-            console.log(`✅ Blocked time slot ${normalizedEventTime} on ${eventDate} due to external event: ${event.title}`);
+            console.log(`✅ Blocked ${slotsToBlock.length} time slot(s) on ${eventDate} due to external event "${event.title}" (${eventStartMinutes/60}:${String(eventStartMinutes%60).padStart(2,'0')} - ${eventEndMinutes/60}:${String(eventEndMinutes%60).padStart(2,'0')})`);
           }
         }
       } catch (error) {

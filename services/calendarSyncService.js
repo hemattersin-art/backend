@@ -311,28 +311,87 @@ class CalendarSyncService {
     const eventDates = new Set();
     const eventData = [];
     
+    // Helper function to convert UTC date to IST (Asia/Kolkata)
+    const toIST = (date) => {
+      if (!date) return null;
+      // Convert to IST timezone explicitly
+      const istString = new Date(date).toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      // Parse the IST string back to components
+      const [datePart, timePart] = istString.split(', ');
+      const [month, day, year] = datePart.split('/');
+      const [hour, minute, second] = timePart.split(':');
+      
+      // Create date string in YYYY-MM-DD format
+      const dateStr = `${year}-${month}-${day}`;
+      
+      // Get time components as numbers
+      const hourNum = parseInt(hour, 10);
+      const minuteNum = parseInt(minute, 10);
+      
+      return {
+        dateStr,
+        year,
+        month,
+        day,
+        hour: hourNum,
+        minute: minuteNum,
+        minutesFromMidnight: hourNum * 60 + minuteNum
+      };
+    };
+
     for (const event of syncResult.externalEvents) {
       try {
-        const eventStartLocal = new Date(event.start);
-        const year = eventStartLocal.getFullYear();
-        const month = String(eventStartLocal.getMonth() + 1).padStart(2, '0');
-        const day = String(eventStartLocal.getDate()).padStart(2, '0');
-        const eventDate = `${year}-${month}-${day}`;
+        // Convert event start and end times to IST explicitly
+        const eventStartIST = toIST(event.start);
+        const eventEndIST = toIST(event.end);
         
-        const eventTime = eventStartLocal.toTimeString().split(' ')[0].substring(0, 5);
-        const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
+        if (!eventStartIST || !eventEndIST) {
+          console.warn(`⚠️ Could not convert event "${event.title}" to IST`);
+          continue;
+        }
         
-        if (!normalizedEventTime) {
-          continue; // Skip events with invalid time
+        const eventDate = eventStartIST.dateStr;
+        const eventStartMinutes = eventStartIST.minutesFromMidnight;
+        let eventEndMinutes = eventEndIST.minutesFromMidnight;
+        
+        // Handle events that span midnight or multiple days
+        if (eventEndMinutes < eventStartMinutes) {
+          // Event spans midnight, add 24 hours to end time
+          eventEndMinutes = eventEndMinutes + (24 * 60);
+        }
+        
+        // Also handle case where event spans multiple days (get date difference)
+        const startDate = new Date(event.start);
+        const endDate = new Date(event.end);
+        const daysDiff = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
+        
+        if (daysDiff > 0) {
+          // Event spans multiple days, use max end time (23:59 = 1439 minutes)
+          eventEndMinutes = 24 * 60 - 1; // End of day in minutes (23:59)
         }
         
         eventDates.add(eventDate);
         eventData.push({
           date: eventDate,
-          time: normalizedEventTime,
-          title: event.title
+          time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
+          title: event.title,
+          startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
+          endMinutes: eventEndMinutes,
+          startTime: new Date(event.start),
+          endTime: new Date(event.end)
         });
       } catch (error) {
+        console.error(`Error processing event "${event.title}":`, error);
         continue; // Skip invalid events
       }
     }
@@ -367,6 +426,7 @@ class CalendarSyncService {
         const availability = availabilityMap.get(eventInfo.date);
         
         if (!availability) {
+          console.log(`⚠️ No availability record found for date ${eventInfo.date} (event: "${eventInfo.title}")`);
           continue; // No availability record for this date
         }
         
@@ -375,21 +435,78 @@ class CalendarSyncService {
           ? updatesToApply.get(availability.id)
           : [...availability.time_slots];
         
-        // Remove conflicting time slot
+        // Helper function to convert slot time to minutes from midnight
+        const slotToMinutes = (slotStr) => {
+          const normalizedSlot = normalizeTimeTo24Hour(slotStr);
+          if (!normalizedSlot) {
+            console.log(`⚠️ Could not normalize slot: ${slotStr}`);
+            return null;
+          }
+          
+          const [hours, minutes] = normalizedSlot.split(':').map(Number);
+          return hours * 60 + minutes;
+        };
+        
+        // Remove ALL conflicting time slots that fall within the event duration
+        const slotsToBlock = [];
         const updatedSlots = currentSlots.filter(slot => {
-          const normalizedSlot = normalizeTimeTo24Hour(slot);
-          return normalizedSlot !== eventInfo.time;
+          const slotMinutes = slotToMinutes(slot);
+          
+          if (slotMinutes === null) {
+            return true; // Keep slots we can't parse (shouldn't happen)
+          }
+          
+          // Check if slot overlaps with event duration
+          // Event spans from eventInfo.startMinutes to eventInfo.endMinutes
+          // For a slot at X:XX, we check if it falls within the event range
+          // Since slots are typically on the hour (e.g., 9:00 AM, 10:00 AM), we check:
+          // - If slot time >= event start AND slot time < event end
+          // - We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
+          // - For full-day events, we block all slots
+          
+          const overlaps = slotMinutes >= eventInfo.startMinutes && slotMinutes < eventInfo.endMinutes;
+          
+          if (overlaps) {
+            slotsToBlock.push({
+              slot,
+              slotMinutes,
+              eventStart: eventInfo.startMinutes,
+              eventEnd: eventInfo.endMinutes
+            });
+            return false; // Remove this slot
+          }
+          
+          return true; // Keep this slot
         });
         
-        if (updatedSlots.length !== currentSlots.length) {
+        if (slotsToBlock.length > 0) {
           updatesToApply.set(availability.id, updatedSlots);
-          blockedSlots.push({
-            date: eventInfo.date,
-            time: eventInfo.time,
-            reason: eventInfo.title
+          
+          // Add all blocked slots to the report
+          slotsToBlock.forEach(({ slot }) => {
+            blockedSlots.push({
+              date: eventInfo.date,
+              time: slot,
+              reason: eventInfo.title
+            });
+          });
+          
+          console.log(`✅ Blocking ${slotsToBlock.length} slot(s) on ${eventInfo.date} for event "${eventInfo.title}" (${Math.floor(eventInfo.startMinutes/60)}:${String(eventInfo.startMinutes%60).padStart(2,'0')} - ${Math.floor(eventInfo.endMinutes/60)}:${String(eventInfo.endMinutes%60).padStart(2,'0')})`);
+          console.log(`   Blocked slots: ${slotsToBlock.map(s => s.slot).join(', ')}`);
+        } else if (availability.time_slots && availability.time_slots.length > 0) {
+          // Debug: Why didn't we block anything?
+          console.log(`⚠️ Event "${eventInfo.title}" on ${eventInfo.date} did not block any slots`);
+          console.log(`   Event duration: ${Math.floor(eventInfo.startMinutes/60)}:${String(eventInfo.startMinutes%60).padStart(2,'0')} - ${Math.floor(eventInfo.endMinutes/60)}:${String(eventInfo.endMinutes%60).padStart(2,'0')} (${eventInfo.startMinutes}-${eventInfo.endMinutes} minutes)`);
+          console.log(`   Available slots: ${availability.time_slots.join(', ')}`);
+          availability.time_slots.forEach(slot => {
+            const slotMinutes = slotToMinutes(slot);
+            if (slotMinutes !== null) {
+              console.log(`     Slot ${slot} = ${slotMinutes} minutes (overlaps: ${slotMinutes >= eventInfo.startMinutes && slotMinutes < eventInfo.endMinutes})`);
+            }
           });
         }
       } catch (error) {
+        console.error(`Error processing event "${eventInfo.title}":`, error);
         errors.push({
           event: eventInfo.title,
           error: error.message

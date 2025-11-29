@@ -1050,7 +1050,7 @@ const createPsychologist = async (req, res) => {
       console.log('📦 No packages specified - psychologist will have no packages initially');
     }
 
-    // Set default availability (10 AM to 1 PM and 2 PM to 5 PM for 3 weeks)
+    // Set default availability (10 AM to 12 PM and 2 PM to 5 PM for 3 weeks)
     // This will only add dates that don't already exist
     try {
       const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologist.id);

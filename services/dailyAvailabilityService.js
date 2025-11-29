@@ -25,6 +25,7 @@ class DailyAvailabilityService {
       console.log('🕛 Running daily availability update (12:00 AM)...');
       
       try {
+        // Step 1: Add next day availability (3 weeks from today)
         const result = await defaultAvailabilityService.addNextDayAvailability();
         if (result.success) {
           console.log(`✅ Daily availability update completed: ${result.message}`);
@@ -32,6 +33,16 @@ class DailyAvailabilityService {
           console.log(`   - Skipped: ${result.skipped || 0} psychologists`);
         } else {
           console.error(`❌ Daily availability update failed: ${result.message}`);
+        }
+        
+        // Step 2: Clean up past availability records
+        console.log('\n🧹 Running daily cleanup of past availability records...');
+        const cleanupResult = await defaultAvailabilityService.cleanupPastAvailability();
+        if (cleanupResult.success) {
+          console.log(`✅ Cleanup completed: ${cleanupResult.message}`);
+          console.log(`   - Deleted: ${cleanupResult.deleted || 0} past records`);
+        } else {
+          console.error(`❌ Cleanup failed: ${cleanupResult.message}`);
         }
       } catch (error) {
         console.error('❌ Error in daily availability update:', error);
