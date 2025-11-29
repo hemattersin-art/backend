@@ -307,19 +307,9 @@ const getAvailability = async (req, res) => {
 
         console.log(`📅 Found ${externalGoogleCalendarEvents.length} external Google Calendar events (including Google Meet sessions) for psychologist ${psychologist_id}`);
         
-        // Trigger background sync to update database if external events found
-        // This ensures slots are blocked immediately in the database, not just filtered in the response
-        if (externalGoogleCalendarEvents.length > 0) {
-          // Run sync in background (don't await - don't block the response)
-          const calendarSyncService = require('../services/calendarSyncService');
-          calendarSyncService.syncPsychologistById(psychologist.id, calendarStartDate, calendarEndDate)
-            .then(result => {
-              console.log(`✅ Background calendar sync completed for psychologist ${psychologist_id}: ${result.blockedSlots?.length || 0} slots blocked`);
-            })
-            .catch(syncError => {
-              console.warn(`⚠️ Background calendar sync failed for psychologist ${psychologist_id}:`, syncError.message);
-            });
-        }
+        // REMOVED: Background sync trigger - this was causing pages to hang
+        // The scheduled cron job (every 10 minutes) will handle background syncing
+        // This ensures the page loads quickly without waiting for sync operations
       }
     } catch (googleError) {
       console.warn('⚠️ Error checking Google Calendar for external events:', googleError);

@@ -7,19 +7,19 @@ class CalendarSyncService {
     this.isRunning = false;
     // Track last sync time per psychologist to avoid unnecessary syncs
     this.lastSyncTimes = new Map();
-    // Sync interval in minutes (configurable via env, default 10 minutes)
-    this.syncIntervalMinutes = parseInt(process.env.CALENDAR_SYNC_INTERVAL_MINUTES) || 10;
+    // Sync interval in minutes (configurable via env, default 15 minutes)
+    this.syncIntervalMinutes = parseInt(process.env.CALENDAR_SYNC_INTERVAL_MINUTES) || 15;
   }
 
   /**
    * Start the calendar sync service
-   * Runs at configurable intervals (default 10 minutes) to sync Google Calendar events
+   * Runs at configurable intervals (default 15 minutes) to sync Google Calendar events
    * Optimized to reduce server load by staggering syncs and skipping recently synced psychologists
    */
   start() {
     console.log(`🔄 Starting Google Calendar sync service (interval: ${this.syncIntervalMinutes} minutes)...`);
     
-    // Run at configurable interval (default 10 minutes - good balance between responsiveness and server load)
+    // Run at configurable interval (default 15 minutes - good balance between responsiveness and server load)
     cron.schedule(`*/${this.syncIntervalMinutes} * * * *`, async () => {
       if (this.isRunning) {
         console.log('⏭️  Calendar sync already running, skipping...');
@@ -65,47 +65,63 @@ class CalendarSyncService {
       const errors = [];
       const skipped = [];
 
-      // Sync each psychologist's calendar with delays to avoid overwhelming the server
-      for (let i = 0; i < psychologists.length; i++) {
-        const psychologist = psychologists[i];
-        
-        // Skip if synced recently (within last 5 minutes) to reduce load
+      // OPTIMIZATION: Process psychologists in parallel batches (concurrency limit: 3)
+      // This is faster than sequential but still respects rate limits
+      const concurrencyLimit = 3;
+      const now = Date.now();
+      const fiveMinutesAgo = now - (5 * 60 * 1000);
+      
+      // Filter out recently synced psychologists first
+      const psychologistsToSync = psychologists.filter(psychologist => {
         const lastSync = this.lastSyncTimes.get(psychologist.id);
-        const now = Date.now();
-        const fiveMinutesAgo = now - (5 * 60 * 1000);
-        
         if (lastSync && lastSync > fiveMinutesAgo) {
           const minutesSinceSync = Math.floor((now - lastSync) / (60 * 1000));
-          console.log(`⏭️  Skipping ${psychologist.first_name} ${psychologist.last_name} - synced ${minutesSinceSync} minutes ago`);
           skipped.push({
             psychologist: `${psychologist.first_name} ${psychologist.last_name}`,
             reason: `Synced ${minutesSinceSync} minutes ago`
           });
-          continue;
+          return false;
         }
+        return true;
+      });
+      
+      // Process in batches with concurrency limit
+      for (let i = 0; i < psychologistsToSync.length; i += concurrencyLimit) {
+        const batch = psychologistsToSync.slice(i, i + concurrencyLimit);
         
-        try {
-          console.log(`🔄 Syncing calendar for ${psychologist.first_name} ${psychologist.last_name} (${i + 1}/${psychologists.length})...`);
-          
-          const result = await this.syncPsychologistCalendar(psychologist);
-          syncResults.push(result);
-          
-          // Update last sync time
-          this.lastSyncTimes.set(psychologist.id, now);
-          
-          console.log(`✅ Synced calendar for ${psychologist.first_name} ${psychologist.last_name}`);
-          
-          // Add delay between syncs to avoid rate limiting and reduce server load
-          // 2 second delay between each psychologist (except the last one)
-          if (i < psychologists.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
+        // Process batch in parallel
+        const batchPromises = batch.map(async (psychologist) => {
+          try {
+            const result = await this.syncPsychologistCalendar(psychologist);
+            this.lastSyncTimes.set(psychologist.id, now);
+            return { success: true, result };
+          } catch (error) {
+            console.error(`❌ Error syncing calendar for ${psychologist.first_name} ${psychologist.last_name}:`, error.message);
+            return { 
+              success: false, 
+              psychologist: `${psychologist.first_name} ${psychologist.last_name}`,
+              error: error.message 
+            };
           }
-        } catch (error) {
-          console.error(`❌ Error syncing calendar for ${psychologist.first_name} ${psychologist.last_name}:`, error);
-          errors.push({
-            psychologist: `${psychologist.first_name} ${psychologist.last_name}`,
-            error: error.message
-          });
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Process results
+        batchResults.forEach((batchResult) => {
+          if (batchResult.success) {
+            syncResults.push(batchResult.result);
+          } else {
+            errors.push({
+              psychologist: batchResult.psychologist,
+              error: batchResult.error
+            });
+          }
+        });
+        
+        // Small delay between batches (reduced from 2s per psychologist to 1s per batch)
+        if (i + concurrencyLimit < psychologistsToSync.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
 
@@ -131,11 +147,12 @@ class CalendarSyncService {
    * @param {Object} psychologist - Psychologist object with Google Calendar credentials
    */
   async syncPsychologistCalendar(psychologist) {
-    // Cover the entire current day and next 30 days so events earlier today are included
+    // OPTIMIZATION: Configurable date range (default 30 days, can be reduced for speed)
+    const syncDays = parseInt(process.env.CALENDAR_SYNC_DAYS) || 30;
     const startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() + 30); // Sync next 30 days
+    endDate.setDate(endDate.getDate() + syncDays);
     endDate.setHours(23, 59, 59, 999);
 
     // Sync calendar events
@@ -198,14 +215,13 @@ class CalendarSyncService {
       return null;
     };
 
-    // Block conflicting time slots in availability
-    const blockedSlots = [];
-    const errors = [];
-
+    // OPTIMIZATION: Batch fetch all availability records at once instead of one-by-one
+    // Get all unique dates from events first
+    const eventDates = new Set();
+    const eventData = [];
+    
     for (const event of syncResult.externalEvents) {
       try {
-        // Extract date in local timezone to match availability dates (which are stored in local timezone)
-        // Use the date part of the local date, not UTC
         const eventStartLocal = new Date(event.start);
         const year = eventStartLocal.getFullYear();
         const month = String(eventStartLocal.getMonth() + 1).padStart(2, '0');
@@ -216,73 +232,102 @@ class CalendarSyncService {
         const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
         
         if (!normalizedEventTime) {
-          console.warn(`⚠️ Could not normalize event time: ${eventTime} for event ${event.title}`);
-          continue;
+          continue; // Skip events with invalid time
         }
         
-        // Get current availability for this date
-        const { data: availability, error: availError } = await supabase
-          .from('availability')
-          .select('id, date, time_slots')
-          .eq('psychologist_id', psychologist.id)
-          .eq('date', eventDate)
-          .single();
+        eventDates.add(eventDate);
+        eventData.push({
+          date: eventDate,
+          time: normalizedEventTime,
+          title: event.title
+        });
+      } catch (error) {
+        continue; // Skip invalid events
+      }
+    }
+    
+    // Batch fetch all availability records for all dates at once
+    const availabilityMap = new Map();
+    if (eventDates.size > 0) {
+      const datesArray = Array.from(eventDates);
+      const { data: availabilityRecords, error: availError } = await supabase
+        .from('availability')
+        .select('id, date, time_slots')
+        .eq('psychologist_id', psychologist.id)
+        .in('date', datesArray);
+      
+      if (availError) {
+        console.error(`⚠️ Error batch fetching availability:`, availError.message);
+      } else if (availabilityRecords) {
+        // Create a map for O(1) lookup
+        availabilityRecords.forEach(avail => {
+          availabilityMap.set(avail.date, avail);
+        });
+      }
+    }
+    
+    // Process events and collect updates
+    const blockedSlots = [];
+    const errors = [];
+    const updatesToApply = new Map(); // Map of availability.id -> updated time_slots
+    
+    for (const eventInfo of eventData) {
+      try {
+        const availability = availabilityMap.get(eventInfo.date);
         
-        // Debug: Log what we're checking
-        if (availability) {
-          console.log(`🔍 Checking event "${event.title}" at ${normalizedEventTime} on ${eventDate} against availability date ${availability.date} with slots: ${JSON.stringify(availability.time_slots)}`);
-        } else if (availError && availError.code !== 'PGRST116') {
-          console.warn(`⚠️ Error fetching availability for ${eventDate}:`, availError.message);
+        if (!availability) {
+          continue; // No availability record for this date
         }
-
-        if (availability) {
-          // Remove conflicting time slot - normalize both slot and eventTime for comparison
-          const updatedSlots = availability.time_slots.filter(slot => {
-            const normalizedSlot = normalizeTimeTo24Hour(slot);
-            const shouldKeep = normalizedSlot !== normalizedEventTime;
-            
-            // Debug logging for mismatches
-            if (!shouldKeep) {
-              console.log(`🔍 Found matching slot: "${slot}" (normalized: ${normalizedSlot}) matches event time ${normalizedEventTime} for "${event.title}"`);
-            }
-            
-            return shouldKeep;
+        
+        // Check if we already have an update pending for this availability record
+        let currentSlots = updatesToApply.has(availability.id) 
+          ? updatesToApply.get(availability.id)
+          : [...availability.time_slots];
+        
+        // Remove conflicting time slot
+        const updatedSlots = currentSlots.filter(slot => {
+          const normalizedSlot = normalizeTimeTo24Hour(slot);
+          return normalizedSlot !== eventInfo.time;
+        });
+        
+        if (updatedSlots.length !== currentSlots.length) {
+          updatesToApply.set(availability.id, updatedSlots);
+          blockedSlots.push({
+            date: eventInfo.date,
+            time: eventInfo.time,
+            reason: eventInfo.title
           });
-          
-          if (updatedSlots.length !== availability.time_slots.length) {
-            const removedCount = availability.time_slots.length - updatedSlots.length;
-            await supabase
-              .from('availability')
-              .update({ 
-                time_slots: updatedSlots,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', availability.id);
-
-            blockedSlots.push({
-              date: eventDate,
-              time: normalizedEventTime,
-              reason: event.title
-            });
-            
-            console.log(`✅ Blocked ${removedCount} time slot(s) (${normalizedEventTime}) on ${eventDate} due to external event: ${event.title}`);
-          } else {
-            // Debug: log why slot wasn't blocked
-            const slotTimes = availability.time_slots.map(s => {
-              const norm = normalizeTimeTo24Hour(s);
-              return `${s} (→${norm})`;
-            }).join(', ');
-            console.log(`⚠️  Event time ${normalizedEventTime} (${event.title}) did not match any slots: [${slotTimes}]`);
-          }
-        } else {
-          console.log(`ℹ️  No availability record found for date ${eventDate}, skipping event ${event.title} at ${normalizedEventTime}`);
         }
       } catch (error) {
-        console.error(`Error blocking slot for event ${event.title}:`, error);
         errors.push({
-          event: event.title,
+          event: eventInfo.title,
           error: error.message
         });
+      }
+    }
+    
+    // OPTIMIZATION: Batch update all availability records at once
+    if (updatesToApply.size > 0) {
+      const updatePromises = [];
+      const now = new Date().toISOString();
+      
+      for (const [availabilityId, updatedSlots] of updatesToApply.entries()) {
+        updatePromises.push(
+          supabase
+            .from('availability')
+            .update({ 
+              time_slots: updatedSlots,
+              updated_at: now
+            })
+            .eq('id', availabilityId)
+        );
+      }
+      
+      // Execute all updates in parallel
+      await Promise.all(updatePromises);
+      
+      if (blockedSlots.length > 0) {
+        console.log(`✅ Blocked ${blockedSlots.length} time slot(s) across ${updatesToApply.size} date(s) for ${psychologist.first_name} ${psychologist.last_name}`);
       }
     }
 

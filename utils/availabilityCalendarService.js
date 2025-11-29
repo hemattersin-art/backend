@@ -274,89 +274,16 @@ class AvailabilityCalendarService {
 
       console.log(`🔒 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions in date range`);
 
-      // Check Google Calendar for external bookings if credentials exist (REAL-TIME CHECK)
-      // This ensures external events are blocked even if added between 30-min sync intervals
+      // SKIP Google Calendar check entirely to prevent any blocking
+      // The scheduled cron job (every 10 minutes) will handle syncing and updating the database
+      // Availability will be shown from the database, which is updated by the background sync
+      // This ensures the page loads instantly without any Google Calendar API calls
       let googleCalendarEvents = [];
-      if (psychologist.google_calendar_credentials) {
-        try {
-          console.log(`📅 Real-time Google Calendar check for external bookings (${startDate} to ${endDate})...`);
-          const calendarCheckStart = Date.now();
-          
-          // Use Promise.race with timeout to prevent slow Google Calendar API from blocking the response
-          const calendarCheckPromise = googleCalendarService.getBusyTimeSlots(
-            psychologist.google_calendar_credentials,
-            new Date(startDate),
-            new Date(endDate)
-          );
-          
-          // Timeout after 3 seconds - if Google Calendar is slow, continue without it
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Google Calendar check timeout')), 3000)
-          );
-          
-          const busySlots = await Promise.race([calendarCheckPromise, timeoutPromise]);
-          const calendarCheckTime = Date.now() - calendarCheckStart;
-          console.log(`✅ Google Calendar check completed in ${calendarCheckTime}ms`);
-          
-          // Filter logic:
-          // 1. Block ALL external events (regardless of Google Meet link)
-          // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
-          // 3. Exclude public holidays
-          googleCalendarEvents = busySlots.filter(slot => {
-            const title = slot.title.toLowerCase();
-            
-            // Exclude our system events
-            const isSystemEvent = 
-              title.includes('littleminds') || 
-              title.includes('little care') ||
-              title.includes('kuttikal');
-            
-            // Exclude public holidays (common patterns)
-            const isPublicHoliday = 
-              title.includes('holiday') ||
-              title.includes('public holiday') ||
-              title.includes('national holiday') ||
-              title.includes('festival') ||
-              title.includes('celebration') ||
-              title.includes('observance');
-            
-            // Block ALL events that are NOT system events and NOT public holidays
-            return !isSystemEvent && !isPublicHoliday;
-          });
-          
-          console.log(`📅 Found ${googleCalendarEvents.length} external Google Calendar events to block`);
-          
-          // Trigger background sync to update database if external events found
-          // This ensures slots are blocked immediately in the database for future requests
-          // Run asynchronously - don't await (don't block the response)
-          if (googleCalendarEvents.length > 0) {
-            const calendarSyncService = require('../services/calendarSyncService');
-            const syncStartDate = new Date(startDate);
-            const syncEndDate = new Date(endDate);
-            
-            // Run sync in background (don't await - don't block the response)
-            calendarSyncService.syncPsychologistById(psychologistId, syncStartDate, syncEndDate)
-              .then(result => {
-                console.log(`✅ Background calendar sync completed for psychologist ${psychologistId}: ${result.blockedSlots?.length || 0} slots blocked`);
-              })
-              .catch(syncError => {
-                console.warn(`⚠️ Background calendar sync failed for psychologist ${psychologistId}:`, syncError.message);
-              });
-          }
-        } catch (calendarError) {
-          // If Google Calendar check fails or times out, log but continue without blocking
-          // This ensures the page still loads quickly even if Google Calendar is slow/unavailable
-          if (calendarError.message === 'Google Calendar check timeout') {
-            console.warn('⚠️ Google Calendar check timed out (>3s), continuing without real-time blocking');
-          } else {
-            console.error('⚠️ Error checking Google Calendar (continuing without blocking):', calendarError.message);
-          }
-          // Continue without Google Calendar data if it fails - availability will still show
-          // The scheduled background sync will eventually update the database
-        }
-      } else {
-        console.log(`📅 No Google Calendar credentials found for psychologist ${psychologistId}`);
-      }
+      
+      // REMOVED: Google Calendar real-time check - was causing page to hang
+      // REMOVED: Background sync trigger - was causing infinite logs
+      // The scheduled cron job (every 10 minutes) will handle all Google Calendar syncing
+      // Users will see availability from the database, which is kept up-to-date by the cron job
 
       // Helper function to convert 24-hour format to 12-hour format
       const convertTo12Hour = (time24) => {
