@@ -33,32 +33,53 @@ class GoogleCalendarService {
    * @param {string} calendarId - Calendar ID (default: 'primary')
    * @param {Date} timeMin - Start time
    * @param {Date} timeMax - End time
-   * @returns {Promise<Array>} Array of calendar events
+   * @param {string} syncToken - Optional sync token for incremental sync
+   * @returns {Promise<Object>} Object with events array and nextSyncToken
    */
-  async getCalendarEvents(credentials, calendarId = 'primary', timeMin, timeMax) {
+  async getCalendarEvents(credentials, calendarId = 'primary', timeMin, timeMax, syncToken = null) {
     try {
       const oauth2Client = this.createOAuthClient(credentials);
       
-      const response = await this.calendar.events.list({
+      const requestParams = {
         auth: oauth2Client,
         calendarId: calendarId,
-        timeMin: timeMin.toISOString(),
-        timeMax: timeMax.toISOString(),
         singleEvents: true,
         orderBy: 'startTime',
-        showDeleted: false,
+        showDeleted: true, // Include deleted events when using sync token
         maxResults: 2500
-      });
+      };
 
-      return response.data.items || [];
+      // If syncToken provided, use incremental sync (only changes)
+      if (syncToken) {
+        requestParams.syncToken = syncToken;
+      } else {
+        // Full sync: use time range
+        requestParams.timeMin = timeMin.toISOString();
+        requestParams.timeMax = timeMax.toISOString();
+        requestParams.showDeleted = false;
+      }
+      
+      const response = await this.calendar.events.list(requestParams);
+
+      return {
+        events: response.data.items || [],
+        nextSyncToken: response.data.nextSyncToken || null
+      };
     } catch (error) {
       console.error('Error fetching calendar events:', error);
+      
+      // Handle sync token expiration (410 error) - need full sync
+      if (error.code === 410) {
+        console.warn('⚠️ Sync token expired, falling back to full sync');
+        // Retry without sync token (full sync)
+        return this.getCalendarEvents(credentials, calendarId, timeMin, timeMax, null);
+      }
       
       // Handle token refresh if needed
       if (error.code === 401) {
         await this.refreshAccessToken(credentials);
         // Retry the request
-        return this.getCalendarEvents(credentials, calendarId, timeMin, timeMax);
+        return this.getCalendarEvents(credentials, calendarId, timeMin, timeMax, syncToken);
       }
       
       throw error;
@@ -126,13 +147,15 @@ class GoogleCalendarService {
    * @param {Date} timeMin - Start time
    * @param {Date} timeMax - End time
    * @param {string} calendarId - Calendar ID (default: 'primary')
-   * @returns {Promise<Array>} Array of busy time slots
+   * @param {string} syncToken - Optional sync token for incremental sync
+   * @returns {Promise<Object>} Object with busySlots array and nextSyncToken
    */
-  async getBusyTimeSlots(credentials, timeMin, timeMax, calendarId = 'primary') {
+  async getBusyTimeSlots(credentials, timeMin, timeMax, calendarId = 'primary', syncToken = null) {
     try {
-      const events = await this.getCalendarEvents(credentials, calendarId, timeMin, timeMax);
+      const result = await this.getCalendarEvents(credentials, calendarId, timeMin, timeMax, syncToken);
+      const events = result.events;
       
-      return events.map(event => ({
+      const busySlots = events.map(event => ({
         start: new Date(event.start.dateTime || event.start.date),
         end: new Date(event.end.dateTime || event.end.date),
         title: event.summary || 'Busy',
@@ -141,11 +164,20 @@ class GoogleCalendarService {
         hangoutsLink: event.hangoutsLink || null, // Google Meet link
         conferenceData: event.conferenceData || null, // Conference data (includes Meet links)
         location: event.location || null,
-        description: event.description || null
+        description: event.description || null,
+        status: event.status || null // 'confirmed', 'cancelled', etc.
       }));
+      
+      return {
+        busySlots: busySlots,
+        nextSyncToken: result.nextSyncToken
+      };
     } catch (error) {
       console.error('Error getting busy time slots:', error);
-      return [];
+      return {
+        busySlots: [],
+        nextSyncToken: null
+      };
     }
   }
 
@@ -156,24 +188,47 @@ class GoogleCalendarService {
    * @param {Date} endDate - End date for sync
    * @returns {Promise<Object>} Sync result
    */
-  async syncCalendarEvents(psychologist, startDate, endDate) {
+  /**
+   * Sync calendar events and update psychologist's blocked times
+   * Uses incremental sync with sync tokens for efficiency
+   * @param {Object} psychologist - Psychologist object with Google credentials
+   * @param {Date} startDate - Start date for sync (used for full sync only)
+   * @param {Date} endDate - End date for sync (used for full sync only)
+   * @param {string} syncToken - Optional sync token for incremental sync
+   * @returns {Promise<Object>} Sync result with nextSyncToken
+   */
+  async syncCalendarEvents(psychologist, startDate, endDate, syncToken = null) {
     try {
       if (!psychologist.google_calendar_credentials) {
         throw new Error('Psychologist has no Google Calendar credentials');
       }
 
-      const busySlots = await this.getBusyTimeSlots(
+      // Get sync token from stored credentials if not provided
+      const storedSyncToken = syncToken || psychologist.google_calendar_credentials.syncToken || null;
+      
+      const result = await this.getBusyTimeSlots(
         psychologist.google_calendar_credentials,
         startDate,
-        endDate
+        endDate,
+        'primary',
+        storedSyncToken
       );
+
+      const busySlots = result.busySlots;
+      const nextSyncToken = result.nextSyncToken;
 
       // Filter logic:
       // 1. Block ALL external events (regardless of Google Meet link)
       // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
       // 3. Exclude public holidays
+      // 4. Exclude cancelled/deleted events
       const externalEvents = busySlots.filter(slot => {
-        const title = slot.title.toLowerCase();
+        // Skip cancelled or deleted events
+        if (slot.status === 'cancelled') {
+          return false;
+        }
+        
+        const title = (slot.title || '').toLowerCase();
         
         // Exclude our system events
         const isSystemEvent = 
@@ -198,14 +253,20 @@ class GoogleCalendarService {
         success: true,
         externalEvents: externalEvents,
         totalEvents: busySlots.length,
-        syncedAt: new Date()
+        syncedAt: new Date(),
+        nextSyncToken: nextSyncToken,
+        isIncremental: !!storedSyncToken // Indicates if this was an incremental sync
       };
     } catch (error) {
       console.error('Error syncing calendar events:', error);
       return {
         success: false,
         error: error.message,
-        syncedAt: new Date()
+        externalEvents: [],
+        totalEvents: 0,
+        syncedAt: new Date(),
+        nextSyncToken: null,
+        isIncremental: false
       };
     }
   }

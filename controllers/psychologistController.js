@@ -653,11 +653,12 @@ const getAvailability = async (req, res) => {
           }
 
           // Get Google Calendar busy slots (all events including external Google Meet sessions)
-          const busySlots = await googleCalendarService.getBusyTimeSlots(
+          const result = await googleCalendarService.getBusyTimeSlots(
             psychologist.google_calendar_credentials,
             calendarStartDate,
             calendarEndDate
           );
+          const busySlots = result.busySlots || [];
 
           // Filter logic (matches calendarSyncService):
           // 1. Block ALL external events (regardless of Google Meet link)

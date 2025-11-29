@@ -147,7 +147,11 @@ class CalendarSyncService {
    * @param {Object} psychologist - Psychologist object with Google Calendar credentials
    */
   async syncPsychologistCalendar(psychologist) {
-    // OPTIMIZATION: Configurable date range (default 30 days, can be reduced for speed)
+    // OPTIMIZATION: Use incremental sync with sync tokens
+    // Get stored sync token from credentials (if exists)
+    const storedSyncToken = psychologist.google_calendar_credentials?.syncToken || null;
+    
+    // Date range only needed for full sync (when no sync token)
     const syncDays = parseInt(process.env.CALENDAR_SYNC_DAYS) || 30;
     const startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
@@ -155,14 +159,90 @@ class CalendarSyncService {
     endDate.setDate(endDate.getDate() + syncDays);
     endDate.setHours(23, 59, 59, 999);
 
-    // Sync calendar events
+    // Sync calendar events (incremental if sync token exists, full sync otherwise)
     const syncResult = await googleCalendarService.syncCalendarEvents(
       psychologist,
       startDate,
-      endDate
+      endDate,
+      storedSyncToken
     );
+    
+    // Store the next sync token for future incremental syncs
+    if (syncResult.success && syncResult.nextSyncToken) {
+      try {
+        // Update sync token in google_calendar_credentials
+        const updatedCredentials = {
+          ...psychologist.google_calendar_credentials,
+          syncToken: syncResult.nextSyncToken,
+          lastSyncAt: new Date().toISOString()
+        };
+        
+        await supabase
+          .from('psychologists')
+          .update({ 
+            google_calendar_credentials: updatedCredentials
+          })
+          .eq('id', psychologist.id);
+        
+        if (syncResult.isIncremental) {
+          console.log(`📊 Incremental sync for ${psychologist.first_name} ${psychologist.last_name}: ${syncResult.externalEvents.length} new/changed events`);
+        } else {
+          console.log(`📊 Full sync for ${psychologist.first_name} ${psychologist.last_name}: ${syncResult.externalEvents.length} events`);
+        }
+      } catch (tokenError) {
+        console.error(`⚠️ Failed to store sync token for ${psychologist.first_name} ${psychologist.last_name}:`, tokenError.message);
+      }
+    }
 
     if (!syncResult.success) {
+      // Handle sync token expiration (410 error) - clear token and retry with full sync
+      if (syncResult.error && (syncResult.error.includes('410') || syncResult.error.includes('Sync token'))) {
+        console.warn(`⚠️ Sync token expired for ${psychologist.first_name} ${psychologist.last_name}, clearing token and doing full sync`);
+        
+        // Clear sync token from credentials
+        try {
+          const clearedCredentials = { ...psychologist.google_calendar_credentials };
+          delete clearedCredentials.syncToken;
+          
+          await supabase
+            .from('psychologists')
+            .update({ google_calendar_credentials: clearedCredentials })
+            .eq('id', psychologist.id);
+        } catch (clearError) {
+          console.error('Failed to clear sync token:', clearError);
+        }
+        
+        // Retry with full sync (no sync token)
+        const retryResult = await googleCalendarService.syncCalendarEvents(
+          psychologist,
+          startDate,
+          endDate,
+          null // Full sync
+        );
+        
+        if (retryResult.success && retryResult.nextSyncToken) {
+          // Store new sync token
+          const updatedCredentials = {
+            ...psychologist.google_calendar_credentials,
+            syncToken: retryResult.nextSyncToken,
+            lastSyncAt: new Date().toISOString()
+          };
+          
+          await supabase
+            .from('psychologists')
+            .update({ google_calendar_credentials: updatedCredentials })
+            .eq('id', psychologist.id);
+        }
+        
+        // Use retry result
+        if (!retryResult.success) {
+          throw new Error(retryResult.error);
+        }
+        
+        // Continue with retry result
+        return this.processSyncResult(psychologist, retryResult);
+      }
+      
       // Handle token expiration gracefully
       if (syncResult.error && syncResult.error.includes('expired')) {
         console.warn('⚠️ Google Calendar sync skipped due to expired tokens for psychologist:', psychologist.email);
@@ -176,6 +256,17 @@ class CalendarSyncService {
       }
       throw new Error(syncResult.error);
     }
+    
+    return this.processSyncResult(psychologist, syncResult);
+  }
+
+  /**
+   * Process sync result and block conflicting slots
+   * @param {Object} psychologist - Psychologist object
+   * @param {Object} syncResult - Sync result from googleCalendarService
+   * @returns {Promise<Object>} Processed sync result
+   */
+  async processSyncResult(psychologist, syncResult) {
 
     // Helper function to normalize time format to HH:MM (24-hour)
     const normalizeTimeTo24Hour = (timeStr) => {
