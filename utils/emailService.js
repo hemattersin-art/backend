@@ -30,12 +30,12 @@ class EmailService {
     try {
       console.log('📧 Email Service - Starting session confirmation email...');
       console.log('📧 Email Service - Session data:', {
-        sessionId: sessionData?.id || sessionData?.session_id,
-        date: sessionData?.scheduled_date,
-        time: sessionData?.scheduled_time,
+        sessionId: sessionData?.sessionId || sessionData?.id || sessionData?.session_id,
+        date: sessionData?.sessionDate || sessionData?.scheduledDate || sessionData?.scheduled_date,
+        time: sessionData?.sessionTime || sessionData?.scheduledTime || sessionData?.scheduled_time,
         status: sessionData?.status,
-        psychologistId: sessionData?.psychologist_id,
-        clientId: sessionData?.client_id
+        psychologistId: sessionData?.psychologistId || sessionData?.psychologist_id,
+        clientId: sessionData?.clientId || sessionData?.client_id
       });
       
       const {
@@ -50,13 +50,18 @@ class EmailService {
         sessionDate,
         sessionTime,
         meetLink,
-        price
+        price,
+        amount, // Also accept 'amount' as alias for 'price'
+        status,
+        psychologistId,
+        clientId
       } = sessionData;
 
       // Use consistent date/time format
       const finalSessionDate = sessionDate || scheduledDate;
       const finalSessionTime = sessionTime || scheduledTime;
       const finalMeetLink = meetLink || googleMeetLink;
+      const finalPrice = price || amount; // Use 'price' or 'amount'
       
       console.log('📧 Email Service - Final values:', {
         clientName,
@@ -67,7 +72,10 @@ class EmailService {
         finalSessionTime,
         finalMeetLink,
         sessionId,
-        price
+        price: finalPrice,
+        status,
+        psychologistId,
+        clientId
       });
       
       // Check if transporter is available
@@ -112,7 +120,7 @@ class EmailService {
         meetLink: finalMeetLink,
         clientEmail,
         psychologistEmail,
-        price: price || 0
+        price: finalPrice || 0
       };
 
       const calendarInvites = createCalendarInvites(calendarData);
@@ -133,7 +141,9 @@ class EmailService {
           calendarInvite: calendarInvites.client,
           googleCalendarLink,
           outlookCalendarLink,
-          price
+          price: finalPrice || 0,
+          receiptUrl: sessionData.receiptUrl || null, // Receipt URL
+          receiptPdfBuffer: sessionData.receiptPdfBuffer || null // Receipt PDF buffer to attach
         });
       } else {
         console.log('⚠️ Skipping client email (placeholder or missing):', clientEmail);
@@ -153,7 +163,7 @@ class EmailService {
           calendarInvite: calendarInvites.psychologist,
           googleCalendarLink,
           outlookCalendarLink,
-          price
+          price: finalPrice || 0
         });
       } else {
         console.log('⚠️ Skipping psychologist email (placeholder or missing):', psychologistEmail);
@@ -191,7 +201,9 @@ class EmailService {
       calendarInvite,
       googleCalendarLink,
       outlookCalendarLink,
-      price
+      price,
+      receiptUrl,
+      receiptPdfBuffer
     } = emailData;
 
     const mailOptions = {
@@ -214,7 +226,7 @@ class EmailService {
               <p><strong>Date:</strong> ${scheduledDate}</p>
               <p><strong>Time:</strong> ${scheduledTime}</p>
               <p><strong>Therapist:</strong> ${psychologistName}</p>
-              <p><strong>Session Fee:</strong> $${price || 'TBD'}</p>
+              <p><strong>Session Fee:</strong> ₹${price || 'TBD'}</p>
               <p><strong>Session ID:</strong> ${sessionId}</p>
             </div>
             
@@ -278,13 +290,18 @@ class EmailService {
           </div>
         </div>
       `,
-      attachments: calendarInvite ? [
-        {
+      attachments: [
+        ...(calendarInvite ? [{
           filename: calendarInvite.filename,
           content: calendarInvite.content,
           contentType: calendarInvite.contentType
-        }
-      ] : []
+        }] : []),
+        ...(receiptPdfBuffer ? [{
+          filename: `Receipt-${sessionId}.pdf`,
+          content: receiptPdfBuffer,
+          contentType: 'application/pdf'
+        }] : [])
+      ]
     };
 
     return this.transporter.sendMail(mailOptions);
@@ -325,7 +342,7 @@ class EmailService {
               <p><strong>Date:</strong> ${scheduledDate}</p>
               <p><strong>Time:</strong> ${scheduledTime}</p>
               <p><strong>Client:</strong> ${clientName}</p>
-              <p><strong>Session Fee:</strong> $${price || 'TBD'}</p>
+              <p><strong>Session Fee:</strong> ₹${price || 'TBD'}</p>
               <p><strong>Session ID:</strong> ${sessionId}</p>
             </div>
             

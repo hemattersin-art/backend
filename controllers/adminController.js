@@ -3447,13 +3447,15 @@ const createManualBooking = async (req, res) => {
         amount: amount,
         session_type: packageData ? 'package' : 'individual',
         status: 'success', // Mark as success for manual payment
-        payu_params: {
+        razorpay_params: {
+          notes: {
           manual: true,
           payment_method: 'manual',
           admin_created: true,
           created_by: req.user.id,
           created_at: new Date().toISOString(),
           payment_received_date: payment_received_date
+          }
         },
         completed_at: payment_received_date,
         created_at: new Date().toISOString()

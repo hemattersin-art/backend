@@ -208,6 +208,29 @@ class MeetLinkService {
         return time;
       };
 
+      // Build attendees array - this is THE KEY to bypassing host approval
+      // Google Meet automatically allows invited guests to join without approval
+      const attendees = [];
+      
+      // Add client email if provided
+      if (sessionData.clientEmail) {
+        attendees.push({ email: sessionData.clientEmail });
+      }
+      
+      // Add psychologist email if provided
+      if (sessionData.psychologistEmail) {
+        attendees.push({ email: sessionData.psychologistEmail });
+      }
+      
+      // Also support attendees array format (for backward compatibility)
+      if (Array.isArray(sessionData.attendees) && sessionData.attendees.length > 0) {
+        sessionData.attendees.forEach(email => {
+          if (email && !attendees.find(a => a.email === email)) {
+            attendees.push({ email });
+          }
+        });
+      }
+
       const event = {
         summary: sessionData.summary || 'Therapy Session',
         description: sessionData.description || 'Therapy session with Google Meet',
@@ -219,11 +242,7 @@ class MeetLinkService {
           dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
-        attendees: Array.isArray(sessionData.attendees)
-          ? sessionData.attendees
-              .filter(e => !!e)
-              .map(email => ({ email }))
-          : undefined,
+        attendees: attendees.length > 0 ? attendees : undefined,
         conferenceData: {
           createRequest: {
             requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -235,10 +254,12 @@ class MeetLinkService {
       };
 
       console.log('📅 Creating calendar event with Meet link...');
+      console.log('   👥 Attendees:', attendees.map(a => a.email).join(', ') || 'None');
       const createdEvent = await calendar.events.insert({
         calendarId: 'primary',
         resource: event,
-        conferenceDataVersion: 1
+        conferenceDataVersion: 1,
+        sendUpdates: 'all' // Send calendar invites - invited attendees can join without approval
       });
 
       console.log('✅ Real Meet link created with OAuth via Calendar API');
@@ -294,6 +315,29 @@ class MeetLinkService {
         return time;
       };
 
+      // Build attendees array - this is THE KEY to bypassing host approval
+      // Google Meet automatically allows invited guests to join without approval
+      const attendees = [];
+      
+      // Add client email if provided
+      if (sessionData.clientEmail) {
+        attendees.push({ email: sessionData.clientEmail });
+      }
+      
+      // Add psychologist email if provided
+      if (sessionData.psychologistEmail) {
+        attendees.push({ email: sessionData.psychologistEmail });
+      }
+      
+      // Also support attendees array format (for backward compatibility)
+      if (Array.isArray(sessionData.attendees) && sessionData.attendees.length > 0) {
+        sessionData.attendees.forEach(email => {
+          if (email && !attendees.find(a => a.email === email)) {
+            attendees.push({ email });
+          }
+        });
+      }
+
       // Create event with conference data
       const event = {
         summary: sessionData.summary || 'Therapy Session',
@@ -306,11 +350,7 @@ class MeetLinkService {
           dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
-        attendees: Array.isArray(sessionData.attendees)
-          ? sessionData.attendees
-              .filter(e => !!e)
-              .map(email => ({ email }))
-          : undefined,
+        attendees: attendees.length > 0 ? attendees : undefined,
         conferenceData: {
           createRequest: {
             requestId: crypto.randomUUID()
@@ -322,20 +362,96 @@ class MeetLinkService {
         summary: event.summary,
         start: event.start?.dateTime || event.start?.date,
         end: event.end?.dateTime || event.end?.date,
-        location: event.location,
+        attendees: attendees.map(a => a.email).join(', ') || 'None',
         conferenceData: event.conferenceData ? 'present' : 'none'
       });
 
-      const result = await calendar.events.insert({
-        calendarId: 'primary',
-        conferenceDataVersion: 1,
-        requestBody: event
-      });
+      // Service accounts cannot include attendees in events without Domain-Wide Delegation
+      // So we need to create the event WITHOUT attendees field, but still get the Meet link
+      // The attendees are documented in the description, and the Meet link is shared via email/WhatsApp
+      
+      // Add attendee emails to description so they're documented (even if not in attendees field)
+      if (attendees.length > 0) {
+        const attendeeList = attendees.map(a => a.email).join(', ');
+        event.description = (event.description || '') + 
+          `\n\nAttendees: ${attendeeList}\n\nJoin via the Google Meet link above.`;
+      }
+      
+      // Remove attendees from event object for service account (they can't use it)
+      // The Meet link will still be created via conferenceData
+      const eventWithoutAttendees = {
+        ...event,
+        attendees: undefined // Remove attendees - service account limitation
+      };
+      
+      let result;
+      try {
+        // Try with attendees first (in case OAuth is used, which allows attendees)
+        result = await calendar.events.insert({
+          calendarId: 'primary',
+          conferenceDataVersion: 1,
+          requestBody: event,
+          sendUpdates: 'all' // Try to send invites first
+        });
+        console.log('✅ Calendar event created with invites sent');
+      } catch (inviteError) {
+        // Check error message from different possible locations (Google API error structure)
+        const errorMessage = inviteError.message || 
+                            inviteError.response?.data?.error?.message || 
+                            JSON.stringify(inviteError.response?.data?.error || {});
+        
+        // If sending invites fails (service account limitation), create without attendees
+        if (errorMessage.includes('forbiddenForServiceAccounts') || 
+            errorMessage.includes('Domain-Wide Delegation') ||
+            errorMessage.includes('cannot invite attendees')) {
+          console.log('⚠️ Service account cannot use attendees - creating event without attendees field');
+          console.log('   📧 Meet link will be shared via email/WhatsApp instead');
+          console.log('   📝 Attendees documented in event description');
+          
+          // Create event WITHOUT attendees field (service account limitation)
+          result = await calendar.events.insert({
+            calendarId: 'primary',
+            conferenceDataVersion: 1,
+            requestBody: eventWithoutAttendees
+            // No attendees, no sendUpdates - service account limitation
+          });
+          console.log('✅ Calendar event created (without attendees - service account limitation)');
+        } else {
+          throw inviteError; // Re-throw if it's a different error
+        }
+      }
 
       console.log('✅ Calendar event created:', result.data.id);
       
       // Try to extract Meet link immediately from the created event
-      const eventData = result.data;
+      let eventData = result.data;
+      
+      console.log('🔍 Checking for Meet link in created event...');
+      console.log('   - Has conferenceData:', !!eventData.conferenceData);
+      console.log('   - Has entryPoints:', !!eventData.conferenceData?.entryPoints);
+      console.log('   - Has hangoutLink:', !!eventData.hangoutLink);
+      
+      // If conferenceData is missing, service account may have limitations
+      // Try fetching the event again after a short delay - sometimes Google populates it later
+      if (!eventData.conferenceData) {
+        console.log('⚠️ No conferenceData in initial response - service account limitation detected');
+        console.log('⏳ Waiting 2 seconds and fetching event again...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        try {
+          const { data: refreshedEvent } = await calendar.events.get({
+            calendarId: 'primary',
+            eventId: eventData.id,
+            conferenceDataVersion: 1
+          });
+          eventData = refreshedEvent;
+          console.log('   - After refresh - Has conferenceData:', !!eventData.conferenceData);
+          console.log('   - After refresh - Has entryPoints:', !!eventData.conferenceData?.entryPoints);
+          console.log('   - After refresh - Has hangoutLink:', !!eventData.hangoutLink);
+        } catch (refreshError) {
+          console.log('⚠️ Could not refresh event:', refreshError.message);
+        }
+      }
       
       // Check if Meet link is already available in entryPoints
       if (eventData.conferenceData?.entryPoints) {
@@ -344,8 +460,8 @@ class MeetLinkService {
           ep.uri?.includes('meet.google.com') ||
           ep.uri?.includes('hangouts.google.com')
         );
-        if (meetEntry) {
-          console.log('✅ Meet link found immediately:', meetEntry.uri);
+        if (meetEntry && meetEntry.uri) {
+          console.log('✅ REAL Meet link found immediately:', meetEntry.uri);
           return {
             success: true,
             meetLink: meetEntry.uri,
@@ -358,7 +474,7 @@ class MeetLinkService {
       
       // Check hangoutLink as fallback
       if (eventData.hangoutLink) {
-        console.log('✅ Meet link found in hangoutLink:', eventData.hangoutLink);
+        console.log('✅ REAL Meet link found in hangoutLink:', eventData.hangoutLink);
         return {
           success: true,
           meetLink: eventData.hangoutLink,
@@ -427,16 +543,21 @@ class MeetLinkService {
       }
       
       // Even if conference times out, return success with calendar event
-      console.log('⚠️ Conference timeout, but calendar event created successfully');
-      console.log('⚠️ Note: Service accounts may have limitations creating Meet conferences');
-      console.log('⚠️ For guaranteed Meet links, use OAuth authentication (psychologist Google Calendar connection)');
+      // This happens when service accounts cannot create Meet conferences (Google limitation)
+      console.log('⚠️ Conference timeout - Service account limitation detected');
+      console.log('⚠️ Service accounts CANNOT create Google Meet conferences via Calendar API');
+      console.log('⚠️ This is a Google limitation, not a code issue');
+      console.log('⚠️ Solution: Use OAuth tokens (psychologist Google Calendar connection) for real Meet links');
+      console.log('⚠️ For now, using fallback link - users can create Meet manually or use the calendar event');
+      
+      // Return the calendar event link so users can access it and create Meet manually if needed
       return {
-        success: true,
-        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
+        success: false, // Mark as false since no real Meet link was created
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0', // Fallback
         eventId: eventData.id,
-        eventLink: eventData.htmlLink,
-        method: 'calendar_event_created',
-        note: 'Calendar event created but Meet conference timed out - manual Meet creation required'
+        eventLink: eventData.htmlLink, // Calendar event link - users can access this
+        method: 'service_account_limitation',
+        note: 'Service accounts cannot create Meet conferences - OAuth required for real Meet links. Calendar event created successfully.'
       };
 
     } catch (error) {
@@ -617,7 +738,7 @@ class MeetLinkService {
       console.log('   📅 Session ID:', sessionData?.id || sessionData?.session_id);
       console.log('   🔑 User Auth:', userAuth ? 'Available' : 'Not available');
       
-      // Prepare session data
+      // Prepare session data - include emails for attendees (KEY to bypassing host approval)
       const meetSessionData = {
         summary: sessionData.summary || 'Therapy Session',
         description: sessionData.description || 'Therapy session',
@@ -625,7 +746,11 @@ class MeetLinkService {
         startTime: sessionData.startTime,
         endTime: sessionData.endTime,
         startISO: sessionData.startISO || `${sessionData.startDate}T${sessionData.startTime}`,
-        endISO: sessionData.endISO || `${sessionData.startDate}T${sessionData.endTime}`
+        endISO: sessionData.endISO || `${sessionData.startDate}T${sessionData.endTime}`,
+        // Pass through email addresses - these will be added as attendees
+        clientEmail: sessionData.clientEmail,
+        psychologistEmail: sessionData.psychologistEmail,
+        attendees: sessionData.attendees // Support both formats
       };
       
       // Create Meet link

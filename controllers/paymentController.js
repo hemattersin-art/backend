@@ -2,11 +2,11 @@ const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { ensureClientPackageRecord } = require('../services/packageService');
 const { 
-  getPayUConfig, 
-  generatePayUHash, 
+  getRazorpayConfig, 
+  getRazorpayInstance,
   generateTransactionId, 
-  validatePayUResponse 
-} = require('../config/payu');
+  verifyPaymentSignature 
+} = require('../config/razorpay');
 const meetLinkService = require('../utils/meetLinkService');
 const assessmentSessionService = require('../services/assessmentSessionService');
 const { addMinutesToTime } = require('../utils/helpers');
@@ -35,7 +35,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
         const filename = `receipts/${receiptNumber}-${sessionData.id}.pdf`;
 
         // Upload to Supabase storage using admin client
-        const { data: uploadData, error: uploadError } = await supabase.supabaseAdmin.storage
+        const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
           .from('receipts')
           .upload(filename, pdfBuffer, {
             contentType: 'application/pdf',
@@ -48,7 +48,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
         }
 
         // Get public URL
-        const { data: urlData } = supabase.supabaseAdmin.storage
+        const { data: urlData } = supabaseAdmin.storage
           .from('receipts')
           .getPublicUrl(filename);
 
@@ -67,7 +67,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
         
         console.log('📄 Storing receipt data - session_id:', receiptData.session_id, 'receipt_number:', receiptData.receipt_number);
         
-        const { error: receiptError } = await supabase.supabaseAdmin
+        const { error: receiptError } = await supabaseAdmin
           .from('receipts')
           .insert(receiptData);
 
@@ -78,7 +78,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
           console.log('✅ Receipt metadata stored successfully');
           
           // Verify the receipt was stored by querying it back
-          const { data: verifyReceipt, error: verifyError } = await supabase.supabaseAdmin
+          const { data: verifyReceipt, error: verifyError } = await supabaseAdmin
             .from('receipts')
             .select('*')
             .eq('session_id', sessionData.id)
@@ -90,7 +90,12 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
             console.log('✅ Receipt verification successful:', verifyReceipt);
           }
           
-          resolve({ success: true, receiptNumber, fileUrl: urlData.publicUrl });
+          resolve({ 
+            success: true, 
+            receiptNumber, 
+            fileUrl: urlData.publicUrl,
+            pdfBuffer: pdfBuffer // Return buffer for email attachment
+          });
         }
 
         // Note: pdfBuffer is automatically garbage collected - no local file cleanup needed
@@ -168,7 +173,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
   });
 };
 
-// Create PayU payment order
+// Create Razorpay payment order
 const createPaymentOrder = async (req, res) => {
   try {
     console.log('🔍 Payment Request Body:', req.body);
@@ -206,61 +211,63 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    const payuConfig = getPayUConfig();
+    const razorpayConfig = getRazorpayConfig();
+    const razorpay = getRazorpayInstance();
     
-    // Validate PayU config
-    if (!payuConfig || !payuConfig.baseUrl) {
-      console.error('❌ Invalid PayU configuration:', payuConfig);
+    // Validate Razorpay config
+    if (!razorpayConfig || !razorpayConfig.keyId) {
+      console.error('❌ Invalid Razorpay configuration:', razorpayConfig);
       return res.status(500).json({
         success: false,
         message: 'Payment gateway configuration error'
       });
     }
     
-    console.log('🔧 PayU Config:', {
-      baseUrl: payuConfig.baseUrl,
-      merchantId: payuConfig.merchantId,
-      successUrl: payuConfig.successUrl,
-      failureUrl: payuConfig.failureUrl
+    console.log('🔧 Razorpay Config:', {
+      keyId: razorpayConfig.keyId,
+      successUrl: razorpayConfig.successUrl,
+      failureUrl: razorpayConfig.failureUrl
     });
     
-    // Generate transaction ID
+    // Generate transaction ID (receipt ID for Razorpay)
     const txnid = generateTransactionId();
     
-    // Prepare PayU parameters
-    const payuParams = {
-      key: payuConfig.merchantId,
-      txnid: txnid,
-      amount: amount.toString(),
-      productinfo: assessmentType === 'assessment' ? `Assessment Session - ${sessionType}` : `Therapy Session - ${sessionType}`,
-      firstname: clientName.split(' ')[0] || clientName,
-      lastname: clientName.split(' ').slice(1).join(' ') || '',
-      email: clientEmail,
-      phone: clientPhone || '',
-      surl: payuConfig.successUrl,
-      furl: payuConfig.failureUrl,
-      curl: payuConfig.successUrl, // Cancel URL
-      address1: '',
-      address2: '',
-      city: '',
-      state: '',
-      country: '',
-      zipcode: '',
-      udf1: scheduledDate, // Store scheduled_date instead of sessionId
-      udf2: psychologistId,
-      udf3: clientId,
-      udf4: packageId || '',
-      udf5: scheduledTime, // Store scheduled_time
-      udf6: assessmentSessionId || '', // Store assessment_session_id if assessment
-      udf7: assessmentType || '', // 'assessment' or empty
-      udf8: '',
-      udf9: '',
-      udf10: ''
+    // Convert amount to paise (Razorpay uses smallest currency unit)
+    const amountInPaise = Math.round(amount * 100);
+    
+    // Create Razorpay order
+    const orderOptions = {
+      amount: amountInPaise, // Amount in paise
+      currency: 'INR',
+      receipt: txnid,
+      payment_capture: 1, // Auto capture payment
+      notes: {
+        scheduledDate: scheduledDate,
+        psychologistId: psychologistId,
+        clientId: clientId,
+        packageId: packageId || '',
+        scheduledTime: scheduledTime,
+        assessmentSessionId: assessmentSessionId || '',
+        assessmentType: assessmentType || '',
+        sessionType: sessionType,
+        clientName: clientName,
+        clientEmail: clientEmail
+      }
     };
 
-    // Generate hash
-    const hash = generatePayUHash(payuParams, payuConfig.salt);
-    payuParams.hash = hash;
+    console.log('📦 Creating Razorpay order...');
+    let razorpayOrder;
+    try {
+      razorpayOrder = await razorpay.orders.create(orderOptions);
+      console.log('✅ Razorpay order created:', razorpayOrder.id);
+    } catch (razorpayError) {
+      console.error('❌ Razorpay order creation failed:', razorpayError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create payment order with Razorpay',
+        error: razorpayError.message || 'Razorpay API error'
+      });
+    }
 
     // Store pending payment record
     console.log('💾 Creating payment record in database...');
@@ -272,6 +279,7 @@ const createPaymentOrder = async (req, res) => {
     
     const paymentData = {
       transaction_id: txnid,
+      razorpay_order_id: razorpayOrder.id, // Store Razorpay order ID
       session_id: null, // Will be set after payment success
       psychologist_id: psychologistId,
       client_id: clientId,
@@ -279,20 +287,25 @@ const createPaymentOrder = async (req, res) => {
       amount: amount,
       session_type: sessionType,
       status: 'pending',
-      payu_params: payuParams,
+      razorpay_params: {
+        orderId: razorpayOrder.id,
+        amount: amountInPaise,
+        currency: 'INR',
+        receipt: txnid,
+        notes: orderOptions.notes
+      },
       created_at: new Date().toISOString()
     };
     
     // Add assessment_session_id if assessment booking (only if column exists)
-    // Note: This will fail if the column doesn't exist - check backend logs for details
     if (assessmentSessionId) {
       paymentData.assessment_session_id = assessmentSessionId;
       console.log('🔍 Adding assessment_session_id to payment data:', assessmentSessionId);
     }
     
-    console.log('🔍 Final payment data (excluding payu_params):', {
+    console.log('🔍 Final payment data (excluding razorpay_params):', {
       ...paymentData,
-      payu_params: '[REDACTED]'
+      razorpay_params: '[REDACTED]'
     });
     
     const { data: paymentRecord, error: paymentError } = await supabase
@@ -318,34 +331,30 @@ const createPaymentOrder = async (req, res) => {
     }
 
     console.log('✅ Payment record created successfully:', paymentRecord.id);
-
-    // Construct redirect URL with validation
-    const redirectUrl = `${payuConfig.baseUrl}/_payment`;
-    
-    // Validate redirect URL
-    try {
-      new URL(redirectUrl);
-    } catch (urlError) {
-      console.error('❌ Invalid redirect URL:', redirectUrl, urlError);
-      return res.status(500).json({
-        success: false,
-        message: 'Invalid payment gateway URL'
-      });
-    }
     
     console.log('📤 Sending payment response to frontend...');
-    console.log('🔗 Redirect URL:', redirectUrl);
-    console.log('🔗 Redirect URL type:', typeof redirectUrl);
-    console.log('🔗 Redirect URL length:', redirectUrl?.length);
-    console.log('🔗 PayU Config:', payuConfig);
     
     res.json({
       success: true,
       data: {
         paymentId: paymentRecord.id,
         transactionId: txnid,
-        payuParams: payuParams,
-        redirectUrl: redirectUrl
+        orderId: razorpayOrder.id,
+        amount: amount,
+        amountInPaise: amountInPaise,
+        currency: 'INR',
+        keyId: razorpayConfig.keyId,
+        name: 'Little Care',
+        description: assessmentType === 'assessment' ? `Assessment Session - ${sessionType}` : `Therapy Session - ${sessionType}`,
+        prefill: {
+          name: clientName,
+          email: clientEmail,
+          contact: clientPhone || ''
+        },
+        notes: orderOptions.notes,
+        theme: {
+          color: '#3b82f6'
+        }
       }
     });
 
@@ -358,54 +367,66 @@ const createPaymentOrder = async (req, res) => {
   }
 };
 
-// Handle PayU success response
+// Handle Razorpay success response
 const handlePaymentSuccess = async (req, res) => {
   try {
-    const payuConfig = getPayUConfig();
+    const razorpayConfig = getRazorpayConfig();
     const params = req.body;
 
-    console.log('PayU Success Response:', params);
+    console.log('Razorpay Success Response:', params);
 
-    // Validate hash (temporarily disabled for testing)
-    console.log('🔍 Hash validation details:');
-    console.log('Received hash:', params.hash);
-    console.log('Calculated hash:', generatePayUHash(params, payuConfig.salt));
-    console.log('Hash validation result:', validatePayUResponse(params, payuConfig.salt));
-    
-    // Temporarily skip hash validation for testing
-    // if (!validatePayUResponse(params, payuConfig.salt)) {
-    //   console.error('Invalid hash in PayU response');
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: 'Invalid payment response'
-    //   });
-    // }
+    // Extract Razorpay payment details
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = params;
 
-    const { txnid, status, amount, udf1: scheduledDate, udf2: psychologistId, udf3: clientIdFromPayU, udf4: packageId, udf5: scheduledTime, udf6: assessmentSessionId, udf7: assessmentType } = params;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      console.error('❌ Missing Razorpay payment details');
+      return res.status(400).json({
+        success: false,
+        message: 'Missing payment verification details'
+      });
+    }
 
-    // Find payment record
+    // Find payment record by Razorpay order ID
     const { data: paymentRecord, error: paymentError } = await supabase
       .from('payments')
       .select('*')
-      .eq('transaction_id', txnid)
+      .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
     if (paymentError || !paymentRecord) {
-      console.error('Payment record not found:', txnid);
+      console.error('Payment record not found for order:', razorpay_order_id);
       return res.status(404).json({
         success: false,
         message: 'Payment record not found'
       });
     }
 
-    // Use clientId from payment record instead of PayU response (which might be "undefined")
+    // Verify payment signature
+    const isValidSignature = verifyPaymentSignature(
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      razorpayConfig.keySecret
+    );
+
+    if (!isValidSignature) {
+      console.error('❌ Invalid Razorpay payment signature');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment signature'
+      });
+    }
+
+    console.log('✅ Payment signature verified successfully');
+
+    // Use data from payment record
     const clientId = paymentRecord.client_id;
     const actualPsychologistId = paymentRecord.psychologist_id;
-    const actualScheduledDate = paymentRecord.payu_params?.udf1 || scheduledDate;
-    const actualScheduledTime = paymentRecord.payu_params?.udf5 || scheduledTime;
+    const actualScheduledDate = paymentRecord.razorpay_params?.notes?.scheduledDate;
+    const actualScheduledTime = paymentRecord.razorpay_params?.notes?.scheduledTime;
     const actualPackageId = paymentRecord.package_id;
-    const isAssessment = paymentRecord.assessment_session_id || paymentRecord.payu_params?.udf7 === 'assessment' || assessmentType === 'assessment';
-    const actualAssessmentSessionId = paymentRecord.assessment_session_id || assessmentSessionId;
+    const isAssessment = paymentRecord.assessment_session_id || paymentRecord.razorpay_params?.notes?.assessmentType === 'assessment';
+    const actualAssessmentSessionId = paymentRecord.assessment_session_id || paymentRecord.razorpay_params?.notes?.assessmentSessionId;
 
     // Check if already processed
     if (paymentRecord.status === 'success') {
@@ -615,7 +636,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
       .from('psychologists')
-      .select('first_name, last_name, email')
+      .select('first_name, last_name, email, google_calendar_credentials')
       .eq('id', actualPsychologistId)
       .single();
 
@@ -627,70 +648,15 @@ const handlePaymentSuccess = async (req, res) => {
       });
     }
 
-    // Create Google Calendar event with OAuth2 Meet service
-    let meetData = null;
-    try {
-      console.log('🔄 Creating Google Meet meeting via OAuth2...');
-      
-      // Convert date and time to ISO format for Meet service
-      // Ensure proper date formatting
-      const [year, month, day] = actualScheduledDate.split('-').map(Number);
-      const [hour, minute, second] = actualScheduledTime.split(':').map(Number);
-      
-      const startDateTime = new Date(year, month - 1, day, hour, minute, second);
-      const endDateTime = new Date(startDateTime.getTime() + 60 * 60000); // 60 minutes
-      
-      console.log('📅 Date/Time Debug:', {
-        actualScheduledDate,
-        actualScheduledTime,
-        startDateTime: startDateTime.toISOString(),
-        endDateTime: endDateTime.toISOString()
-      });
-      
-      // Create Meet link using the new meetLinkService
-      const sessionData = {
-        summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
-        description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-        startDate: actualScheduledDate,
-        startTime: actualScheduledTime,
-        endTime: addMinutesToTime(actualScheduledTime, 50) // Add 50 minutes to start time
-      };
-      
-      
-      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
-      
-      if (meetResult.success) {
-        meetData = {
-          meetLink: meetResult.meetLink,
-          eventId: meetResult.eventId,
-          calendarLink: meetResult.eventLink || null,
-          method: meetResult.method
-        };
-        console.log('✅ Real Meet link created successfully:', meetResult);
-      } else {
-        meetData = {
-          meetLink: meetResult.meetLink, // Fallback link
-          eventId: null,
-          calendarLink: null,
-          method: 'fallback'
-        };
-        console.log('⚠️ Using fallback Meet link:', meetResult.meetLink);
-      }
-      
-    } catch (meetError) {
-      console.error('❌ Error creating OAuth2 meeting:', meetError);
-      console.log('⚠️ Continuing with session creation without meet link...');
-      // Continue with session creation even if meet creation fails
-    }
-
-    // Create the actual session after successful payment
+    // Create the actual session IMMEDIATELY (don't wait for gmeet link)
+    // Gmeet link will be created asynchronously and session will be updated later
     const sessionData = {
       client_id: clientId,
       psychologist_id: actualPsychologistId,
       scheduled_date: actualScheduledDate,
       scheduled_time: actualScheduledTime,
       status: 'booked',
-      price: amount,
+      price: paymentRecord.amount,
       payment_id: paymentRecord.id
     };
 
@@ -699,13 +665,7 @@ const handlePaymentSuccess = async (req, res) => {
       sessionData.package_id = actualPackageId;
     }
 
-    // Add meet data if available
-    if (meetData) {
-      sessionData.google_calendar_event_id = meetData.eventId;
-      sessionData.google_meet_link = meetData.meetLink;
-      sessionData.google_meet_join_url = meetData.meetLink;
-      sessionData.google_meet_start_url = meetData.meetLink;
-    }
+    // Don't add meet data yet - will be added asynchronously
 
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
@@ -715,204 +675,351 @@ const handlePaymentSuccess = async (req, res) => {
 
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
+      
+      // Send error notification email to admin
+      try {
+        await emailService.sendEmail({
+          to: 'abhishekravi063@gmail.com',
+          subject: '🚨 Booking Failed After Payment - Action Required',
+          html: `
+            <h2>Booking Failed After Payment</h2>
+            <p><strong>Error:</strong> Failed to create session after payment</p>
+            <p><strong>Payment Order ID:</strong> ${razorpay_order_id}</p>
+            <p><strong>Payment ID:</strong> ${razorpay_payment_id}</p>
+            <p><strong>Client ID:</strong> ${clientId}</p>
+            <p><strong>Psychologist ID:</strong> ${actualPsychologistId}</p>
+            <p><strong>Scheduled Date:</strong> ${actualScheduledDate}</p>
+            <p><strong>Scheduled Time:</strong> ${actualScheduledTime}</p>
+            <p><strong>Error Details:</strong> ${JSON.stringify(sessionError, null, 2)}</p>
+            <p><strong>Payment Record:</strong> ${JSON.stringify(paymentRecord, null, 2)}</p>
+            <p><em>Please investigate and manually create the session if needed.</em></p>
+          `
+        });
+        console.log('✅ Error notification email sent to admin');
+      } catch (emailErr) {
+        console.error('❌ Failed to send error notification email:', emailErr);
+      }
+      
       return res.status(500).json({
         success: false,
-        message: 'Failed to create session after payment'
+        message: 'Failed to create session after payment. Our team has been notified and will resolve this shortly.'
       });
     }
 
     console.log('✅ Session created successfully:', session.id);
-
-    // Send confirmation emails to all parties
-    try {
-      console.log('📧 Sending confirmation emails...');
-      
-      await emailService.sendSessionConfirmation({
-        clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
-        psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-        sessionDate: actualScheduledDate,
-        sessionTime: actualScheduledTime,
-        sessionDuration: '60 minutes',
-        clientEmail: clientDetails.user?.email,
-        psychologistEmail: psychologistDetails.email,
-        googleMeetLink: meetData?.meetLink,
-        sessionId: session.id,
-        transactionId: txnid,
-        amount: amount
-      });
-      
-      console.log('✅ Confirmation emails sent successfully');
-    } catch (emailError) {
-      console.error('❌ Error sending confirmation emails:', emailError);
-      // Continue even if email sending fails
-    }
-
-    // Send WhatsApp messages to client and psychologist
-    try {
-      console.log('📱 Sending WhatsApp messages via UltraMsg API...');
-      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-      
-      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
-      const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
-
-      // Send WhatsApp to client
-      const clientPhone = clientDetails.phone_number || null;
-      if (clientPhone && meetData?.meetLink) {
-        const clientDetails_wa = {
-          childName: clientDetails.child_name || clientDetails.first_name,
-          date: actualScheduledDate,
-          time: actualScheduledTime,
-          meetLink: meetData.meetLink,
-        };
-        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
-        if (clientWaResult?.success) {
-          console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
-        } else if (clientWaResult?.skipped) {
-          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
-        } else {
-          console.warn('⚠️ Client WhatsApp send failed');
-        }
-      } else {
-        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
-      }
-
-      // Send WhatsApp to psychologist
-      const psychologistPhone = psychologistDetails.phone || null;
-      if (psychologistPhone && meetData?.meetLink) {
-        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
-        
-        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
-        if (psychologistWaResult?.success) {
-          console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
-        } else if (psychologistWaResult?.skipped) {
-          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
-        } else {
-          console.warn('⚠️ Psychologist WhatsApp send failed');
-        }
-      } else {
-        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
-      }
-      
-      console.log('✅ WhatsApp messages sent successfully via UltraMsg');
-    } catch (whatsappError) {
-      console.error('❌ Error sending WhatsApp messages:', whatsappError);
-      // Continue even if WhatsApp sending fails
-    }
 
     // Update payment status to completed
     const { error: updateError } = await supabase
       .from('payments')
       .update({
         status: 'success',
-        payu_response: params,
+        razorpay_payment_id: razorpay_payment_id,
+        razorpay_response: params,
         session_id: session.id,
         completed_at: new Date().toISOString()
       })
       .eq('id', paymentRecord.id);
 
     if (updateError) {
-      console.error('Error updating payment:', updateError);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update payment status'
-      });
+      console.error('❌ Error updating payment:', updateError);
+      // Continue - payment status update failure shouldn't block response
     }
 
-    // Generate and store PDF receipt in Supabase storage
+    // Generate and store PDF receipt IMMEDIATELY
     console.log('📄 Generating and storing PDF receipt...');
-    await generateAndStoreReceipt(
-      session,
-      { ...paymentRecord, completed_at: new Date().toISOString() },
-      clientDetails,
-      psychologistDetails
-    );
-
-    // If package booking, create client package record
-    if (actualPackageId && actualPackageId !== 'individual') {
-      console.log('📦 Creating client package record...');
-      try {
-        const { data: packageData } = await supabase
-          .from('packages')
-          .select('*')
-          .eq('id', actualPackageId)
-          .single();
-
-        if (packageData) {
-          const { created, error: clientPackageError } = await ensureClientPackageRecord({
-            clientId,
-            psychologistId: actualPsychologistId,
-            packageId: actualPackageId,
-            sessionId: session.id,
-            purchasedAt: new Date().toISOString(),
-            packageData,
-            consumedSessions: 1
-          });
-
-          if (clientPackageError) {
-            console.error('❌ Client package creation failed:', clientPackageError);
-          } else if (created) {
-            console.log('✅ Client package record created successfully');
-          } else {
-            console.log('ℹ️ Client package record already existed for this session');
-          }
-        }
-      } catch (packageError) {
-        console.error('❌ Exception while creating client package:', packageError);
-      }
-    }
-
-    // PRIORITY: Check and send reminder immediately if session is 12 hours away
-    // This gives new bookings priority over batch reminder processing
+    let receiptResult = null;
     try {
-      const sessionReminderService = require('../services/sessionReminderService');
-      // Run asynchronously to not block the response
-      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
-        console.error('❌ Error in priority reminder check:', err);
-        // Don't block response - reminder will be sent in next hourly check
-      });
-    } catch (reminderError) {
-      console.error('❌ Error initiating priority reminder check:', reminderError);
-      // Don't block response
+      receiptResult = await generateAndStoreReceipt(
+        session,
+        { ...paymentRecord, completed_at: new Date().toISOString() },
+        clientDetails,
+        psychologistDetails
+      );
+      console.log('✅ Receipt generated successfully');
+    } catch (receiptError) {
+      console.error('❌ Error generating receipt:', receiptError);
+      // Continue even if receipt generation fails
     }
 
+    // Return success response IMMEDIATELY (don't wait for async processes)
+    // Session and receipt are already created, gmeet/emails/WhatsApp will happen in background
     res.json({
       success: true,
       message: 'Payment successful and session created',
       data: {
         sessionId: session.id,
-        transactionId: txnid,
-        amount: amount
+        transactionId: paymentRecord.transaction_id,
+        razorpayPaymentId: razorpay_payment_id,
+        amount: paymentRecord.amount
       }
     });
 
+    // ASYNC: Create gmeet link, send emails and WhatsApp in background (don't wait)
+    // This runs after response is sent, so it doesn't block the user
+    (async () => {
+      try {
+        console.log('🔄 Starting async gmeet link creation and notifications...');
+        
+        // Create Google Meet link asynchronously
+        let meetData = null;
+        try {
+          console.log('🔄 Creating Google Meet meeting via OAuth2 (async)...');
+          
+          const meetSessionData = {
+            summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
+            description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+            startDate: actualScheduledDate,
+            startTime: actualScheduledTime,
+            endTime: addMinutesToTime(actualScheduledTime, 50),
+            // Add both emails as attendees - this ensures they can join without host approval
+            clientEmail: clientDetails.user?.email,
+            psychologistEmail: psychologistDetails.email
+          };
+          
+          // Get psychologist's OAuth tokens if available (for real Meet link creation)
+          let userAuth = null;
+          if (psychologistDetails.google_calendar_credentials) {
+            const credentials = psychologistDetails.google_calendar_credentials;
+            userAuth = {
+              access_token: credentials.access_token,
+              refresh_token: credentials.refresh_token,
+              expiry_date: credentials.expiry_date
+            };
+            console.log('✅ Using psychologist OAuth tokens for Meet link creation');
+          } else {
+            console.log('⚠️ No OAuth tokens for psychologist - will use service account (may not create real Meet link)');
+          }
+          
+          const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
+          
+          if (meetResult.success) {
+            meetData = {
+              meetLink: meetResult.meetLink,
+              eventId: meetResult.eventId,
+              calendarLink: meetResult.eventLink || null,
+              method: meetResult.method
+            };
+            console.log('✅ Real Meet link created successfully (async):', meetResult);
+            
+            // Update session with meet link
+            await supabase
+              .from('sessions')
+              .update({
+                google_calendar_event_id: meetData.eventId,
+                google_meet_link: meetData.meetLink,
+                google_meet_join_url: meetData.meetLink,
+                google_meet_start_url: meetData.meetLink,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', session.id);
+            
+            console.log('✅ Session updated with meet link');
+          } else {
+            meetData = {
+              meetLink: meetResult.meetLink,
+              eventId: null,
+              calendarLink: null,
+              method: 'fallback'
+            };
+            console.log('⚠️ Using fallback Meet link (async):', meetResult.meetLink);
+          }
+        } catch (meetError) {
+          console.error('❌ Error creating OAuth2 meeting (async):', meetError);
+        }
+
+        // Send confirmation emails with receipt (async)
+        try {
+          console.log('📧 Sending confirmation emails with receipt (async)...');
+          
+          await emailService.sendSessionConfirmation({
+            clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+            psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+            sessionDate: actualScheduledDate,
+            sessionTime: actualScheduledTime,
+            sessionDuration: '60 minutes',
+            clientEmail: clientDetails.user?.email,
+            psychologistEmail: psychologistDetails.email,
+            googleMeetLink: meetData?.meetLink,
+            sessionId: session.id,
+            transactionId: paymentRecord.transaction_id,
+            amount: paymentRecord.amount,
+            price: paymentRecord.amount, // Also pass as 'price' for email service
+            status: session.status || 'booked',
+            psychologistId: session.psychologist_id || actualPsychologistId,
+            clientId: session.client_id || clientId,
+            receiptUrl: receiptResult?.fileUrl || null,
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null
+          });
+          
+          console.log('✅ Confirmation emails sent successfully with receipt (async)');
+        } catch (emailError) {
+          console.error('❌ Error sending confirmation emails (async):', emailError);
+        }
+
+        // Send WhatsApp messages (async)
+        try {
+          console.log('📱 Sending WhatsApp messages via UltraMsg API (async)...');
+          const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+          
+          const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+          const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
+
+          // Send WhatsApp to client
+          const clientPhone = clientDetails.phone_number || null;
+          if (clientPhone && meetData?.meetLink) {
+            const clientDetails_wa = {
+              childName: clientDetails.child_name || clientDetails.first_name,
+              date: actualScheduledDate,
+              time: actualScheduledTime,
+              meetLink: meetData.meetLink,
+            };
+            const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+            if (clientWaResult?.success) {
+              console.log('✅ WhatsApp confirmation sent to client via UltraMsg (async)');
+            } else if (clientWaResult?.skipped) {
+              console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+            } else {
+              console.warn('⚠️ Client WhatsApp send failed');
+            }
+          } else {
+            console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+          }
+
+          // Send WhatsApp to psychologist
+          const psychologistPhone = psychologistDetails.phone || null;
+          if (psychologistPhone && meetData?.meetLink) {
+            const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+            
+            const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+            if (psychologistWaResult?.success) {
+              console.log('✅ WhatsApp notification sent to psychologist via UltraMsg (async)');
+            } else if (psychologistWaResult?.skipped) {
+              console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+            } else {
+              console.warn('⚠️ Psychologist WhatsApp send failed');
+            }
+          } else {
+            console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+          }
+          
+          console.log('✅ WhatsApp messages sent successfully via UltraMsg (async)');
+        } catch (whatsappError) {
+          console.error('❌ Error sending WhatsApp messages (async):', whatsappError);
+        }
+        
+        console.log('✅ Async gmeet link creation and notifications completed');
+      } catch (asyncError) {
+        console.error('❌ Error in async background process:', asyncError);
+      }
+    })(); // Immediately invoked async function - runs in background
+
+    // Continue with async processes (don't block response)
+    // If package booking, create client package record (async)
+    if (actualPackageId && actualPackageId !== 'individual') {
+      (async () => {
+        try {
+          console.log('📦 Creating client package record (async)...');
+          const { data: packageData } = await supabase
+            .from('packages')
+            .select('*')
+            .eq('id', actualPackageId)
+            .single();
+
+          if (packageData) {
+            const { created, error: clientPackageError } = await ensureClientPackageRecord({
+              clientId,
+              psychologistId: actualPsychologistId,
+              packageId: actualPackageId,
+              sessionId: session.id,
+              purchasedAt: new Date().toISOString(),
+              packageData,
+              consumedSessions: 1
+            });
+
+            if (clientPackageError) {
+              console.error('❌ Client package creation failed:', clientPackageError);
+            } else if (created) {
+              console.log('✅ Client package record created successfully (async)');
+            } else {
+              console.log('ℹ️ Client package record already existed for this session');
+            }
+          }
+        } catch (packageError) {
+          console.error('❌ Exception while creating client package (async):', packageError);
+        }
+      })();
+    }
+
+    // PRIORITY: Check and send reminder immediately if session is 12 hours away (async)
+    try {
+      const sessionReminderService = require('../services/sessionReminderService');
+      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+        console.error('❌ Error in priority reminder check:', err);
+      });
+    } catch (reminderError) {
+      console.error('❌ Error initiating priority reminder check:', reminderError);
+    }
+
   } catch (error) {
-    console.error('Error handling payment success:', error);
+    console.error('❌ Error handling payment success:', error);
+    
+    // Send error notification email to admin
+    try {
+      const params = req.body || {};
+      const razorpay_order_id = params.razorpay_order_id || 'Unknown';
+      const razorpay_payment_id = params.razorpay_payment_id || 'Unknown';
+      
+      await emailService.sendEmail({
+        to: 'abhishekravi063@gmail.com',
+        subject: '🚨 Booking Failed After Payment - Action Required',
+        html: `
+          <h2>Booking Failed After Payment</h2>
+          <p><strong>Error:</strong> ${error.message || 'Unknown error occurred'}</p>
+          <p><strong>Payment Order ID:</strong> ${razorpay_order_id}</p>
+          <p><strong>Payment ID:</strong> ${razorpay_payment_id}</p>
+          <p><strong>Error Stack:</strong></p>
+          <pre>${error.stack || JSON.stringify(error, null, 2)}</pre>
+          <p><em>Please investigate and manually create the session if needed.</em></p>
+        `
+      });
+      console.log('✅ Error notification email sent to admin');
+    } catch (emailErr) {
+      console.error('❌ Failed to send error notification email:', emailErr);
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Failed to process payment'
+      message: 'Failed to process payment. Our team has been notified and will resolve this shortly.'
     });
   }
 };
 
-// Handle PayU failure response
+// Handle Razorpay failure response
 const handlePaymentFailure = async (req, res) => {
   try {
-    const payuConfig = getPayUConfig();
     const params = req.body;
 
-    console.log('PayU Failure Response:', params);
+    console.log('Razorpay Failure Response:', params);
 
-    const { txnid, status, error_code, error_Message } = params;
+    const { razorpay_order_id, error } = params;
 
-    // Find payment record
+    if (!razorpay_order_id) {
+      console.error('❌ Missing Razorpay order ID in failure response');
+      return res.status(400).json({
+        success: false,
+        message: 'Missing order ID in failure response'
+      });
+    }
+
+    // Find payment record by Razorpay order ID
     const { data: paymentRecord, error: paymentError } = await supabase
       .from('payments')
       .select('*')
-      .eq('transaction_id', txnid)
+      .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
     if (paymentError || !paymentRecord) {
-      console.error('Payment record not found:', txnid);
+      console.error('Payment record not found for order:', razorpay_order_id);
       return res.status(404).json({
         success: false,
         message: 'Payment record not found'
@@ -924,8 +1031,8 @@ const handlePaymentFailure = async (req, res) => {
       .from('payments')
       .update({
         status: 'failed',
-        payu_response: params,
-        error_message: error_Message,
+        razorpay_response: params,
+        error_message: error?.description || error?.reason || 'Payment failed',
         failed_at: new Date().toISOString()
       })
       .eq('id', paymentRecord.id);
@@ -934,7 +1041,8 @@ const handlePaymentFailure = async (req, res) => {
       console.error('Error updating payment:', updateError);
     }
 
-    // Release session slot
+    // Release session slot if exists
+    if (paymentRecord.session_id) {
     const { error: sessionError } = await supabase
       .from('sessions')
       .update({
@@ -946,15 +1054,16 @@ const handlePaymentFailure = async (req, res) => {
 
     if (sessionError) {
       console.error('Error releasing session:', sessionError);
+      }
     }
 
     res.json({
       success: false,
       message: 'Payment failed',
       data: {
-        transactionId: txnid,
-        errorCode: error_code,
-        errorMessage: error_Message
+        transactionId: paymentRecord.transaction_id,
+        orderId: razorpay_order_id,
+        errorMessage: error?.description || error?.reason || 'Payment failed'
       }
     });
 
@@ -1042,13 +1151,15 @@ const createCashPayment = async (req, res) => {
         currency: 'INR',
         status: 'cash', // Cash payment status
         payment_method: 'cash',
-        payu_params: {
-          udf1: scheduledDate,
-          udf2: psychologistId,
-          udf3: clientId,
-          udf5: scheduledTime,
-          udf6: assessmentSessionId,
-          udf7: assessmentType || 'assessment'
+        razorpay_params: {
+          notes: {
+            scheduledDate: scheduledDate,
+            psychologistId: psychologistId,
+            clientId: clientId,
+            scheduledTime: scheduledTime,
+            assessmentSessionId: assessmentSessionId,
+            assessmentType: assessmentType || 'assessment'
+          }
         },
         assessment_session_id: assessmentSessionId,
         created_at: new Date().toISOString()

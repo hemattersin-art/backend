@@ -2264,15 +2264,44 @@ const reserveTimeSlot = async (req, res) => {
     // Get package details for pricing
     let package = null;
     if (package_id && package_id !== 'individual') {
-      const { data: packageData } = await supabase
+      console.log('🔍 Looking up package with ID:', package_id);
+      const { data: packageData, error: packageError } = await supabase
         .from('packages')
         .select('*')
         .eq('id', package_id)
         .single();
       
-      if (packageData) {
-        package = packageData;
+      if (packageError) {
+        console.error('❌ Package lookup error:', packageError);
+        return res.status(404).json(
+          errorResponse(`Package not found: ${packageError.message || 'Invalid package ID'}`)
+        );
       }
+      
+      if (!packageData) {
+        console.error('❌ Package not found for ID:', package_id);
+        return res.status(404).json(
+          errorResponse('Selected package not found. Please select a valid package.')
+        );
+      }
+      
+      package = packageData;
+      console.log('✅ Package found:', {
+        id: package.id,
+        name: package.name,
+        price: package.price,
+        session_count: package.session_count
+      });
+      
+      // Validate package has a price
+      if (!package.price || package.price <= 0) {
+        console.error('❌ Package price is missing or invalid:', package.price);
+        return res.status(400).json(
+          errorResponse('Selected package has an invalid price. Please contact support.')
+        );
+      }
+    } else {
+      console.log('ℹ️ Individual session selected');
     }
 
     // Get psychologist details
@@ -2288,16 +2317,49 @@ const reserveTimeSlot = async (req, res) => {
       );
     }
 
-    // Extract individual session price from psychologist description
-    let individualPrice = 100; // Default fallback
-    if (psychologistDetails.description) {
-      const priceMatch = psychologistDetails.description.match(/Individual Session Price: ₹(\d+(?:\.\d+)?)/);
-      if (priceMatch) {
-        individualPrice = parseFloat(priceMatch[1]);
+    // Determine price - no fallback, must be explicit
+    let price = null;
+    
+    if (package) {
+      // Package booking - use package price
+      price = package.price;
+      console.log('💰 Using package price:', price);
+    } else {
+      // Individual session - use individual_session_price field first, then fallback to description
+      if (psychologistDetails.individual_session_price) {
+        // Use dedicated individual_session_price field
+        price = parseFloat(psychologistDetails.individual_session_price);
+        console.log('✅ Using individual_session_price field:', price);
+      } else if (psychologistDetails.description) {
+        // Fallback: Try to extract from description
+        const priceMatch = psychologistDetails.description.match(/Individual Session Price: [₹\$](\d+(?:\.\d+)?)/);
+        if (priceMatch) {
+          price = parseFloat(priceMatch[1]);
+          console.log('✅ Extracted individual price from description:', price);
+        }
+      }
+      
+      // Validate individual session price
+      if (!price || price <= 0 || isNaN(price)) {
+        console.error('❌ Individual session price is missing or invalid:', {
+          individual_session_price: psychologistDetails.individual_session_price,
+          hasDescription: !!psychologistDetails.description
+        });
+        return res.status(400).json(
+          errorResponse('Individual session price is not configured. Please select a package or contact support.')
+        );
       }
     }
-
-    const price = package ? package.price : individualPrice;
+    
+    // Final validation - price must be valid
+    if (!price || price <= 0 || isNaN(price)) {
+      console.error('❌ Final price validation failed:', price);
+      return res.status(400).json(
+        errorResponse('Unable to determine session price. Please contact support.')
+      );
+    }
+    
+    console.log('💰 Final price:', price);
 
     res.json({
       success: true,

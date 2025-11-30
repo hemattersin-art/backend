@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
 // Get all receipts for a client
@@ -12,7 +13,7 @@ const getClientReceipts = async (req, res) => {
     console.log('🔍 Fetching receipts for client:', clientId);
 
     // 1) Fetch sessions for this client
-    const { data: clientSessions, error: sessionsError } = await supabase.supabaseAdmin
+    const { data: clientSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select('id, client_id, scheduled_date, scheduled_time, status, psychologist_id')
       .eq('client_id', clientId);
@@ -31,7 +32,7 @@ const getClientReceipts = async (req, res) => {
     const sessionMap = new Map(clientSessions.map(s => [s.id, s]));
 
     // 2) Fetch receipts for those sessions
-    const { data: receipts, error: receiptsError } = await supabase.supabaseAdmin
+    const { data: receipts, error: receiptsError } = await supabaseAdmin
       .from('receipts')
       .select('id, receipt_number, file_url, file_size, created_at, session_id, payment_id')
       .in('session_id', sessionIdList)
@@ -51,7 +52,7 @@ const getClientReceipts = async (req, res) => {
     const paymentIdList = receipts.map(r => r.payment_id).filter(Boolean);
     let payments = [];
     if (paymentIdList.length > 0) {
-      const { data: paymentsData, error: paymentsError } = await supabase.supabaseAdmin
+      const { data: paymentsData, error: paymentsError } = await supabaseAdmin
         .from('payments')
         .select('id, transaction_id, amount, status, completed_at')
         .in('id', paymentIdList);
@@ -67,7 +68,7 @@ const getClientReceipts = async (req, res) => {
     const psychologistIdList = Array.from(new Set(clientSessions.map(s => s.psychologist_id).filter(Boolean)));
     let psychologists = [];
     if (psychologistIdList.length > 0) {
-      const { data: psychologistsData, error: psychologistsError } = await supabase.supabaseAdmin
+      const { data: psychologistsData, error: psychologistsError } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name')
         .in('id', psychologistIdList);
@@ -125,7 +126,7 @@ const downloadReceipt = async (req, res) => {
     const userId = req.user.id;
 
     // Get client ID from clients table
-    const { data: clientData, error: clientDataError } = await supabase.supabaseAdmin
+    const { data: clientData, error: clientDataError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -141,7 +142,7 @@ const downloadReceipt = async (req, res) => {
     const clientId = clientData.id;
 
     // Get receipt by session_id
-    const { data: receipt, error: receiptError } = await supabase.supabaseAdmin
+    const { data: receipt, error: receiptError } = await supabaseAdmin
       .from('receipts')
       .select('id, receipt_number, file_url, file_path, session_id')
       .eq('session_id', receiptId)
@@ -155,7 +156,7 @@ const downloadReceipt = async (req, res) => {
     }
 
     // Verify the session belongs to this client
-    const { data: session, error: sessionError } = await supabase.supabaseAdmin
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('id, client_id')
       .eq('id', receipt.session_id)
@@ -280,7 +281,140 @@ const generateReceiptPDF = async (receipt) => {
   }
 };
 
+// Get receipt by Razorpay order ID
+const getReceiptByOrderId = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user.id;
+
+    if (!orderId) {
+      return res.status(400).json(
+        errorResponse('Order ID is required')
+      );
+    }
+
+    // Get client ID from clients table
+    // Clients table has user_id that references users.id
+    // Try new system first: lookup by user_id
+    let { data: clientData, error: clientDataError } = await supabaseAdmin
+      .from('clients')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    // Fallback to old system: lookup by id (backward compatibility)
+    if (clientDataError || !clientData) {
+      ({ data: clientData, error: clientDataError } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('id', userId)
+        .single());
+    }
+
+    if (clientDataError || !clientData) {
+      console.log('📝 No client profile found for user:', userId, clientDataError);
+      return res.status(404).json(
+        errorResponse('Client profile not found')
+      );
+    }
+
+    const clientId = clientData.id;
+    console.log('🔍 User ID:', userId, 'Client ID:', clientId);
+
+    // Find payment by razorpay_order_id
+    const { data: payment, error: paymentError } = await supabaseAdmin
+      .from('payments')
+      .select('id, session_id, client_id, razorpay_order_id, transaction_id')
+      .eq('razorpay_order_id', orderId)
+      .single();
+
+    if (paymentError || !payment) {
+      console.log('❌ Payment not found for order:', orderId, paymentError);
+      return res.status(404).json(
+        errorResponse('Payment not found')
+      );
+    }
+
+    console.log('🔍 Payment found - Payment client_id:', payment.client_id, 'User client_id:', clientId);
+
+    // Verify the payment belongs to this client
+    if (payment.client_id !== clientId) {
+      console.log('❌ Unauthorized receipt access - Payment client_id:', payment.client_id, 'does not match user client_id:', clientId);
+      return res.status(404).json(
+        errorResponse('Receipt not found')
+      );
+    }
+
+    // Get receipt by payment_id or session_id
+    const { data: receipt, error: receiptError } = await supabaseAdmin
+      .from('receipts')
+      .select('id, receipt_number, file_url, file_path, session_id, payment_id, created_at')
+      .eq('payment_id', payment.id)
+      .single();
+
+    if (receiptError || !receipt) {
+      console.log('❌ Receipt not found for payment:', payment.id);
+      return res.status(404).json(
+        errorResponse('Receipt not found')
+      );
+    }
+
+    console.log('✅ Receipt found for order:', orderId);
+
+    // Get session details for this payment
+    let sessionDetails = null;
+    if (payment.session_id) {
+      const { data: session, error: sessionError } = await supabaseAdmin
+        .from('sessions')
+        .select(`
+          id,
+          scheduled_date,
+          scheduled_time,
+          status,
+          psychologist:psychologists(
+            id,
+            first_name,
+            last_name
+          )
+        `)
+        .eq('id', payment.session_id)
+        .single();
+
+      if (!sessionError && session) {
+        sessionDetails = {
+          scheduled_date: session.scheduled_date,
+          scheduled_time: session.scheduled_time,
+          status: session.status,
+          psychologist: session.psychologist ? {
+            first_name: session.psychologist.first_name,
+            last_name: session.psychologist.last_name
+          } : null
+        };
+        console.log('✅ Session details found:', sessionDetails);
+      }
+    }
+
+    return res.json(
+      successResponse({
+        receipt_number: receipt.receipt_number,
+        file_url: receipt.file_url,
+        file_path: receipt.file_path,
+        created_at: receipt.created_at,
+        transaction_id: payment.transaction_id,
+        session: sessionDetails // Include session details
+      }, 'Receipt fetched successfully')
+    );
+
+  } catch (error) {
+    console.error('Get receipt by order ID error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching receipt')
+    );
+  }
+};
+
 module.exports = {
   getClientReceipts,
-  downloadReceipt
+  downloadReceipt,
+  getReceiptByOrderId
 };

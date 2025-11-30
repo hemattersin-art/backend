@@ -15,7 +15,7 @@ router.post('/create-order', authenticateToken, createPaymentOrder);
 // Create cash payment (requires authentication)
 router.post('/cash', authenticateToken, createCashPayment);
 
-// PayU webhook endpoints (no authentication required)
+// Razorpay webhook endpoints (no authentication required)
 router.post('/success', handlePaymentSuccess);
 router.post('/failure', handlePaymentFailure);
 
