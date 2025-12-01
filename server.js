@@ -480,7 +480,13 @@ const formatPublicPsychologist = (psych) => {
     description: psych.description || 'Professional psychologist dedicated to helping clients achieve mental wellness.',
     profile_picture_url: null,
     cover_image_url: psych.cover_image_url,
-    price: extractedPrice
+    price: extractedPrice,
+    faq_question_1: psych.faq_question_1 || null,
+    faq_answer_1: psych.faq_answer_1 || null,
+    faq_question_2: psych.faq_question_2 || null,
+    faq_answer_2: psych.faq_answer_2 || null,
+    faq_question_3: psych.faq_question_3 || null,
+    faq_answer_3: psych.faq_answer_3 || null
   };
 };
 
@@ -509,7 +515,13 @@ app.get('/api/public/psychologists', async (req, res) => {
         display_order,
         created_at,
         designation,
-        languages_json
+        languages_json,
+        faq_question_1,
+        faq_answer_1,
+        faq_question_2,
+        faq_answer_2,
+        faq_question_3,
+        faq_answer_3
       `)
       .order('created_at', { ascending: false });
 

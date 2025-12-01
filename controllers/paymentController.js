@@ -752,8 +752,8 @@ const handlePaymentSuccess = async (req, res) => {
         razorpayPaymentId: razorpay_payment_id,
         amount: paymentRecord.amount
       }
-    });
-
+      });
+      
     // ASYNC: Create gmeet link, send emails and WhatsApp in background (don't wait)
     // This runs after response is sent, so it doesn't block the user
     (async () => {
@@ -766,10 +766,10 @@ const handlePaymentSuccess = async (req, res) => {
           console.log('🔄 Creating Google Meet meeting via OAuth2 (async)...');
           
           const meetSessionData = {
-            summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
-            description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-            startDate: actualScheduledDate,
-            startTime: actualScheduledTime,
+        summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
+        description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+        startDate: actualScheduledDate,
+        startTime: actualScheduledTime,
             endTime: addMinutesToTime(actualScheduledTime, 50),
             // Add both emails as attendees - this ensures they can join without host approval
             clientEmail: clientDetails.user?.email,
@@ -791,14 +791,14 @@ const handlePaymentSuccess = async (req, res) => {
           }
           
           const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
-          
-          if (meetResult.success) {
-            meetData = {
-              meetLink: meetResult.meetLink,
-              eventId: meetResult.eventId,
-              calendarLink: meetResult.eventLink || null,
-              method: meetResult.method
-            };
+      
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
             console.log('✅ Real Meet link created successfully (async):', meetResult);
             
             // Update session with meet link
@@ -814,33 +814,33 @@ const handlePaymentSuccess = async (req, res) => {
               .eq('id', session.id);
             
             console.log('✅ Session updated with meet link');
-          } else {
-            meetData = {
+      } else {
+        meetData = {
               meetLink: meetResult.meetLink,
-              eventId: null,
-              calendarLink: null,
-              method: 'fallback'
-            };
+          eventId: null,
+          calendarLink: null,
+          method: 'fallback'
+        };
             console.log('⚠️ Using fallback Meet link (async):', meetResult.meetLink);
-          }
-        } catch (meetError) {
+      }
+    } catch (meetError) {
           console.error('❌ Error creating OAuth2 meeting (async):', meetError);
         }
 
         // Send confirmation emails with receipt (async)
         try {
           console.log('📧 Sending confirmation emails with receipt (async)...');
-          
-          await emailService.sendSessionConfirmation({
-            clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
-            psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
-            sessionDate: actualScheduledDate,
-            sessionTime: actualScheduledTime,
-            sessionDuration: '60 minutes',
-            clientEmail: clientDetails.user?.email,
-            psychologistEmail: psychologistDetails.email,
-            googleMeetLink: meetData?.meetLink,
-            sessionId: session.id,
+      
+      await emailService.sendSessionConfirmation({
+        clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+        psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+        sessionDate: actualScheduledDate,
+        sessionTime: actualScheduledTime,
+        sessionDuration: '60 minutes',
+        clientEmail: clientDetails.user?.email,
+        psychologistEmail: psychologistDetails.email,
+        googleMeetLink: meetData?.meetLink,
+        sessionId: session.id,
             transactionId: paymentRecord.transaction_id,
             amount: paymentRecord.amount,
             price: paymentRecord.amount, // Also pass as 'price' for email service
@@ -849,104 +849,104 @@ const handlePaymentSuccess = async (req, res) => {
             clientId: session.client_id || clientId,
             receiptUrl: receiptResult?.fileUrl || null,
             receiptPdfBuffer: receiptResult?.pdfBuffer || null
-          });
-          
+      });
+      
           console.log('✅ Confirmation emails sent successfully with receipt (async)');
-        } catch (emailError) {
+    } catch (emailError) {
           console.error('❌ Error sending confirmation emails (async):', emailError);
-        }
+    }
 
         // Send WhatsApp messages (async)
-        try {
+    try {
           console.log('📱 Sending WhatsApp messages via UltraMsg API (async)...');
-          const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-          
-          const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
-          const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+      const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
-          // Send WhatsApp to client
-          const clientPhone = clientDetails.phone_number || null;
-          if (clientPhone && meetData?.meetLink) {
-            const clientDetails_wa = {
-              childName: clientDetails.child_name || clientDetails.first_name,
-              date: actualScheduledDate,
-              time: actualScheduledTime,
-              meetLink: meetData.meetLink,
-            };
-            const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
-            if (clientWaResult?.success) {
+      // Send WhatsApp to client
+      const clientPhone = clientDetails.phone_number || null;
+      if (clientPhone && meetData?.meetLink) {
+        const clientDetails_wa = {
+          childName: clientDetails.child_name || clientDetails.first_name,
+          date: actualScheduledDate,
+          time: actualScheduledTime,
+          meetLink: meetData.meetLink,
+        };
+        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+        if (clientWaResult?.success) {
               console.log('✅ WhatsApp confirmation sent to client via UltraMsg (async)');
-            } else if (clientWaResult?.skipped) {
-              console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
-            } else {
-              console.warn('⚠️ Client WhatsApp send failed');
-            }
-          } else {
-            console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
-          }
+        } else if (clientWaResult?.skipped) {
+          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+        } else {
+          console.warn('⚠️ Client WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+      }
 
-          // Send WhatsApp to psychologist
-          const psychologistPhone = psychologistDetails.phone || null;
-          if (psychologistPhone && meetData?.meetLink) {
-            const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
-            
-            const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
-            if (psychologistWaResult?.success) {
+      // Send WhatsApp to psychologist
+      const psychologistPhone = psychologistDetails.phone || null;
+      if (psychologistPhone && meetData?.meetLink) {
+        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        
+        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+        if (psychologistWaResult?.success) {
               console.log('✅ WhatsApp notification sent to psychologist via UltraMsg (async)');
-            } else if (psychologistWaResult?.skipped) {
-              console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
-            } else {
-              console.warn('⚠️ Psychologist WhatsApp send failed');
-            }
-          } else {
-            console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
-          }
-          
+        } else if (psychologistWaResult?.skipped) {
+          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+        } else {
+          console.warn('⚠️ Psychologist WhatsApp send failed');
+        }
+      } else {
+        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+      }
+      
           console.log('✅ WhatsApp messages sent successfully via UltraMsg (async)');
-        } catch (whatsappError) {
+    } catch (whatsappError) {
           console.error('❌ Error sending WhatsApp messages (async):', whatsappError);
         }
         
         console.log('✅ Async gmeet link creation and notifications completed');
       } catch (asyncError) {
         console.error('❌ Error in async background process:', asyncError);
-      }
+    }
     })(); // Immediately invoked async function - runs in background
 
     // Continue with async processes (don't block response)
     // If package booking, create client package record (async)
     if (actualPackageId && actualPackageId !== 'individual') {
       (async () => {
-        try {
+      try {
           console.log('📦 Creating client package record (async)...');
-          const { data: packageData } = await supabase
-            .from('packages')
-            .select('*')
-            .eq('id', actualPackageId)
-            .single();
+        const { data: packageData } = await supabase
+          .from('packages')
+          .select('*')
+          .eq('id', actualPackageId)
+          .single();
 
-          if (packageData) {
-            const { created, error: clientPackageError } = await ensureClientPackageRecord({
-              clientId,
-              psychologistId: actualPsychologistId,
-              packageId: actualPackageId,
-              sessionId: session.id,
-              purchasedAt: new Date().toISOString(),
-              packageData,
-              consumedSessions: 1
-            });
+        if (packageData) {
+          const { created, error: clientPackageError } = await ensureClientPackageRecord({
+            clientId,
+            psychologistId: actualPsychologistId,
+            packageId: actualPackageId,
+            sessionId: session.id,
+            purchasedAt: new Date().toISOString(),
+            packageData,
+            consumedSessions: 1
+          });
 
-            if (clientPackageError) {
-              console.error('❌ Client package creation failed:', clientPackageError);
-            } else if (created) {
+          if (clientPackageError) {
+            console.error('❌ Client package creation failed:', clientPackageError);
+          } else if (created) {
               console.log('✅ Client package record created successfully (async)');
-            } else {
-              console.log('ℹ️ Client package record already existed for this session');
-            }
+          } else {
+            console.log('ℹ️ Client package record already existed for this session');
           }
-        } catch (packageError) {
-          console.error('❌ Exception while creating client package (async):', packageError);
         }
+      } catch (packageError) {
+          console.error('❌ Exception while creating client package (async):', packageError);
+      }
       })();
     }
 

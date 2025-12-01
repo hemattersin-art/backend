@@ -411,7 +411,13 @@ const getAllPsychologists = async (req, res) => {
       personality_traits: psych.personality_traits || [], // NEW
       availability: [], // Will be populated below
       cover_image_url: psych.cover_image_url || null,
-      display_order: psych.display_order || null // Display order for sorting
+      display_order: psych.display_order || null, // Display order for sorting
+      faq_question_1: psych.faq_question_1 || null,
+      faq_answer_1: psych.faq_answer_1 || null,
+      faq_question_2: psych.faq_question_2 || null,
+      faq_answer_2: psych.faq_answer_2 || null,
+      faq_question_3: psych.faq_question_3 || null,
+      faq_answer_3: psych.faq_answer_3 || null
     }));
 
     // Extract individual price from dedicated field or description field
@@ -948,7 +954,13 @@ const createPsychologist = async (req, res) => {
       price, // Individual session price
       cover_image_url, // Doctor's profile image
       personality_traits, // NEW: array of strings like ['Happy','Energetic']
-      display_order // Display order for sorting
+      display_order, // Display order for sorting
+      faq_question_1,
+      faq_answer_1,
+      faq_question_2,
+      faq_answer_2,
+      faq_question_3,
+      faq_answer_3
     } = req.body;
 
     // Keep email as-is (don't normalize dots away)
@@ -990,7 +1002,13 @@ const createPsychologist = async (req, res) => {
         experience_years: experience_years || 0,
         individual_session_price: price ? parseInt(price) : null,
         cover_image_url: cover_image_url || null,
-        display_order: display_order ? parseInt(display_order) : null
+        display_order: display_order ? parseInt(display_order) : null,
+        faq_question_1: faq_question_1 || null,
+        faq_answer_1: faq_answer_1 || null,
+        faq_question_2: faq_question_2 || null,
+        faq_answer_2: faq_answer_2 || null,
+        faq_question_3: faq_question_3 || null,
+        faq_answer_3: faq_answer_3 || null
       }])
       .select('*')
       .single();

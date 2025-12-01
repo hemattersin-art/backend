@@ -2285,7 +2285,7 @@ const reserveTimeSlot = async (req, res) => {
         );
       }
       
-      package = packageData;
+        package = packageData;
       console.log('✅ Package found:', {
         id: package.id,
         name: package.name,
@@ -2333,12 +2333,12 @@ const reserveTimeSlot = async (req, res) => {
       } else if (psychologistDetails.description) {
         // Fallback: Try to extract from description
         const priceMatch = psychologistDetails.description.match(/Individual Session Price: [₹\$](\d+(?:\.\d+)?)/);
-        if (priceMatch) {
+      if (priceMatch) {
           price = parseFloat(priceMatch[1]);
           console.log('✅ Extracted individual price from description:', price);
-        }
       }
-      
+    }
+
       // Validate individual session price
       if (!price || price <= 0 || isNaN(price)) {
         console.error('❌ Individual session price is missing or invalid:', {

@@ -388,8 +388,8 @@ class MeetLinkService {
       try {
         // Try with attendees first (in case OAuth is used, which allows attendees)
         result = await calendar.events.insert({
-          calendarId: 'primary',
-          conferenceDataVersion: 1,
+        calendarId: 'primary',
+        conferenceDataVersion: 1,
           requestBody: event,
           sendUpdates: 'all' // Try to send invites first
         });
