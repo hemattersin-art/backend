@@ -138,13 +138,18 @@ async function sendAssessmentWhatsapps({ session, clientName, meetLink }) {
     const assessmentName = session.assessment?.hero_title ||
       session.assessment?.seo_title ||
       'Assessment session';
+    const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
     const message =
-      `Assessment session booked with ${clientName}.\n\n` +
-      `Assessment: ${assessmentName}\n` +
-      `Date: ${scheduledDate}\n` +
-      `Time: ${scheduledTime}\n\n` +
-      `Join via Google Meet: ${meetLink}\n\n` +
-      `Session ID: ${session.id}`;
+      `🧸 New assessment session booked.\n\n` +
+      `Session details:\n\n` +
+      `👧 Client: ${clientName}\n\n` +
+      `📝 Assessment: ${assessmentName}\n\n` +
+      `📅 Date: ${scheduledDate}\n\n` +
+      `⏰ Time: ${scheduledTime} (IST)\n\n` +
+      `🔗 Google Meet: ${meetLink}\n\n` +
+      `🆔 Session ID: ${session.id}\n\n` +
+      `📞 For support or scheduling issues, contact Little Care support:\n` +
+      `WhatsApp / Call: ${supportPhone}`;
 
     try {
       await sendWhatsAppTextWithRetry(psychologistPhone, message);

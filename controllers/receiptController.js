@@ -202,7 +202,7 @@ const generateReceiptPDF = async (receipt) => {
     });
 
     // Add company logo/header
-    doc.fontSize(24).font('Helvetica-Bold').text('Kuttikal', { align: 'center' });
+    doc.fontSize(24).font('Helvetica-Bold').text('Little Care', { align: 'center' });
     doc.fontSize(12).font('Helvetica').text('Mental Health & Wellness Platform', { align: 'center' });
     doc.moveDown();
 
@@ -251,7 +251,7 @@ const generateReceiptPDF = async (receipt) => {
     doc.moveDown();
 
     // Footer
-    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Kuttikal for your mental health needs.', { align: 'center' });
+    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Little Care for your mental health needs.', { align: 'center' });
     doc.text('For any queries, please contact our support team.', { align: 'center' });
 
     doc.end();

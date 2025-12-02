@@ -107,7 +107,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     });
 
     // Add company logo/header
-    doc.fontSize(24).font('Helvetica-Bold').text('Kuttikal', { align: 'center' });
+    doc.fontSize(24).font('Helvetica-Bold').text('Little Care', { align: 'center' });
     doc.fontSize(12).font('Helvetica').text('Mental Health & Wellness Platform', { align: 'center' });
     doc.moveDown();
 
@@ -156,7 +156,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     doc.moveDown();
 
     // Footer
-    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Kuttikal for your mental health needs.', { align: 'center' });
+    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Little Care for your mental health needs.', { align: 'center' });
     doc.text('For any queries, please contact our support team.', { align: 'center' });
 
     doc.end();
@@ -636,7 +636,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
       .from('psychologists')
-      .select('first_name, last_name, email, google_calendar_credentials')
+      .select('first_name, last_name, email, phone, google_calendar_credentials')
       .eq('id', actualPsychologistId)
       .single();
 
@@ -858,7 +858,7 @@ const handlePaymentSuccess = async (req, res) => {
 
         // Send WhatsApp messages (async)
     try {
-          console.log('📱 Sending WhatsApp messages via UltraMsg API (async)...');
+          console.log('📱 Sending WhatsApp messages via WhatsApp API (async)...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -872,10 +872,12 @@ const handlePaymentSuccess = async (req, res) => {
           date: actualScheduledDate,
           time: actualScheduledTime,
           meetLink: meetData.meetLink,
+          // Pass receipt URL so we can send the PDF via WhatsApp as well
+          receiptUrl: receiptResult?.fileUrl || null
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
-              console.log('✅ WhatsApp confirmation sent to client via UltraMsg (async)');
+              console.log('✅ WhatsApp confirmation & receipt sent to client via WhatsApp API (async)');
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
         } else {
@@ -885,14 +887,24 @@ const handlePaymentSuccess = async (req, res) => {
         console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
       }
 
-      // Send WhatsApp to psychologist
+      // Send WhatsApp to psychologist (single detailed message)
       const psychologistPhone = psychologistDetails.phone || null;
       if (psychologistPhone && meetData?.meetLink) {
-        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${actualScheduledDate}\nTime: ${actualScheduledTime}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+        const psychologistMessage =
+          `🧸 New session booked.\n\n` +
+          `Session details:\n\n` +
+          `👧 Client: ${clientName}\n\n` +
+          `📅 Date: ${actualScheduledDate}\n\n` +
+          `⏰ Time: ${actualScheduledTime} (IST)\n\n` +
+          `🔗 Google Meet: ${meetData.meetLink}\n\n` +
+          `🆔 Session ID: ${session.id}\n\n` +
+          `📞 For support or scheduling issues, contact Little Care support:\n` +
+          `WhatsApp / Call: ${supportPhone}`;
         
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {
-              console.log('✅ WhatsApp notification sent to psychologist via UltraMsg (async)');
+              console.log('✅ WhatsApp notification sent to psychologist via WhatsApp API (async)');
         } else if (psychologistWaResult?.skipped) {
           console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
         } else {

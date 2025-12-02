@@ -52,7 +52,7 @@ function generateCalendarInvite(sessionData) {
   const icalContent = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Kuttikal//Therapy Sessions//EN',
+    'PRODID:-//Little Care//Therapy Sessions//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:REQUEST',
     'BEGIN:VTIMEZONE',

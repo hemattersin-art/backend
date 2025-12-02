@@ -221,7 +221,7 @@ class SecurityNotificationSystem extends EventEmitter {
           </div>
 
           <div class="footer">
-            <p>This is an automated security alert from Kuttikal Security System.</p>
+            <p>This is an automated security alert from Little Care Security System.</p>
             <p>Please do not reply to this email.</p>
           </div>
         </div>

@@ -1,7 +1,7 @@
 {
   "name": "kuttikal-backend",
   "version": "1.0.0",
-  "description": "Backend for Kuttikal Child Therapy Platform",
+  "description": "Backend for Little Care Child Therapy Platform",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,7 +14,7 @@
     "express",
     "supabase"
   ],
-  "author": "Kuttikal Team",
+  "author": "Little Care Team",
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",

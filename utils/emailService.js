@@ -279,7 +279,7 @@ class EmailService {
             
             <p>We look forward to supporting you on your wellness journey!</p>
             
-            <p>Best regards,<br>The Kuttikal Team</p>
+            <p>Best regards,<br>The Little Care Team</p>
           </div>
           
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
@@ -392,7 +392,7 @@ class EmailService {
             
             <p>If you need to reschedule or have any questions, please contact the admin team.</p>
             
-            <p>Best regards,<br>The Kuttikal Team</p>
+            <p>Best regards,<br>The Little Care Team</p>
           </div>
           
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
@@ -454,12 +454,12 @@ class EmailService {
             
             <p>This session has been automatically added to the Google Calendar and all parties have been notified.</p>
             
-            <p>Best regards,<br>Kuttikal Platform</p>
+            <p>Best regards,<br>Little Care Platform</p>
           </div>
           
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
             <p style="color: #6c757d; font-size: 14px;">
-              This is an automated notification from the Kuttikal therapy platform.
+              This is an automated notification from the Little Care therapy platform.
             </p>
           </div>
         </div>
@@ -594,7 +594,7 @@ class EmailService {
             
             <p>If you have any questions or need to make further changes, please contact us.</p>
             
-            <p>Best regards,<br>The Kuttikal Team</p>
+            <p>Best regards,<br>The Little Care Team</p>
           </div>
           
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
@@ -745,7 +745,7 @@ class EmailService {
               
               <p>We look forward to meeting you!</p>
               
-              <p>Best regards,<br>The Kuttikal Team</p>
+              <p>Best regards,<br>The Little Care Team</p>
             </div>
             
             <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
@@ -789,7 +789,7 @@ If you need to cancel or reschedule, please contact us at least 24 hours in adva
 We look forward to meeting you!
 
 Best regards,
-The Kuttikal Team
+The Little Care Team
       `
     };
 
@@ -850,7 +850,7 @@ The Kuttikal Team
             
             <p>Please ensure you're available at the scheduled time.</p>
             
-            <p>Best regards,<br>The Kuttikal Team</p>
+            <p>Best regards,<br>The Little Care Team</p>
           </div>
           
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
@@ -963,13 +963,13 @@ The Kuttikal Team
               
               <p style="color: #4a5568; line-height: 1.6;">
                 Best regards,<br>
-                <strong>The Kuttikal Team</strong>
+                <strong>The Little Care Team</strong>
               </p>
             </div>
             
             <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
               <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Kuttikal. All rights reserved.</p>
+              <p>&copy; 2024 Little Care. All rights reserved.</p>
             </div>
           </div>
         `
@@ -1057,13 +1057,13 @@ The Kuttikal Team
               
               <p style="color: #4a5568; line-height: 1.6;">
                 Best regards,<br>
-                <strong>The Kuttikal Team</strong>
+                <strong>The Little Care Team</strong>
               </p>
             </div>
             
             <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
               <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Kuttikal. All rights reserved.</p>
+              <p>&copy; 2024 Little Care. All rights reserved.</p>
             </div>
           </div>
         `
@@ -1137,13 +1137,13 @@ The Kuttikal Team
               
               <p style="color: #4a5568; line-height: 1.6;">
                 Best regards,<br>
-                <strong>The Kuttikal Team</strong>
+                <strong>The Little Care Team</strong>
               </p>
             </div>
             
             <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
               <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Kuttikal. All rights reserved.</p>
+              <p>&copy; 2024 Little Care. All rights reserved.</p>
             </div>
           </div>
         `

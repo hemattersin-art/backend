@@ -398,7 +398,7 @@ const bookSession = async (req, res) => {
 
     const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
       .from('psychologists')
-      .select('first_name, last_name, email')
+      .select('first_name, last_name, email, phone')
       .eq('id', psychologist_id)
       .single();
 
@@ -599,14 +599,24 @@ const bookSession = async (req, res) => {
           console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
         }
 
-        // Send WhatsApp to psychologist
+        // Send WhatsApp to psychologist (single detailed message)
         const psychologistPhone = psychologistDetails.phone || null;
         if (psychologistPhone && meetData?.meetLink) {
-          const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+          const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+          const psychologistMessage =
+            `🧸 New session booked.\n\n` +
+            `Session details:\n\n` +
+            `👧 Client: ${clientName}\n\n` +
+            `📅 Date: ${scheduled_date}\n\n` +
+            `⏰ Time: ${scheduled_time} (IST)\n\n` +
+            `🔗 Google Meet: ${meetData.meetLink}\n\n` +
+            `🆔 Session ID: ${session.id}\n\n` +
+            `📞 For support or scheduling issues, contact Little Care support:\n` +
+            `WhatsApp / Call: ${supportPhone}`;
           
           const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
           if (psychologistWaResult?.success) {
-            console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
+            console.log('✅ WhatsApp notification sent to psychologist via WhatsApp API');
           } else if (psychologistWaResult?.skipped) {
             console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
           } else {
@@ -1039,14 +1049,23 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // Check 24-hour rule: if session is within 24 hours, require admin approval
-    const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`);
-    const now = new Date();
-    const hoursUntilSession = (sessionDateTime - now) / (1000 * 60 * 60);
+    // Check 24-hour rule: if session is within 24 hours (IST), require admin approval
+    const dayjs = require('dayjs');
+    const utc = require('dayjs/plugin/utc');
+    const timezone = require('dayjs/plugin/timezone');
+    dayjs.extend(utc);
+    dayjs.extend(timezone);
+
+    const sessionDateTime = dayjs(
+      `${session.scheduled_date} ${session.scheduled_time}`,
+      'YYYY-MM-DD HH:mm:ss'
+    ).tz('Asia/Kolkata');
+    const now = dayjs().tz('Asia/Kolkata');
+    const hoursUntilSession = sessionDateTime.diff(now, 'hour', true);
     
-    console.log('🕐 24-hour rule check:', {
-      sessionDateTime: sessionDateTime.toISOString(),
-      now: now.toISOString(),
+    console.log('🕐 24-hour rule check (IST):', {
+      sessionDateTime: sessionDateTime.format('YYYY-MM-DD HH:mm:ss'),
+      now: now.format('YYYY-MM-DD HH:mm:ss'),
       hoursUntilSession: hoursUntilSession.toFixed(2)
     });
 
