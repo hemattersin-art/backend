@@ -660,20 +660,21 @@ const getAvailability = async (req, res) => {
           );
           const busySlots = result.busySlots || [];
 
-          // Filter logic (matches calendarSyncService):
-          // 1. Block ALL external events (regardless of Google Meet link)
-          // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
-          // 3. Exclude public holidays
+          // Filter logic:
+          // 1. Block ALL events in Google Calendar (system events, external events, etc.)
+          //    - If an event corresponds to a session in our database, it's already blocked by the session
+          //    - If an event doesn't correspond to a session, it should still block (orphaned system event or external event)
+          // 2. Exclude only public holidays
+          // 3. Exclude cancelled/deleted events
           const externalSlots = busySlots.filter(slot => {
+            // Skip cancelled or deleted events
+            if (slot.status === 'cancelled') {
+              return false;
+            }
+            
             const title = (slot.title || '').toLowerCase();
             
-            // Exclude our system events
-            const isSystemEvent = 
-              title.includes('littleminds') || 
-              title.includes('little care') ||
-              title.includes('kuttikal');
-            
-            // Exclude public holidays (common patterns)
+            // Exclude only public holidays (common patterns)
             const isPublicHoliday = 
               title.includes('holiday') ||
               title.includes('public holiday') ||
@@ -682,18 +683,25 @@ const getAvailability = async (req, res) => {
               title.includes('celebration') ||
               title.includes('observance');
             
-            // Block ALL events that are NOT system events and NOT public holidays
-            return !isSystemEvent && !isPublicHoliday;
+            // Block ALL events that are NOT public holidays
+            // Note: System events will also block, but if they correspond to sessions in our DB,
+            // those sessions will already block the slot (no double-blocking issue)
+            return !isPublicHoliday;
           });
 
           console.log(`📅 Found ${busySlots.length} total Google Calendar events, ${externalSlots.length} external events (including Google Meet sessions) to block`);
 
           // Process availability data to remove external Google Calendar events (already filtered booked sessions above)
           const processedAvailability = filteredAvailability.map(dayAvailability => {
-            // Get all external events for this date
+            // Get all external events for this date (including multi-day events)
             const dayExternalEvents = externalSlots.filter(slot => {
-              const slotDate = new Date(slot.start).toISOString().split('T')[0];
-              return slotDate === dayAvailability.date;
+              const slotStartDate = new Date(slot.start).toISOString().split('T')[0];
+              const slotEndDate = new Date(slot.end).toISOString().split('T')[0];
+              
+              // Include event if:
+              // 1. Event starts on this date, OR
+              // 2. Event ends on this date (multi-day event)
+              return slotStartDate === dayAvailability.date || slotEndDate === dayAvailability.date;
             });
 
             // Get already booked times for this date (from database sessions)
@@ -705,6 +713,9 @@ const getAvailability = async (req, res) => {
             dayExternalEvents.forEach(event => {
               const eventStart = new Date(event.start);
               const eventEnd = new Date(event.end);
+              const eventStartDate = eventStart.toISOString().split('T')[0];
+              const eventEndDate = eventEnd.toISOString().split('T')[0];
+              const isMultiDayEvent = eventStartDate !== eventEndDate;
               
               // For each time slot in availability, check if it overlaps with this event
               (dayAvailability.time_slots || []).forEach(slot => {
@@ -719,7 +730,27 @@ const getAvailability = async (req, res) => {
                 slotEnd.setHours(slotHour + 1, slotMinute, 0, 0);
                 
                 // Check if slot overlaps with event
-                if (slotStart < eventEnd && slotEnd > eventStart) {
+                let overlaps = false;
+                
+                if (isMultiDayEvent) {
+                  // Multi-day event: check if this date is the start date or end date
+                  if (dayAvailability.date === eventStartDate) {
+                    // On start date: block from event start time until end of day
+                    const endOfDay = new Date(availabilityDate);
+                    endOfDay.setHours(23, 59, 59, 999);
+                    overlaps = slotStart < endOfDay && slotEnd > eventStart;
+                  } else if (dayAvailability.date === eventEndDate) {
+                    // On end date: block from start of day until event end time
+                    const startOfDay = new Date(availabilityDate);
+                    startOfDay.setHours(0, 0, 0, 0);
+                    overlaps = slotStart < eventEnd && slotEnd > startOfDay;
+                  }
+                } else {
+                  // Single-day event: standard overlap check
+                  overlaps = slotStart < eventEnd && slotEnd > eventStart;
+                }
+                
+                if (overlaps) {
                   googleCalendarBlockedTimes.add(slotTime);
                 }
               });

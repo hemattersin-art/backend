@@ -32,6 +32,7 @@ const emailVerificationRoutes = require('./routes/emailVerification');
 const calendarSyncService = require('./services/calendarSyncService');
 const sessionReminderService = require('./services/sessionReminderService');
 const dailyAvailabilityService = require('./services/dailyAvailabilityService');
+const dailyFreeAssessmentService = require('./services/dailyFreeAssessmentService');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
@@ -1265,6 +1266,9 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   
   // Start Daily Availability service (adds next day at 12 AM)
   dailyAvailabilityService.start();
+  
+  // Start Daily Free Assessment Availability service (adds next day at 12 AM)
+  dailyFreeAssessmentService.start();
 });
 
 module.exports = app;

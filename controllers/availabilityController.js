@@ -280,20 +280,21 @@ const getAvailability = async (req, res) => {
         );
         const busySlots = result.busySlots || [];
 
-        // Filter logic (matches calendarSyncService):
-        // 1. Block ALL external events (regardless of Google Meet link)
-        // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
-        // 3. Exclude public holidays
+        // Filter logic:
+        // 1. Block ALL events in Google Calendar (system events, external events, etc.)
+        //    - If an event corresponds to a session in our database, it's already blocked by the session
+        //    - If an event doesn't correspond to a session, it should still block (orphaned system event or external event)
+        // 2. Exclude only public holidays
+        // 3. Exclude cancelled/deleted events
         externalGoogleCalendarEvents = busySlots.filter(slot => {
+          // Skip cancelled or deleted events
+          if (slot.status === 'cancelled') {
+            return false;
+          }
+          
           const title = (slot.title || '').toLowerCase();
           
-          // Exclude our system events
-          const isSystemEvent = 
-            title.includes('littleminds') || 
-            title.includes('little care') ||
-            title.includes('kuttikal');
-          
-          // Exclude public holidays (common patterns)
+          // Exclude only public holidays (common patterns)
           const isPublicHoliday = 
             title.includes('holiday') ||
             title.includes('public holiday') ||
@@ -302,8 +303,10 @@ const getAvailability = async (req, res) => {
             title.includes('celebration') ||
             title.includes('observance');
           
-          // Block ALL events that are NOT system events and NOT public holidays
-          return !isSystemEvent && !isPublicHoliday;
+          // Block ALL events that are NOT public holidays
+          // Note: System events will also block, but if they correspond to sessions in our DB,
+          // those sessions will already block the slot (no double-blocking issue)
+          return !isPublicHoliday;
         });
 
         console.log(`📅 Found ${externalGoogleCalendarEvents.length} external Google Calendar events (including Google Meet sessions) for psychologist ${psychologist_id}`);
@@ -332,16 +335,24 @@ const getAvailability = async (req, res) => {
           bookedTimesSet.add(normalizedTime);
         });
 
-      // Also check external Google Calendar events for this date
+      // Also check external Google Calendar events for this date (including multi-day events)
       const dayExternalEvents = externalGoogleCalendarEvents.filter(event => {
-        const eventDate = new Date(event.start).toISOString().split('T')[0];
-        return eventDate === avail.date;
+        const eventStartDate = new Date(event.start).toISOString().split('T')[0];
+        const eventEndDate = new Date(event.end).toISOString().split('T')[0];
+        
+        // Include event if:
+        // 1. Event starts on this date, OR
+        // 2. Event ends on this date (multi-day event)
+        return eventStartDate === avail.date || eventEndDate === avail.date;
       });
 
       // Block time slots that overlap with external Google Calendar events
       dayExternalEvents.forEach(event => {
         const eventStart = new Date(event.start);
         const eventEnd = new Date(event.end);
+        const eventStartDate = eventStart.toISOString().split('T')[0];
+        const eventEndDate = eventEnd.toISOString().split('T')[0];
+        const isMultiDayEvent = eventStartDate !== eventEndDate;
         
         // For each time slot in availability, check if it overlaps with this event
         (avail.time_slots || []).forEach(slot => {
@@ -356,7 +367,27 @@ const getAvailability = async (req, res) => {
           slotEnd.setHours(slotHour + 1, slotMinute, 0, 0);
           
           // Check if slot overlaps with event
-          if (slotStart < eventEnd && slotEnd > eventStart) {
+          let overlaps = false;
+          
+          if (isMultiDayEvent) {
+            // Multi-day event: check if this date is the start date or end date
+            if (avail.date === eventStartDate) {
+              // On start date: block from event start time until end of day
+              const endOfDay = new Date(availabilityDate);
+              endOfDay.setHours(23, 59, 59, 999);
+              overlaps = slotStart < endOfDay && slotEnd > eventStart;
+            } else if (avail.date === eventEndDate) {
+              // On end date: block from start of day until event end time
+              const startOfDay = new Date(availabilityDate);
+              startOfDay.setHours(0, 0, 0, 0);
+              overlaps = slotStart < eventEnd && slotEnd > startOfDay;
+            }
+          } else {
+            // Single-day event: standard overlap check
+            overlaps = slotStart < eventEnd && slotEnd > eventStart;
+          }
+          
+          if (overlaps) {
             bookedTimesSet.add(slotTime);
           }
         });
@@ -770,76 +801,106 @@ const syncGoogleCalendar = async (req, res) => {
         let eventEndMinutes = eventEndIST.minutesFromMidnight;
         
         // Handle events that span midnight or multiple days
-        if (eventEndMinutes < eventStartMinutes) {
-          eventEndMinutes = eventEndMinutes + (24 * 60);
-        }
-        
-        // Handle multi-day events
         const startDate = new Date(event.start);
         const endDate = new Date(event.end);
-        const daysDiff = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
-        if (daysDiff > 0) {
-          eventEndMinutes = 24 * 60 - 1; // End of day
-        }
+        const startDateStr = startDate.toISOString().split('T')[0];
+        const endDateStr = endDate.toISOString().split('T')[0];
+        const isMultiDayEvent = startDateStr !== endDateStr;
         
-        // Get current availability for this date
-        const { data: availability } = await supabase
-          .from('availability')
-          .select('id, time_slots')
-          .eq('psychologist_id', psychologist_id)
-          .eq('date', eventDate)
-          .single();
-
-        if (availability) {
-          // Helper function to convert slot time to minutes from midnight
-          const slotToMinutes = (slotStr) => {
-            const normalizedSlot = normalizeTimeTo24Hour(slotStr);
-            if (!normalizedSlot) return null;
-            
-            const [hours, minutes] = normalizedSlot.split(':').map(Number);
-            return hours * 60 + minutes;
-          };
-          
-          // Remove ALL conflicting time slots that fall within the event duration
-          const slotsToBlock = [];
-          const updatedSlots = availability.time_slots.filter(slot => {
-            const slotMinutes = slotToMinutes(slot);
-            
-            if (slotMinutes === null) {
-              return true; // Keep slots we can't parse
-            }
-            
-            // Check if slot overlaps with event duration
-            // We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
-            const overlaps = slotMinutes >= eventStartMinutes && slotMinutes < eventEndMinutes;
-            
-            if (overlaps) {
-              slotsToBlock.push(slot);
-              return false; // Remove this slot
-            }
-            
-            return true; // Keep this slot
+        // Process multi-day events for both start and end dates
+        const datesToProcess = [];
+        if (isMultiDayEvent) {
+          // For start date: block from event start time until end of day
+          datesToProcess.push({
+            date: eventStartIST.dateStr,
+            startMinutes: eventStartMinutes,
+            endMinutes: 24 * 60 - 1 // End of day (23:59)
           });
           
-          if (slotsToBlock.length > 0) {
-            await supabase
-              .from('availability')
-              .update({ 
-                time_slots: updatedSlots,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', availability.id);
+          // For end date: block from start of day until event end time
+          if (eventEndIST.dateStr !== eventStartIST.dateStr) {
+            datesToProcess.push({
+              date: eventEndIST.dateStr,
+              startMinutes: 0, // Start of day (00:00)
+              endMinutes: eventEndIST.minutesFromMidnight
+            });
+          }
+        } else {
+          // Single-day event
+          if (eventEndMinutes < eventStartMinutes) {
+            eventEndMinutes = eventEndMinutes + (24 * 60);
+          }
+          datesToProcess.push({
+            date: eventDate,
+            startMinutes: eventStartMinutes,
+            endMinutes: eventEndMinutes
+          });
+        }
+        
+        // Process each date affected by the event
+        for (const dateInfo of datesToProcess) {
+          // Get current availability for this date
+          const { data: availability } = await supabase
+            .from('availability')
+            .select('id, time_slots')
+            .eq('psychologist_id', psychologist_id)
+            .eq('date', dateInfo.date)
+            .single();
 
-            // Add all blocked slots to the report
-            slotsToBlock.forEach(slot => {
-              blockedSlots.push({
-                date: eventDate,
-                time: slot,
-                reason: event.title
-              });
+          if (availability) {
+            // Helper function to convert slot time to minutes from midnight
+            const slotToMinutes = (slotStr) => {
+              const normalizedSlot = normalizeTimeTo24Hour(slotStr);
+              if (!normalizedSlot) return null;
+              
+              const [hours, minutes] = normalizedSlot.split(':').map(Number);
+              return hours * 60 + minutes;
+            };
+            
+            // Remove ALL conflicting time slots that fall within the event duration
+            const slotsToBlock = [];
+            const updatedSlots = availability.time_slots.filter(slot => {
+              const slotMinutes = slotToMinutes(slot);
+              
+              if (slotMinutes === null) {
+                return true; // Keep slots we can't parse
+              }
+              
+              // Check if slot overlaps with event duration for this date
+              // We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
+              const overlaps = slotMinutes >= dateInfo.startMinutes && slotMinutes < dateInfo.endMinutes;
+              
+              if (overlaps) {
+                slotsToBlock.push(slot);
+                return false; // Remove this slot
+              }
+              
+              return true; // Keep this slot
             });
             
-            console.log(`✅ Blocked ${slotsToBlock.length} time slot(s) on ${eventDate} due to external event "${event.title}" (${eventStartMinutes/60}:${String(eventStartMinutes%60).padStart(2,'0')} - ${eventEndMinutes/60}:${String(eventEndMinutes%60).padStart(2,'0')})`);
+            if (slotsToBlock.length > 0) {
+              await supabase
+                .from('availability')
+                .update({ 
+                  time_slots: updatedSlots,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', availability.id);
+
+              // Add all blocked slots to the report
+              slotsToBlock.forEach(slot => {
+                blockedSlots.push({
+                  date: dateInfo.date,
+                  time: slot,
+                  reason: event.title
+                });
+              });
+              
+              const startTimeStr = `${Math.floor(dateInfo.startMinutes/60)}:${String(dateInfo.startMinutes%60).padStart(2,'0')}`;
+              const endTimeStr = `${Math.floor(dateInfo.endMinutes/60)}:${String(dateInfo.endMinutes%60).padStart(2,'0')}`;
+              const multiDayNote = isMultiDayEvent ? ` (multi-day event)` : '';
+              console.log(`✅ Blocked ${slotsToBlock.length} time slot(s) on ${dateInfo.date} due to external event "${event.title}" (${startTimeStr} - ${endTimeStr})${multiDayNote}`);
+            }
           }
         }
       } catch (error) {

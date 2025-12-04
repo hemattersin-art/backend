@@ -365,31 +365,67 @@ class CalendarSyncService {
         let eventEndMinutes = eventEndIST.minutesFromMidnight;
         
         // Handle events that span midnight or multiple days
-        if (eventEndMinutes < eventStartMinutes) {
-          // Event spans midnight, add 24 hours to end time
-          eventEndMinutes = eventEndMinutes + (24 * 60);
-        }
-        
-        // Also handle case where event spans multiple days (get date difference)
         const startDate = new Date(event.start);
         const endDate = new Date(event.end);
-        const daysDiff = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24));
+        const startDateStr = startDate.toISOString().split('T')[0];
+        const endDateStr = endDate.toISOString().split('T')[0];
+        const isMultiDayEvent = startDateStr !== endDateStr;
         
-        if (daysDiff > 0) {
-          // Event spans multiple days, use max end time (23:59 = 1439 minutes)
-          eventEndMinutes = 24 * 60 - 1; // End of day in minutes (23:59)
+        if (isMultiDayEvent) {
+          // Multi-day event: need to process for both start date and end date
+          // For start date: event blocks from start time until end of day (23:59)
+          // For end date: event blocks from start of day (00:00) until end time
+          
+          // Process start date
+          const startDateEndMinutes = 24 * 60 - 1; // End of day (23:59)
+          eventDates.add(eventStartIST.dateStr);
+          eventData.push({
+            date: eventStartIST.dateStr,
+            time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
+            title: event.title,
+            startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
+            endMinutes: startDateEndMinutes, // Block until end of day
+            startTime: new Date(event.start),
+            endTime: new Date(event.end),
+            isMultiDay: true,
+            isStartDate: true
+          });
+          
+          // Process end date (if different from start date)
+          if (eventEndIST.dateStr !== eventStartIST.dateStr) {
+            const endDateStartMinutes = 0; // Start of day (00:00)
+            eventDates.add(eventEndIST.dateStr);
+            eventData.push({
+              date: eventEndIST.dateStr,
+              time: `00:00`,
+              title: event.title,
+              startMinutes: endDateStartMinutes, // Block from start of day
+              endMinutes: eventEndIST.minutesFromMidnight, // Until event end time
+              startTime: new Date(event.start),
+              endTime: new Date(event.end),
+              isMultiDay: true,
+              isStartDate: false
+            });
+          }
+        } else {
+          // Single-day event
+          if (eventEndMinutes < eventStartMinutes) {
+            // Event spans midnight on same day (unusual but possible)
+            eventEndMinutes = eventEndMinutes + (24 * 60);
+          }
+          
+          eventDates.add(eventDate);
+          eventData.push({
+            date: eventDate,
+            time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
+            title: event.title,
+            startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
+            endMinutes: eventEndMinutes,
+            startTime: new Date(event.start),
+            endTime: new Date(event.end),
+            isMultiDay: false
+          });
         }
-        
-        eventDates.add(eventDate);
-        eventData.push({
-          date: eventDate,
-          time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
-          title: event.title,
-          startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
-          endMinutes: eventEndMinutes,
-          startTime: new Date(event.start),
-          endTime: new Date(event.end)
-        });
       } catch (error) {
         console.error(`Error processing event "${event.title}":`, error);
         continue; // Skip invalid events

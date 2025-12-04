@@ -218,10 +218,11 @@ class GoogleCalendarService {
       const nextSyncToken = result.nextSyncToken;
 
       // Filter logic:
-      // 1. Block ALL external events (regardless of Google Meet link)
-      // 2. Exclude only our system events (LittleMinds, Little Care, Kuttikal)
-      // 3. Exclude public holidays
-      // 4. Exclude cancelled/deleted events
+      // 1. Block ALL events in Google Calendar (system events, external events, etc.)
+      //    - If an event corresponds to a session in our database, it's already blocked by the session
+      //    - If an event doesn't correspond to a session, it should still block (orphaned system event or external event)
+      // 2. Exclude only public holidays
+      // 3. Exclude cancelled/deleted events
       const externalEvents = busySlots.filter(slot => {
         // Skip cancelled or deleted events
         if (slot.status === 'cancelled') {
@@ -230,13 +231,7 @@ class GoogleCalendarService {
         
         const title = (slot.title || '').toLowerCase();
         
-        // Exclude our system events
-        const isSystemEvent = 
-          title.includes('littleminds') || 
-          title.includes('little care') ||
-          title.includes('kuttikal');
-        
-        // Exclude public holidays (common patterns)
+        // Exclude only public holidays (common patterns)
         const isPublicHoliday = 
           title.includes('holiday') ||
           title.includes('public holiday') ||
@@ -245,8 +240,10 @@ class GoogleCalendarService {
           title.includes('celebration') ||
           title.includes('observance');
         
-        // Block ALL events that are NOT system events and NOT public holidays
-        return !isSystemEvent && !isPublicHoliday;
+        // Block ALL events that are NOT public holidays
+        // Note: System events will also block, but if they correspond to sessions in our DB,
+        // those sessions will already block the slot (no double-blocking issue)
+        return !isPublicHoliday;
       });
 
       return {
