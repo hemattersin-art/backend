@@ -20,6 +20,26 @@ const ensureAssessmentPsychologist = async () => {
       .single();
 
     if (existing && !error) {
+      // Account exists - update password to match current default
+      try {
+        const passwordHash = await hashPassword(
+          process.env.FREE_ASSESSMENT_PSYCHOLOGIST_PASSWORD || 'koott@123'
+        );
+        
+        const { error: updateError } = await supabaseAdmin
+          .from('psychologists')
+          .update({ password_hash: passwordHash })
+          .eq('id', existing.id);
+        
+        if (updateError) {
+          console.error('⚠️ Failed to update assessment psychologist password:', updateError);
+        } else {
+          console.log('✅ Updated assessment psychologist password');
+        }
+      } catch (pwError) {
+        console.error('⚠️ Error updating password:', pwError);
+      }
+      
       return existing;
     }
   } catch (lookupError) {
@@ -29,9 +49,9 @@ const ensureAssessmentPsychologist = async () => {
   }
 
   try {
-    const passwordHash = await hashPassword(
-      process.env.FREE_ASSESSMENT_PSYCHOLOGIST_PASSWORD || 'Assessments@123'
-    );
+      const passwordHash = await hashPassword(
+        process.env.FREE_ASSESSMENT_PSYCHOLOGIST_PASSWORD || 'koott@123'
+      );
 
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from('psychologists')
@@ -73,10 +93,11 @@ const getFreeAssessmentStatus = async (req, res) => {
     console.log('🔍 Getting free assessment status for user:', userId);
 
     // Get or create client details (auto-provision if missing)
+    // Note: userId is from users.id, so we need to match clients.user_id, not clients.id
     let { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (clientError || !client) {
@@ -114,6 +135,7 @@ const getFreeAssessmentStatus = async (req, res) => {
     }
 
     // Get existing free assessments
+    // Note: client_id in free_assessments refers to clients.id, not users.id
     const { data: assessments, error: assessmentsError } = await supabase
       .from('free_assessments')
       .select(`
@@ -127,7 +149,7 @@ const getFreeAssessmentStatus = async (req, res) => {
           last_name
         )
       `)
-      .eq('id', userId)
+      .eq('client_id', client.id)
       .order('assessment_number', { ascending: true });
 
     if (assessmentsError) {
@@ -784,10 +806,11 @@ const bookFreeAssessment = async (req, res) => {
     console.log('🔍 Booking free assessment for user:', userId, 'on', scheduledDate, 'at', scheduledTime);
 
     // Get or create client details (auto-provision if missing)
+    // Note: userId is from users.id, so we need to match clients.user_id, not clients.id
     let { data: client, error: clientError } = await supabase
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (clientError || !client) {
@@ -840,7 +863,7 @@ const bookFreeAssessment = async (req, res) => {
           const { data: clientWithEmail } = await supabase
             .from('clients')
             .select('email')
-            .eq('id', userId)
+            .eq('user_id', userId)
             .single();
           client.email = clientWithEmail?.email || client.email;
         }
@@ -857,7 +880,7 @@ const bookFreeAssessment = async (req, res) => {
             await supabase
               .from('clients')
               .update({ user_id: userAccountId })
-              .eq('id', userId);
+              .eq('user_id', userId);
           }
         }
 
@@ -889,7 +912,7 @@ const bookFreeAssessment = async (req, res) => {
           await supabase
             .from('clients')
             .update({ user_id: userAccountId })
-            .eq('id', userId);
+            .eq('user_id', userId);
         }
       }
     } catch (linkError) {
@@ -900,10 +923,11 @@ const bookFreeAssessment = async (req, res) => {
     }
 
     // Get the next available assessment number by checking existing assessments
+    // Note: client_id in free_assessments refers to clients.id, not users.id
     const { data: existingAssessments, error: existingError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .select('assessment_number')
-      .eq('client_id', userId)
+      .eq('client_id', client.id)
       .order('assessment_number', { ascending: true });
 
     if (existingError) {
@@ -950,6 +974,18 @@ const bookFreeAssessment = async (req, res) => {
 
     const defaultPsychologist = await ensureAssessmentPsychologist();
     const defaultPsychologistId = defaultPsychologist?.id || null;
+    
+    // Fetch full psychologist data including Google Calendar credentials
+    let defaultPsychologistWithCredentials = null;
+    if (defaultPsychologistId) {
+      const { data: psychWithCreds } = await supabase
+        .from('psychologists')
+        .select('id, email, first_name, last_name, google_calendar_credentials')
+        .eq('id', defaultPsychologistId)
+        .single();
+      defaultPsychologistWithCredentials = psychWithCreds;
+    }
+    
     const assessmentPsychologistPayload = defaultPsychologist
       ? {
           id: defaultPsychologist.id,
@@ -972,9 +1008,9 @@ const bookFreeAssessment = async (req, res) => {
     const { data: assessment, error: assessmentError } = await supabase.supabaseAdmin
       .from('free_assessments')
       .insert({
-        // Use linked users.id (ensured above); client_id remains the client (req.user.id)
+        // Use linked users.id (ensured above); client_id is the clients.id
         user_id: userAccountId,
-        client_id: userId,
+        client_id: client.id,
         assessment_number: nextAssessmentNumber,
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
@@ -995,8 +1031,9 @@ const bookFreeAssessment = async (req, res) => {
 
     // Create a session placeholder (no doctor), with a Meet link ready for admin assignment
     console.log('🔄 Creating session placeholder for free assessment...');
+    // Note: client_id must be clients.id (primary key), not users.id
     const sessionData = {
-      client_id: userId,
+      client_id: client.id,
       psychologist_id: defaultPsychologistId,
       scheduled_date: scheduledDate,
       scheduled_time: scheduledTime,
@@ -1004,59 +1041,8 @@ const bookFreeAssessment = async (req, res) => {
       price: 0,
       session_type: 'free_assessment'
     };
-    let meetLink = null;
 
-    try {
-      const meetSessionData = {
-        summary: `Free Assessment` ,
-        description: `Free 20-minute assessment session with our assessment specialist`,
-        startDate: scheduledDate,
-        startTime: scheduledTime,
-        endTime: addMinutesToTime(scheduledTime, 20),
-        attendees: []
-      };
-
-      // If the client has a linked users row, try to fetch their email for attendee
-      try {
-        const { data: userEmailRow } = await supabase
-          .from('users')
-          .select('email')
-          .eq('id', userAccountId)
-          .single();
-        if (userEmailRow?.email) {
-          meetSessionData.attendees = [userEmailRow.email];
-        }
-      } catch (_) {}
-
-      if (defaultPsychologist?.email) {
-        if (!meetSessionData.attendees.includes(defaultPsychologist.email)) {
-          meetSessionData.attendees.push(defaultPsychologist.email);
-        }
-      }
-
-      // Create meet link (OAuth preferred; will add attendee to client calendar)
-      const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData);
-      if (meetResult?.success && meetResult.meetLink) {
-        meetLink = meetResult.meetLink;
-        sessionData.google_calendar_event_id = meetResult.eventId || null;
-        sessionData.google_meet_link = meetLink;
-        sessionData.google_meet_join_url = meetLink;
-        sessionData.google_meet_start_url = meetLink;
-        console.log('✅ Meet link created for free assessment (auto-assigned)');
-      } else {
-        meetLink = meetResult?.meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
-        if (meetLink) {
-          sessionData.google_meet_link = meetLink;
-          sessionData.google_meet_join_url = meetLink;
-          sessionData.google_meet_start_url = meetLink;
-        }
-        console.log('⚠️ Meet link creation failed; using fallback');
-      }
-    } catch (e) {
-      console.error('❌ Error creating meet link placeholder:', e);
-      meetLink = meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
-    }
-
+    // Create session first (don't wait for meet link - it will be created asynchronously)
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .insert([sessionData])
@@ -1072,15 +1058,187 @@ const bookFreeAssessment = async (req, res) => {
         .update({ session_id: session.id })
         .eq('id', assessment.id);
       console.log('✅ Session placeholder created:', session.id);
+      
+      // Create meet link asynchronously (don't wait for it)
+      (async () => {
+        try {
+          const meetSessionData = {
+            summary: `Free Assessment`,
+            description: `Free 20-minute assessment session with our assessment specialist`,
+            startDate: scheduledDate,
+            startTime: scheduledTime,
+            endTime: addMinutesToTime(scheduledTime, 20),
+            attendees: []
+          };
+
+          // If the client has a linked users row, try to fetch their email for attendee
+          try {
+            const { data: userEmailRow } = await supabase
+              .from('users')
+              .select('email')
+              .eq('id', userAccountId)
+              .single();
+            if (userEmailRow?.email) {
+              meetSessionData.attendees = [userEmailRow.email];
+            }
+          } catch (_) {}
+
+          // Use email from credentials data if available, otherwise fallback to defaultPsychologist
+          const psychologistEmail = defaultPsychologistWithCredentials?.email || defaultPsychologist?.email;
+          if (psychologistEmail) {
+            if (!meetSessionData.attendees.includes(psychologistEmail)) {
+              meetSessionData.attendees.push(psychologistEmail);
+            }
+          }
+
+          // Get psychologist's OAuth credentials for real Meet link creation
+          let userAuth = null;
+          if (defaultPsychologistWithCredentials?.google_calendar_credentials) {
+            const credentials = defaultPsychologistWithCredentials.google_calendar_credentials;
+            const now = Date.now();
+            const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+            
+            if (credentials.access_token) {
+              const expiryDate = credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : null;
+              if (!expiryDate || expiryDate > (now + bufferTime)) {
+                // Token is valid
+                userAuth = {
+                  access_token: credentials.access_token,
+                  refresh_token: credentials.refresh_token,
+                  expiry_date: credentials.expiry_date
+                };
+                console.log('✅ Using default assessment psychologist Google Calendar OAuth credentials for Meet link creation');
+              } else if (credentials.refresh_token) {
+                // Token expired but we have refresh token
+                userAuth = {
+                  access_token: credentials.access_token, // May be expired, service will refresh
+                  refresh_token: credentials.refresh_token,
+                  expiry_date: credentials.expiry_date
+                };
+                console.log('⚠️ Default assessment psychologist OAuth token expired, but refresh token available - service will attempt refresh');
+              } else {
+                console.log('⚠️ Default assessment psychologist OAuth credentials expired and no refresh token - will use fallback method');
+              }
+            }
+          } else {
+            console.log('⚠️ Default assessment psychologist does not have Google Calendar connected - will use service account method (may not create real Meet link)');
+          }
+
+          // Create meet link (OAuth preferred if available; will add attendee to client calendar)
+          const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
+          let finalMeetLink = null;
+          
+          if (meetResult?.success && meetResult.meetLink) {
+            finalMeetLink = meetResult.meetLink;
+            await supabase
+              .from('sessions')
+              .update({
+                google_calendar_event_id: meetResult.eventId || null,
+                google_meet_link: finalMeetLink,
+                google_meet_join_url: finalMeetLink,
+                google_meet_start_url: finalMeetLink
+              })
+              .eq('id', session.id);
+            console.log('✅ Meet link created asynchronously for free assessment:', finalMeetLink);
+          } else {
+            finalMeetLink = meetResult?.meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
+            await supabase
+              .from('sessions')
+              .update({
+                google_meet_link: finalMeetLink,
+                google_meet_join_url: finalMeetLink,
+                google_meet_start_url: finalMeetLink
+              })
+              .eq('id', session.id);
+            console.log('⚠️ Meet link creation failed; using fallback (async)');
+          }
+
+          // Now send WhatsApp with the real meet link (or fallback if creation failed)
+          try {
+            console.log('📱 Sending WhatsApp notifications with meet link for free assessment booking...');
+            const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+            
+            // Get client phone number
+            const { data: clientDetails } = await supabase
+              .from('clients')
+              .select('phone_number, child_name, first_name, last_name')
+              .eq('id', client.id)
+              .single();
+            
+            const clientPhone = clientDetails?.phone_number || null;
+            const clientName = clientDetails?.child_name || 
+                              (clientDetails?.first_name && clientDetails?.last_name 
+                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
+                                : clientDetails?.first_name || 'Client');
+            
+            // Send WhatsApp to client with the real meet link
+            if (clientPhone && finalMeetLink) {
+              try {
+                await sendBookingConfirmation(clientPhone, {
+                  childName: clientName,
+                  date: scheduledDate,
+                  time: scheduledTime,
+                  meetLink: finalMeetLink
+                });
+                console.log('✅ Free assessment WhatsApp sent to client with meet link');
+              } catch (clientWaError) {
+                console.error('❌ Failed to send client WhatsApp for free assessment:', clientWaError?.message || clientWaError);
+              }
+            } else {
+              console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+            }
+
+            // Send WhatsApp to doctor at +919539007766
+            const doctorPhone = '+919539007766';
+            const psychologistName = assessmentPsychologistPayload
+              ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
+              : 'Assessment Specialist';
+            
+            const doctorMessage =
+              `🧸 New free assessment session booked.\n\n` +
+              `Session details:\n\n` +
+              `👧 Client: ${clientName}\n\n` +
+              `📝 Assessment: Free Assessment (${nextAssessmentNumber} of 3)\n\n` +
+              `👨‍⚕️ Assigned to: ${psychologistName}\n\n` +
+              `📅 Date: ${scheduledDate}\n\n` +
+              `⏰ Time: ${scheduledTime} (IST)\n\n` +
+              `🔗 Google Meet: ${finalMeetLink}\n\n` +
+              `🆔 Assessment ID: ${assessment.id}\n\n` +
+              `📞 For support or scheduling issues, contact Little Care support:\n` +
+              `WhatsApp / Call: +91 95390 07766`;
+
+            try {
+              await sendWhatsAppTextWithRetry(doctorPhone, doctorMessage);
+              console.log('✅ Free assessment WhatsApp sent to doctor at +919539007766 with meet link');
+            } catch (doctorWaError) {
+              console.error('❌ Failed to send doctor WhatsApp for free assessment:', doctorWaError?.message || doctorWaError);
+            }
+          } catch (whatsappError) {
+            console.error('❌ Error sending WhatsApp notifications for free assessment:', whatsappError);
+          }
+        } catch (e) {
+          console.error('❌ Error creating meet link asynchronously:', e);
+          const fallbackLink = 'https://meet.google.com/new?hs=122&authuser=0';
+          await supabase
+            .from('sessions')
+            .update({
+              google_meet_link: fallbackLink,
+              google_meet_join_url: fallbackLink,
+              google_meet_start_url: fallbackLink
+            })
+            .eq('id', session.id);
+        }
+      })();
     }
 
     // Update client's free assessment count
+    // Note: Use client.id (from the client record we found) not userId
     await supabase.supabaseAdmin
       .from('clients')
       .update({ 
         free_assessment_count: nextAssessmentNumber
       })
-      .eq('id', userId);
+      .eq('id', client.id);
 
     // Fetch user details for email (clients table may not have name/email columns)
     let userRowForEmail = null;
@@ -1122,6 +1280,9 @@ const bookFreeAssessment = async (req, res) => {
       console.error('Error sending confirmation email:', emailError);
     }
 
+    // WhatsApp will be sent asynchronously after meet link is created (see async function above)
+    // This ensures the real meet link is included in the WhatsApp message
+
     await removeTimeSlotFromDateConfig(scheduledDate, scheduledTime);
 
     res.json(
@@ -1131,7 +1292,7 @@ const bookFreeAssessment = async (req, res) => {
         psychologist: assessmentPsychologistPayload,
         scheduledDate,
         scheduledTime,
-        meetLink: meetLink || 'https://meet.google.com/new?hs=122&authuser=0'
+        meetLink: 'https://meet.google.com/new?hs=122&authuser=0' // Will be updated asynchronously
       }, 'Free assessment booked successfully')
     );
 
@@ -1151,12 +1312,24 @@ const cancelFreeAssessment = async (req, res) => {
 
     console.log('🔍 Cancelling free assessment:', assessmentId, 'for user:', userId);
 
-    // Get the assessment
+    // Get the assessment - first get client by user_id, then check assessment belongs to that client
+    const { data: clientRecord } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+    
+    if (!clientRecord) {
+      return res.status(404).json(
+        errorResponse('Client profile not found')
+      );
+    }
+
     const { data: assessment, error: assessmentError } = await supabase
       .from('free_assessments')
       .select('*')
       .eq('id', assessmentId)
-      .eq('id', userId)
+      .eq('client_id', clientRecord.id)
       .single();
 
     if (assessmentError || !assessment) {
@@ -1186,20 +1359,23 @@ const cancelFreeAssessment = async (req, res) => {
     }
 
     // Decrease client's free assessment count
-    const { data: client } = await supabase
-      .from('clients')
-      .select('free_assessment_count')
-      .eq('id', userId)
-      .single();
-
+    // client already exists from above (renamed to clientRecord)
     if (client) {
-      const newCount = Math.max(0, client.free_assessment_count - 1);
-              await supabase
+      const { data: clientData } = await supabase
+        .from('clients')
+        .select('free_assessment_count')
+        .eq('id', client.id)
+        .single();
+      
+      if (clientData) {
+        const newCount = Math.max(0, clientData.free_assessment_count - 1);
+        await supabase
           .from('clients')
           .update({ 
             free_assessment_count: newCount
           })
-          .eq('id', userId);
+          .eq('id', client.id);
+      }
     }
 
     res.json(
