@@ -412,19 +412,19 @@ class CalendarSyncService {
           if (eventEndMinutes < eventStartMinutes) {
             // Event spans midnight on same day (unusual but possible)
             eventEndMinutes = eventEndMinutes + (24 * 60);
-          }
-          
-          eventDates.add(eventDate);
-          eventData.push({
-            date: eventDate,
-            time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
-            title: event.title,
-            startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
-            endMinutes: eventEndMinutes,
-            startTime: new Date(event.start),
+        }
+        
+        eventDates.add(eventDate);
+        eventData.push({
+          date: eventDate,
+          time: `${String(eventStartIST.hour).padStart(2, '0')}:${String(eventStartIST.minute).padStart(2, '0')}`,
+          title: event.title,
+          startMinutes: eventStartMinutes, // Minutes from midnight (0-1439) in IST
+          endMinutes: eventEndMinutes,
+          startTime: new Date(event.start),
             endTime: new Date(event.end),
             isMultiDay: false
-          });
+        });
         }
       } catch (error) {
         console.error(`Error processing event "${event.title}":`, error);

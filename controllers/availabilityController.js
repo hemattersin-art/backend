@@ -827,9 +827,9 @@ const syncGoogleCalendar = async (req, res) => {
           }
         } else {
           // Single-day event
-          if (eventEndMinutes < eventStartMinutes) {
-            eventEndMinutes = eventEndMinutes + (24 * 60);
-          }
+        if (eventEndMinutes < eventStartMinutes) {
+          eventEndMinutes = eventEndMinutes + (24 * 60);
+        }
           datesToProcess.push({
             date: eventDate,
             startMinutes: eventStartMinutes,
@@ -839,63 +839,63 @@ const syncGoogleCalendar = async (req, res) => {
         
         // Process each date affected by the event
         for (const dateInfo of datesToProcess) {
-          // Get current availability for this date
-          const { data: availability } = await supabase
-            .from('availability')
-            .select('id, time_slots')
-            .eq('psychologist_id', psychologist_id)
+        // Get current availability for this date
+        const { data: availability } = await supabase
+          .from('availability')
+          .select('id, time_slots')
+          .eq('psychologist_id', psychologist_id)
             .eq('date', dateInfo.date)
-            .single();
+          .single();
 
-          if (availability) {
-            // Helper function to convert slot time to minutes from midnight
-            const slotToMinutes = (slotStr) => {
-              const normalizedSlot = normalizeTimeTo24Hour(slotStr);
-              if (!normalizedSlot) return null;
-              
-              const [hours, minutes] = normalizedSlot.split(':').map(Number);
-              return hours * 60 + minutes;
-            };
+        if (availability) {
+          // Helper function to convert slot time to minutes from midnight
+          const slotToMinutes = (slotStr) => {
+            const normalizedSlot = normalizeTimeTo24Hour(slotStr);
+            if (!normalizedSlot) return null;
             
-            // Remove ALL conflicting time slots that fall within the event duration
-            const slotsToBlock = [];
-            const updatedSlots = availability.time_slots.filter(slot => {
-              const slotMinutes = slotToMinutes(slot);
-              
-              if (slotMinutes === null) {
-                return true; // Keep slots we can't parse
-              }
-              
+            const [hours, minutes] = normalizedSlot.split(':').map(Number);
+            return hours * 60 + minutes;
+          };
+          
+          // Remove ALL conflicting time slots that fall within the event duration
+          const slotsToBlock = [];
+          const updatedSlots = availability.time_slots.filter(slot => {
+            const slotMinutes = slotToMinutes(slot);
+            
+            if (slotMinutes === null) {
+              return true; // Keep slots we can't parse
+            }
+            
               // Check if slot overlaps with event duration for this date
-              // We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
+            // We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
               const overlaps = slotMinutes >= dateInfo.startMinutes && slotMinutes < dateInfo.endMinutes;
-              
-              if (overlaps) {
-                slotsToBlock.push(slot);
-                return false; // Remove this slot
-              }
-              
-              return true; // Keep this slot
+            
+            if (overlaps) {
+              slotsToBlock.push(slot);
+              return false; // Remove this slot
+            }
+            
+            return true; // Keep this slot
+          });
+          
+          if (slotsToBlock.length > 0) {
+            await supabase
+              .from('availability')
+              .update({ 
+                time_slots: updatedSlots,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', availability.id);
+
+            // Add all blocked slots to the report
+            slotsToBlock.forEach(slot => {
+              blockedSlots.push({
+                  date: dateInfo.date,
+                time: slot,
+                reason: event.title
+              });
             });
             
-            if (slotsToBlock.length > 0) {
-              await supabase
-                .from('availability')
-                .update({ 
-                  time_slots: updatedSlots,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', availability.id);
-
-              // Add all blocked slots to the report
-              slotsToBlock.forEach(slot => {
-                blockedSlots.push({
-                  date: dateInfo.date,
-                  time: slot,
-                  reason: event.title
-                });
-              });
-              
               const startTimeStr = `${Math.floor(dateInfo.startMinutes/60)}:${String(dateInfo.startMinutes%60).padStart(2,'0')}`;
               const endTimeStr = `${Math.floor(dateInfo.endMinutes/60)}:${String(dateInfo.endMinutes%60).padStart(2,'0')}`;
               const multiDayNote = isMultiDayEvent ? ` (multi-day event)` : '';

@@ -1338,14 +1338,30 @@ const updatePsychologist = async (req, res) => {
         } else {
           console.log('📦 Existing packages:', existingPackages);
           
-          // First, delete packages that are not in the updated list
-          if (existingPackages && existingPackages.length > 0) {
-            const updatedPackageIds = packages
-              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
-              .map(pkg => parseInt(pkg.id));
-            
-            console.log('📦 Updated package IDs:', updatedPackageIds);
-            
+          // Extract valid package IDs from the request
+          const updatedPackageIds = packages
+            .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
+            .map(pkg => parseInt(pkg.id));
+          
+          console.log('📦 Updated package IDs from request:', updatedPackageIds);
+          console.log('📦 Total packages in request:', packages.length);
+          console.log('📦 Packages with valid IDs:', updatedPackageIds.length);
+          
+          // SAFETY CHECK: Only delete packages if we have at least one valid package ID in the request
+          // This prevents accidental deletion when packages are sent without IDs
+          const hasValidPackageIds = updatedPackageIds.length > 0;
+          const hasNewPackages = packages.some(pkg => !pkg.id || isNaN(parseInt(pkg.id)) || parseInt(pkg.id) <= 0);
+          
+          // Only proceed with deletion if:
+          // 1. We have valid package IDs in the request (meaning it's an intentional update)
+          // 2. OR we have new packages being added (meaning the user is actively managing packages)
+          const shouldDeletePackages = hasValidPackageIds || hasNewPackages;
+          
+          if (!shouldDeletePackages && existingPackages && existingPackages.length > 0) {
+            console.log('⚠️  SAFETY: Skipping package deletion - no valid package IDs in request and no new packages. This prevents accidental deletion.');
+            console.log('⚠️  If you intended to delete packages, ensure they are included in the request with their IDs.');
+          } else if (existingPackages && existingPackages.length > 0 && shouldDeletePackages) {
+            // First, delete packages that are not in the updated list
             for (const existingPkg of existingPackages) {
               if (!updatedPackageIds.includes(existingPkg.id)) {
                 console.log(`📦 Deleting removed package ${existingPkg.id} (${existingPkg.name})`);
@@ -1450,37 +1466,12 @@ const updatePsychologist = async (req, res) => {
         console.error('❌ Error handling package updates:', error);
       }
     } else if (packages && Array.isArray(packages) && packages.length === 0) {
-      // If empty array is sent, delete all packages (except we keep packages in DB for now)
-      console.log('📦 Empty packages array sent - will only delete packages not in the list');
-      
-      try {
-        // Get all existing packages
-        const { data: existingPackages, error: fetchError } = await supabase
-          .from('packages')
-          .select('id, name')
-          .eq('psychologist_id', psychologistId);
-        
-        if (fetchError) {
-          console.error('Error fetching existing packages:', fetchError);
-        } else if (existingPackages && existingPackages.length > 0) {
-          // Delete all existing packages since empty array was sent
-          for (const existingPkg of existingPackages) {
-            console.log(`📦 Deleting package ${existingPkg.id} (${existingPkg.name})`);
-            const { error: deleteError } = await supabase
-              .from('packages')
-              .delete()
-              .eq('id', existingPkg.id);
-            
-            if (deleteError) {
-              console.error(`❌ Error deleting package ${existingPkg.id}:`, deleteError);
-            } else {
-              console.log(`✅ Package ${existingPkg.id} deleted successfully`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error deleting all packages:', error);
-      }
+      // SAFETY: Empty array could mean "delete all" OR "packages not included in update"
+      // We should NOT automatically delete all packages - this is too dangerous
+      // Only delete if explicitly requested via a separate flag or endpoint
+      console.log('⚠️  Empty packages array sent - SAFETY: NOT deleting packages automatically');
+      console.log('⚠️  If you want to delete all packages, use a dedicated delete endpoint or include a flag');
+      console.log('⚠️  This prevents accidental deletion when packages are not included in the update request');
     }
 
     // Ensure default availability exists (3 weeks from today)
