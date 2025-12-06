@@ -1015,11 +1015,11 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // Get client ID
+    // Get client ID (userId is from users.id, so we need to query clients.user_id)
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (!client) {
@@ -1043,9 +1043,17 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Check if session can be rescheduled (only booked sessions)
-    if (session.status !== 'booked') {
+    // Free assessment sessions can also be rescheduled if they're booked or already rescheduled
+    if (session.status !== 'booked' && session.session_type !== 'free_assessment') {
       return res.status(400).json(
         errorResponse('Only booked sessions can be rescheduled')
+      );
+    }
+    
+    // For free assessment sessions, allow rescheduling even if status is not exactly 'booked'
+    if (session.session_type === 'free_assessment' && !['booked', 'rescheduled'].includes(session.status)) {
+      return res.status(400).json(
+        errorResponse('This free assessment session cannot be rescheduled')
       );
     }
 
@@ -1200,15 +1208,76 @@ const rescheduleSession = async (req, res) => {
     try {
       console.log('🔄 Creating new Google Meet link for rescheduled session...');
       
+      // Check if this is a free assessment session
+      const isFreeAssessment = session.session_type === 'free_assessment';
+      
       const sessionDataForMeet = {
-        summary: `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
-        description: `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
+        summary: isFreeAssessment 
+          ? `Free Assessment - ${clientDetails?.child_name || clientDetails?.first_name}`
+          : `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
+        description: isFreeAssessment
+          ? `Rescheduled free 20-minute assessment session`
+          : `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
         startDate: new_date,
         startTime: new_time,
-        endTime: addMinutesToTime(formatTime(new_time), 60)
+        endTime: isFreeAssessment 
+          ? addMinutesToTime(formatTime(new_time), 20)
+          : addMinutesToTime(formatTime(new_time), 60),
+        clientEmail: clientDetails?.email,
+        psychologistEmail: psychologistDetails?.email,
+        attendees: []
       };
 
-      const meetResult = await meetLinkService.generateSessionMeetLink(sessionDataForMeet);
+      // Add attendees
+      if (clientDetails?.email) {
+        sessionDataForMeet.attendees.push(clientDetails.email);
+      }
+      if (psychologistDetails?.email) {
+        sessionDataForMeet.attendees.push(psychologistDetails.email);
+      }
+
+      // For free assessments, use assessment psychologist's OAuth credentials
+      let userAuth = null;
+      if (isFreeAssessment) {
+        // Get assessment psychologist's OAuth credentials
+        const { ensureAssessmentPsychologist } = require('./freeAssessmentController');
+        const defaultPsychologist = await ensureAssessmentPsychologist();
+        
+        if (defaultPsychologist?.id) {
+          const { data: assessmentPsychologist } = await supabase
+            .from('psychologists')
+            .select('id, email, google_calendar_credentials')
+            .eq('id', defaultPsychologist.id)
+            .single();
+          
+          if (assessmentPsychologist?.google_calendar_credentials) {
+            const credentials = assessmentPsychologist.google_calendar_credentials;
+            const now = Date.now();
+            const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+            
+            if (credentials.access_token) {
+              const expiryDate = credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : null;
+              if (!expiryDate || expiryDate > (now + bufferTime)) {
+                userAuth = {
+                  access_token: credentials.access_token,
+                  refresh_token: credentials.refresh_token,
+                  expiry_date: credentials.expiry_date
+                };
+                console.log('✅ Using assessment psychologist OAuth credentials for Meet link');
+              } else if (credentials.refresh_token) {
+                userAuth = {
+                  access_token: credentials.access_token,
+                  refresh_token: credentials.refresh_token,
+                  expiry_date: credentials.expiry_date
+                };
+                console.log('⚠️ Assessment psychologist OAuth token expired, but refresh token available');
+              }
+            }
+          }
+        }
+      }
+
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionDataForMeet, userAuth);
       
       if (meetResult.success) {
         meetData = {
@@ -1268,6 +1337,59 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
+    // For free assessment sessions, update the timeslot availability
+    if (session.session_type === 'free_assessment') {
+      try {
+        const oldDate = session.scheduled_date;
+        const oldTime = session.scheduled_time;
+        const newDate = formatDate(new_date);
+        const newTime = formatTime(new_time);
+
+        // Add back the old slot
+        const { data: oldDateConfig } = await supabase
+          .from('free_assessment_date_configs')
+          .select('time_slots')
+          .eq('date', oldDate)
+          .single();
+
+        if (oldDateConfig && oldDateConfig.time_slots) {
+          const oldSlots = Array.isArray(oldDateConfig.time_slots) ? oldDateConfig.time_slots : [];
+          if (!oldSlots.includes(oldTime)) {
+            oldSlots.push(oldTime);
+            oldSlots.sort();
+            await supabase
+              .from('free_assessment_date_configs')
+              .update({ time_slots: oldSlots })
+              .eq('date', oldDate);
+            console.log(`✅ Added back old slot ${oldTime} on ${oldDate}`);
+          }
+        }
+
+        // Remove the new slot
+        const { data: newDateConfig } = await supabase
+          .from('free_assessment_date_configs')
+          .select('time_slots')
+          .eq('date', newDate)
+          .single();
+
+        if (newDateConfig && newDateConfig.time_slots) {
+          const newSlots = Array.isArray(newDateConfig.time_slots) ? newDateConfig.time_slots : [];
+          const index = newSlots.indexOf(newTime);
+          if (index > -1) {
+            newSlots.splice(index, 1);
+            await supabase
+              .from('free_assessment_date_configs')
+              .update({ time_slots: newSlots })
+              .eq('date', newDate);
+            console.log(`✅ Removed booked slot ${newTime} from free assessment config on ${newDate}`);
+          }
+        }
+      } catch (slotError) {
+        console.error('⚠️ Error updating free assessment timeslots:', slotError);
+        // Don't fail the reschedule if timeslot update fails
+      }
+    }
+
     // Create notification for psychologist
     await createRescheduleNotification(session, updatedSession, client.id);
 
@@ -1283,7 +1405,8 @@ const rescheduleSession = async (req, res) => {
           scheduledDate: updatedSession.scheduled_date,
           scheduledTime: updatedSession.scheduled_time,
           sessionId: updatedSession.id,
-          meetLink: meetData?.meetLink
+          meetLink: meetData?.meetLink,
+          isFreeAssessment: session.session_type === 'free_assessment'
         },
         session.scheduled_date,
         session.scheduled_time
@@ -1313,9 +1436,13 @@ const rescheduleSession = async (req, res) => {
         timeStyle: 'short'
       });
 
+      // Check if this is a free assessment session
+      const isFreeAssessment = session.session_type === 'free_assessment';
+      const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
+
       // Send WhatsApp to client
       if (clientDetails?.phone_number) {
-        const clientMessage = `🔄 Your therapy session has been rescheduled.\n\n` +
+        const clientMessage = `🔄 Your ${sessionType} has been rescheduled.\n\n` +
           `❌ Old: ${originalDateTime}\n` +
           `✅ New: ${newDateTime}\n\n` +
           (meetData?.meetLink 
@@ -1325,7 +1452,7 @@ const rescheduleSession = async (req, res) => {
 
         const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
         if (clientResult?.success) {
-          console.log('✅ Reschedule WhatsApp sent to client');
+          console.log(`✅ Reschedule WhatsApp sent to client (${sessionType})`);
         } else {
           console.warn('⚠️ Failed to send reschedule WhatsApp to client');
         }
@@ -1333,7 +1460,7 @@ const rescheduleSession = async (req, res) => {
 
       // Send WhatsApp to psychologist
       if (psychologistDetails?.phone) {
-        const psychologistMessage = `🔄 Session rescheduled with ${clientName}.\n\n` +
+        const psychologistMessage = `🔄 ${isFreeAssessment ? 'Free assessment' : 'Session'} rescheduled with ${clientName}.\n\n` +
           `❌ Old: ${originalDateTime}\n` +
           `✅ New: ${newDateTime}\n\n` +
           `👤 Client: ${clientName}\n` +
@@ -1344,7 +1471,7 @@ const rescheduleSession = async (req, res) => {
 
         const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
         if (psychologistResult?.success) {
-          console.log('✅ Reschedule WhatsApp sent to psychologist');
+          console.log(`✅ Reschedule WhatsApp sent to psychologist (${sessionType})`);
         } else {
           console.warn('⚠️ Failed to send reschedule WhatsApp to psychologist');
         }
@@ -2412,11 +2539,11 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
     console.log('   - Session ID:', sessionId);
     console.log('   - User ID:', userId);
 
-    // Get client ID
+    // Get client ID - userId is from users.id, so we need to query clients.user_id
     const { data: client } = await supabase
       .from('clients')
       .select('id')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (!client) {

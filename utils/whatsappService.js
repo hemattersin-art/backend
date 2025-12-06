@@ -233,16 +233,17 @@ function formatFriendlyTime(timeStr) {
 
 /**
  * Build main booking confirmation message
- * @param {Object} details - { childName, date, time, meetLink }
+ * @param {Object} details - { childName, date, time, meetLink, isFreeAssessment? }
  * @returns {string} Formatted message
  */
-function buildBookingMessage({ childName, date, time, meetLink }) {
+function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment = false }) {
   const childLabel = childName || 'your child';
   const friendlyDate = formatFriendlyDate(date);
   const friendlyTime = formatFriendlyTime(time);
+  const sessionType = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
   return (
-    `🧸 Therapy Session Confirmed!\n\n` +
+    `🧸 ${sessionType} Confirmed!\n\n` +
     `Session details:\n\n` +
     `👧 Child: ${childLabel}\n\n` +
     `📅 Date: ${friendlyDate || date}\n\n` +
@@ -255,7 +256,7 @@ function buildBookingMessage({ childName, date, time, meetLink }) {
 /**
  * Send booking confirmation WhatsApp messages (multi-part)
  * @param {string} toPhoneE164 - Phone number in E.164 format
- * @param {Object} details - { childName, date, time, meetLink, receiptUrl? }
+ * @param {Object} details - { childName, date, time, meetLink, receiptUrl?, isFreeAssessment? }
  * @returns {Promise<Object>} - { success: boolean, ... }
  */
 async function sendBookingConfirmation(toPhoneE164, details) {
@@ -264,7 +265,8 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     date,
     time,
     meetLink,
-    receiptUrl
+    receiptUrl,
+    isFreeAssessment = false
   } = details || {};
 
   const sessionsUrl =
@@ -272,16 +274,19 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     'https://little.care/profile/sessions';
 
   // 1) Welcome (message 1)
-  const welcomeMessage =
-    `👋 Welcome to Little Care! 🌈\n\n` +
-    `Thank you for booking a therapy session with our child specialists.`;
+  const welcomeMessage = isFreeAssessment
+    ? `👋 Welcome to Little Care! 🌈\n\n` +
+      `Thank you for booking a free assessment with our child specialists.`
+    : `👋 Welcome to Little Care! 🌈\n\n` +
+      `Thank you for booking a therapy session with our child specialists.`;
 
   // 2) Booking details + Meet link (message 2)
   const bookingMessage = buildBookingMessage({
     childName,
     date,
     time,
-    meetLink
+    meetLink,
+    isFreeAssessment
   });
 
   // 3) Preparation / instructions (message 3)

@@ -496,6 +496,9 @@ app.get('/api/public/psychologists', async (req, res) => {
   try {
     const supabase = require('./config/supabase');
 
+    // Filter out assessment psychologist
+    const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com').toLowerCase();
+    
     const { data: psychologists, error: psychologistsError } = await supabase
       .from('psychologists')
       .select(`
@@ -524,6 +527,7 @@ app.get('/api/public/psychologists', async (req, res) => {
         faq_question_3,
         faq_answer_3
       `)
+      .neq('email', assessmentEmail)
       .order('created_at', { ascending: false });
 
     if (psychologistsError) {

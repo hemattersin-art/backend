@@ -6,7 +6,7 @@ const meetLinkService = require('../utils/meetLinkService'); // New Meet Link Se
 const emailService = require('../utils/emailService');
 
 const DEFAULT_ASSESSMENT_DOCTOR = {
-  email: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'koottfordeveloper@gmail.com',
+  email: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com',
   firstName: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_FIRST_NAME || 'Assessment',
   lastName: process.env.FREE_ASSESSMENT_PSYCHOLOGIST_LAST_NAME || 'Specialist',
 };
@@ -1062,6 +1062,29 @@ const bookFreeAssessment = async (req, res) => {
       // Create meet link asynchronously (don't wait for it)
       (async () => {
         try {
+          /**
+           * Google Meet Configuration for Free Assessments:
+           * 
+           * PARTICIPANTS:
+           * - Client email (from users table)
+           * - Assessment psychologist email (assessment.koott@gmail.com)
+           * 
+           * HOST:
+           * - The Google account that creates the event (assessment.koott@gmail.com if OAuth is connected)
+           * - If OAuth is not connected, the service account creates it (no real host)
+           * 
+           * MEET SETTINGS:
+           * - visibility: 'public' - Meeting is public
+           * - anyoneCanAddSelf: true - Anyone with the link can join without approval (no waiting room)
+           * - guestsCanInviteOthers: true - Guests can invite others
+           * - guestsCanSeeOtherGuests: true - Guests can see who else is in the meeting
+           * - sendUpdates: 'all' - Calendar invites sent to all attendees
+           * 
+           * This means:
+           * - Client can join directly without waiting for host approval
+           * - Anyone with the meet link can join without approval
+           * - No waiting room is enabled
+           */
           const meetSessionData = {
             summary: `Free Assessment`,
             description: `Free 20-minute assessment session with our assessment specialist`,
@@ -1090,6 +1113,13 @@ const bookFreeAssessment = async (req, res) => {
               meetSessionData.attendees.push(psychologistEmail);
             }
           }
+          
+          console.log('📋 Meet Participants:', {
+            client: meetSessionData.attendees[0] || 'Not found',
+            psychologist: psychologistEmail || 'Not found',
+            host: psychologistEmail || 'Service Account (no real host)',
+            totalAttendees: meetSessionData.attendees.length
+          });
 
           // Get psychologist's OAuth credentials for real Meet link creation
           let userAuth = null;
@@ -1127,6 +1157,25 @@ const bookFreeAssessment = async (req, res) => {
           // Create meet link (OAuth preferred if available; will add attendee to client calendar)
           const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
           let finalMeetLink = null;
+          
+          // If tokens were refreshed, update them in the database
+          if (userAuth && meetResult?.refreshedTokens) {
+            try {
+              await supabase
+                .from('psychologists')
+                .update({
+                  google_calendar_credentials: {
+                    access_token: meetResult.refreshedTokens.access_token,
+                    refresh_token: meetResult.refreshedTokens.refresh_token,
+                    expiry_date: meetResult.refreshedTokens.expiry_date
+                  }
+                })
+                .eq('id', defaultPsychologistId);
+              console.log('✅ Updated refreshed OAuth tokens in database');
+            } catch (updateError) {
+              console.error('⚠️ Failed to update refreshed tokens in database:', updateError.message);
+            }
+          }
           
           if (meetResult?.success && meetResult.meetLink) {
             finalMeetLink = meetResult.meetLink;
@@ -1178,7 +1227,8 @@ const bookFreeAssessment = async (req, res) => {
                   childName: clientName,
                   date: scheduledDate,
                   time: scheduledTime,
-                  meetLink: finalMeetLink
+                  meetLink: finalMeetLink,
+                  isFreeAssessment: true
                 });
                 console.log('✅ Free assessment WhatsApp sent to client with meet link');
               } catch (clientWaError) {

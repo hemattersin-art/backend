@@ -1,36 +1,71 @@
 const { google } = require('googleapis');
 const crypto = require('crypto');
+const fs = require('fs').promises;
+
+// Logging toggle for production
+const DEBUG_MEET = process.env.DEBUG_MEET === 'true';
+const log = (...args) => DEBUG_MEET && console.log(...args);
+const logError = (...args) => console.error(...args); // Always log errors
 
 class MeetLinkService {
   constructor() {
     this.oauth2Client = null;
     this.serviceAccount = null;
     this.oauthTokens = null;
+    this.tokensLoaded = false;
     this.initializeAuth();
-    // Load OAuth tokens asynchronously
+    // Load OAuth tokens asynchronously - but track when done
     this.loadOAuthTokensFromFile().catch(error => {
-      console.log('ℹ️ OAuth token loading completed');
+      log('ℹ️ OAuth token loading completed');
     });
+  }
+
+  // Helper: Format time consistently (HH:MM -> HH:MM:SS)
+  formatTime(time) {
+    if (!time) return '00:00:00';
+    return time.length === 5 ? `${time}:00` : time;
+  }
+
+  // Helper: Build normalized return object
+  createResult(success, meetLink, method, eventId = null, eventLink = null, error = null, note = null) {
+    return {
+      success,
+      meetLink: meetLink || 'https://meet.google.com/new?hs=122&authuser=0',
+      method: method || 'fallback',
+      eventId,
+      eventLink,
+      error
+    };
   }
 
   async initializeAuth() {
     try {
       // Load service account for fallback
       this.serviceAccount = require('../google-service-account.json');
-      console.log('✅ Meet Link Service initialized');
+      log('✅ Meet Link Service initialized');
     } catch (error) {
-      console.error('❌ Failed to initialize Meet Link Service:', error.message);
+      logError('❌ Failed to initialize Meet Link Service:', error.message);
+    }
+  }
+
+  // Wait for tokens to be loaded (fixes race condition)
+  async ensureTokensLoaded() {
+    if (this.tokensLoaded) return;
+    // Wait up to 2 seconds for tokens to load
+    const maxWait = 2000;
+    const start = Date.now();
+    while (!this.tokensLoaded && (Date.now() - start) < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
   /**
-   * Refresh OAuth token using refresh token
+   * Refresh OAuth token using refresh token (using modern getAccessToken instead of deprecated refreshAccessToken)
    */
   async refreshOAuthToken(refreshToken) {
     try {
-      console.log('🔄 Refreshing OAuth token...');
+      log('🔄 Refreshing OAuth token...');
       
-      const { google } = require('googleapis');
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
@@ -41,9 +76,10 @@ class MeetLinkService {
         refresh_token: refreshToken
       });
 
-      const { credentials } = await oauth2Client.refreshAccessToken();
+      // Use getAccessToken() instead of deprecated refreshAccessToken()
+      const { credentials } = await oauth2Client.getAccessToken();
       
-      console.log('✅ OAuth token refreshed successfully');
+      log('✅ OAuth token refreshed successfully');
       return {
         success: true,
         accessToken: credentials.access_token,
@@ -51,7 +87,7 @@ class MeetLinkService {
         expiryDate: credentials.expiry_date
       };
     } catch (error) {
-      console.error('❌ Token refresh failed:', error.message);
+      logError('❌ Token refresh failed:', error.message);
       return {
         success: false,
         error: error.message
@@ -64,7 +100,6 @@ class MeetLinkService {
    */
   async loadOAuthTokensFromFile() {
     try {
-      const fs = require('fs').promises;
       const tokenData = await fs.readFile('./oauth-tokens.json', 'utf8');
       const tokens = JSON.parse(tokenData);
       
@@ -72,12 +107,12 @@ class MeetLinkService {
       const now = Date.now();
       if (tokens.expiryDate && tokens.expiryDate > now) {
         this.oauthTokens = tokens;
-        console.log('✅ OAuth tokens loaded from file');
+        log('✅ OAuth tokens loaded from file');
       } else {
-        console.log('⚠️ OAuth tokens in file are expired');
+        log('⚠️ OAuth tokens in file are expired');
         // Try to refresh if we have a refresh token
         if (tokens.refreshToken) {
-          console.log('🔄 Attempting to refresh expired tokens...');
+          log('🔄 Attempting to refresh expired tokens...');
           const refreshResult = await this.refreshOAuthToken(tokens.refreshToken);
           if (refreshResult.success) {
             this.oauthTokens = {
@@ -88,16 +123,18 @@ class MeetLinkService {
             };
             // Save refreshed tokens to file
             await fs.writeFile('./oauth-tokens.json', JSON.stringify(this.oauthTokens, null, 2));
-            console.log('✅ OAuth tokens refreshed and saved');
+            log('✅ OAuth tokens refreshed and saved');
           } else {
-            console.log('❌ Token refresh failed, will need new OAuth authorization');
+            log('❌ Token refresh failed, will need new OAuth authorization');
           }
         } else {
-          console.log('❌ No refresh token available, will need new OAuth authorization');
+          log('❌ No refresh token available, will need new OAuth authorization');
         }
       }
+      this.tokensLoaded = true;
     } catch (error) {
-      console.log('ℹ️ No OAuth tokens file found (this is normal on first run)');
+      log('ℹ️ No OAuth tokens file found (this is normal on first run)');
+      this.tokensLoaded = true; // Mark as loaded even if file doesn't exist
     }
   }
 
@@ -115,7 +152,6 @@ class MeetLinkService {
       };
       
       // Also store in file for persistence across server restarts
-      const fs = require('fs').promises;
       const tokenData = {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
@@ -124,12 +160,11 @@ class MeetLinkService {
       };
       
       await fs.writeFile('./oauth-tokens.json', JSON.stringify(tokenData, null, 2));
-      console.log('✅ OAuth tokens stored in memory and file');
+      log('✅ OAuth tokens stored in memory and file');
       
-      console.log('✅ OAuth tokens stored successfully');
       return true;
     } catch (error) {
-      console.error('❌ Failed to store OAuth tokens:', error.message);
+      logError('❌ Failed to store OAuth tokens:', error.message);
       return false;
     }
   }
@@ -139,8 +174,11 @@ class MeetLinkService {
    */
   async getValidOAuthToken() {
     try {
+      // Ensure tokens are loaded first
+      await this.ensureTokensLoaded();
+      
       if (!this.oauthTokens) {
-        console.log('⚠️ No OAuth tokens available');
+        log('⚠️ No OAuth tokens available');
         return null;
       }
 
@@ -149,10 +187,10 @@ class MeetLinkService {
       
       // Check if token expires in next 5 minutes
       if (expiryTime && (expiryTime - now) < 5 * 60 * 1000) {
-        console.log('🔄 Token expires soon, checking refresh options...');
+        log('🔄 Token expires soon, checking refresh options...');
         
         if (this.oauthTokens.refreshToken) {
-          console.log('🔄 Attempting token refresh...');
+          log('🔄 Attempting token refresh...');
           const refreshResult = await this.refreshOAuthToken(this.oauthTokens.refreshToken);
           if (refreshResult.success) {
             this.oauthTokens = {
@@ -161,68 +199,99 @@ class MeetLinkService {
               expiryDate: refreshResult.expiryDate,
               storedAt: Date.now()
             };
-            console.log('✅ Token refreshed successfully');
+            log('✅ Token refreshed successfully');
           } else {
-            console.log('❌ Token refresh failed, will use service account fallback');
+            log('❌ Token refresh failed, will use service account fallback');
             return null;
           }
         } else {
-          console.log('⚠️ No refresh token available - this is normal for Google OAuth');
-          console.log('🔄 Will use service account fallback for reliability');
+          log('⚠️ No refresh token available - this is normal for Google OAuth');
+          log('🔄 Will use service account fallback for reliability');
           return null;
         }
       }
 
       return this.oauthTokens.accessToken;
     } catch (error) {
-      console.error('❌ Error getting valid OAuth token:', error.message);
+      logError('❌ Error getting valid OAuth token:', error.message);
       return null;
     }
   }
-  async createMeetLinkWithOAuth(oauthToken, sessionData) {
+  async createMeetLinkWithOAuth(oauthToken, sessionData, userAuth = null) {
     try {
-      console.log('🔄 Creating Meet link with OAuth token via Calendar API...');
+      log('🔄 Creating Meet link with OAuth token via Calendar API...');
       
       // Create OAuth2 client
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
-        'http://localhost:5001/api/oauth2/callback' // Use local redirect URI
+        'http://localhost:5001/api/oauth2/callback'
       );
 
-      // Set credentials
-      oauth2Client.setCredentials({
-        access_token: oauthToken
-      });
+      // If userAuth is provided, check if token needs refresh and set refresh token
+      let accessToken = oauthToken;
+      if (userAuth?.refresh_token) {
+        // Set both access and refresh tokens so OAuth client can auto-refresh if needed
+        oauth2Client.setCredentials({
+          access_token: oauthToken,
+          refresh_token: userAuth.refresh_token,
+          expiry_date: userAuth.expiry_date
+        });
+        
+        // Check if token is expired or expires soon (within 5 minutes)
+        const now = Date.now();
+        const expiryDate = userAuth.expiry_date ? new Date(userAuth.expiry_date).getTime() : null;
+        const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+        
+        if (expiryDate && expiryDate <= (now + bufferTime)) {
+          log('🔄 Access token expired or expires soon, refreshing...');
+          try {
+            // Use getAccessToken() which automatically refreshes if needed
+            const { credentials } = await oauth2Client.getAccessToken();
+            accessToken = credentials.access_token;
+            log('✅ Token refreshed automatically');
+            
+            // Update userAuth with new token (caller should save this to database)
+            if (userAuth) {
+              userAuth.access_token = credentials.access_token;
+              userAuth.expiry_date = credentials.expiry_date;
+              userAuth.refresh_token = credentials.refresh_token || userAuth.refresh_token;
+            }
+          } catch (refreshError) {
+            logError('❌ Auto-refresh failed:', refreshError.message);
+            // Continue with original token - might still work if just expired
+          }
+        }
+      } else {
+        // Just set access token if no refresh token available
+        oauth2Client.setCredentials({
+          access_token: oauthToken
+        });
+      }
 
+      // Update credentials with refreshed token if it was refreshed
+      if (accessToken !== oauthToken) {
+        oauth2Client.setCredentials({
+          access_token: accessToken,
+          refresh_token: userAuth.refresh_token,
+          expiry_date: userAuth.expiry_date
+        });
+      }
+      
       // Create Meet link using Calendar API with conference data
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-      
-      // Ensure consistent time format (with seconds)
-      const formatTime = (time) => {
-        if (!time) return '00:00:00';
-        const parts = time.split(':');
-        if (parts.length === 2) {
-          return `${time}:00`; // Add seconds if missing
-        }
-        return time;
-      };
 
-      // Build attendees array - this is THE KEY to bypassing host approval
-      // Google Meet automatically allows invited guests to join without approval
+      // Build attendees array - OAuth can use attendees
       const attendees = [];
       
-      // Add client email if provided
       if (sessionData.clientEmail) {
         attendees.push({ email: sessionData.clientEmail });
       }
       
-      // Add psychologist email if provided
       if (sessionData.psychologistEmail) {
         attendees.push({ email: sessionData.psychologistEmail });
       }
       
-      // Also support attendees array format (for backward compatibility)
       if (Array.isArray(sessionData.attendees) && sessionData.attendees.length > 0) {
         sessionData.attendees.forEach(email => {
           if (email && !attendees.find(a => a.email === email)) {
@@ -235,14 +304,19 @@ class MeetLinkService {
         summary: sessionData.summary || 'Therapy Session',
         description: sessionData.description || 'Therapy session with Google Meet',
         start: {
-          dateTime: `${sessionData.startDate}T${formatTime(sessionData.startTime)}`,
+          dateTime: `${sessionData.startDate}T${this.formatTime(sessionData.startTime)}`,
           timeZone: 'Asia/Kolkata'
         },
         end: {
-          dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
+          dateTime: `${sessionData.startDate}T${this.formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
         attendees: attendees.length > 0 ? attendees : undefined,
+        // Make meeting open to anyone with the link (no waiting room)
+        visibility: 'public',
+        guestsCanInviteOthers: true,
+        guestsCanSeeOtherGuests: true,
+        anyoneCanAddSelf: true, // Allows anyone with the link to join without approval
         conferenceData: {
           createRequest: {
             requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -253,8 +327,8 @@ class MeetLinkService {
         }
       };
 
-      console.log('📅 Creating calendar event with Meet link...');
-      console.log('   👥 Attendees:', attendees.map(a => a.email).join(', ') || 'None');
+      log('📅 Creating calendar event with Meet link...');
+      log('   👥 Attendees:', attendees.map(a => a.email).join(', ') || 'None');
       const createdEvent = await calendar.events.insert({
         calendarId: 'primary',
         resource: event,
@@ -262,34 +336,42 @@ class MeetLinkService {
         sendUpdates: 'all' // Send calendar invites - invited attendees can join without approval
       });
 
-      console.log('✅ Real Meet link created with OAuth via Calendar API');
-      console.log('Meet Link:', createdEvent.data.conferenceData.entryPoints[0].uri);
+      log('✅ Real Meet link created with OAuth via Calendar API');
+      const meetLink = createdEvent.data.conferenceData?.entryPoints?.[0]?.uri;
+      log('Meet Link:', meetLink);
       
-      return {
-        success: true,
-        meetLink: createdEvent.data.conferenceData.entryPoints[0].uri,
-        eventId: createdEvent.data.id,
-        eventLink: createdEvent.data.htmlLink,
-        method: 'oauth_calendar'
-      };
+      const result = this.createResult(
+        true,
+        meetLink,
+        'oauth_calendar',
+        createdEvent.data.id,
+        createdEvent.data.htmlLink
+      );
+      
+      // Add refreshed tokens to result if they were refreshed
+      if (userAuth && userAuth.access_token !== oauthToken) {
+        result.refreshedTokens = {
+          access_token: userAuth.access_token,
+          refresh_token: userAuth.refresh_token,
+          expiry_date: userAuth.expiry_date
+        };
+      }
+      
+      return result;
 
     } catch (error) {
-      console.error('❌ OAuth Meet creation failed:', error.message);
-      return {
-        success: false,
-        error: error.message,
-        method: 'oauth_calendar'
-      };
+      logError('❌ OAuth Meet creation failed:', error.message);
+      return this.createResult(false, null, 'oauth_calendar', null, null, error.message);
     }
   }
 
   /**
    * Create a Meet link using Calendar API with conference data
-   * This works for users without OAuth tokens
+   * This works for users without OAuth tokens (service account)
    */
   async createMeetLinkWithCalendar(sessionData) {
     try {
-      console.log('🔄 Creating Meet link with Calendar API...');
+      log('🔄 Creating Meet link with Calendar API...');
       
       // Create service account auth
       const auth = new google.auth.JWT({
@@ -304,53 +386,52 @@ class MeetLinkService {
       await auth.authorize();
       
       const calendar = google.calendar({ version: 'v3', auth });
-      
-      // Ensure consistent time format (with seconds)
-      const formatTime = (time) => {
-        if (!time) return '00:00:00';
-        const parts = time.split(':');
-        if (parts.length === 2) {
-          return `${time}:00`; // Add seconds if missing
-        }
-        return time;
-      };
 
-      // Build attendees array - this is THE KEY to bypassing host approval
-      // Google Meet automatically allows invited guests to join without approval
-      const attendees = [];
+      // Build attendees list for description (service accounts can't use attendees field)
+      const attendeeEmails = [];
       
-      // Add client email if provided
       if (sessionData.clientEmail) {
-        attendees.push({ email: sessionData.clientEmail });
+        attendeeEmails.push(sessionData.clientEmail);
       }
       
-      // Add psychologist email if provided
       if (sessionData.psychologistEmail) {
-        attendees.push({ email: sessionData.psychologistEmail });
+        attendeeEmails.push(sessionData.psychologistEmail);
       }
       
-      // Also support attendees array format (for backward compatibility)
       if (Array.isArray(sessionData.attendees) && sessionData.attendees.length > 0) {
         sessionData.attendees.forEach(email => {
-          if (email && !attendees.find(a => a.email === email)) {
-            attendees.push({ email });
+          if (email && !attendeeEmails.includes(email)) {
+            attendeeEmails.push(email);
           }
         });
       }
 
-      // Create event with conference data
+      // Service accounts CANNOT use attendees field - detect upfront and skip it
+      const canUseAttendees = false; // Service account limitation
+      
+      // Add attendee emails to description so they're documented
+      let description = sessionData.description || 'Therapy session with Google Meet';
+      if (attendeeEmails.length > 0) {
+        description += `\n\nAttendees: ${attendeeEmails.join(', ')}\n\nJoin via the Google Meet link above.`;
+      }
+
+      // Create event WITHOUT attendees field (service account limitation)
       const event = {
         summary: sessionData.summary || 'Therapy Session',
-        description: sessionData.description || 'Therapy session with Google Meet',
+        description: description,
         start: {
-          dateTime: `${sessionData.startDate}T${formatTime(sessionData.startTime)}`,
+          dateTime: `${sessionData.startDate}T${this.formatTime(sessionData.startTime)}`,
           timeZone: 'Asia/Kolkata'
         },
         end: {
-          dateTime: `${sessionData.startDate}T${formatTime(sessionData.endTime)}`,
+          dateTime: `${sessionData.startDate}T${this.formatTime(sessionData.endTime)}`,
           timeZone: 'Asia/Kolkata'
         },
-        attendees: attendees.length > 0 ? attendees : undefined,
+        // Make meeting open to anyone with the link (no waiting room)
+        visibility: 'public',
+        guestsCanInviteOthers: true,
+        guestsCanSeeOtherGuests: true,
+        anyoneCanAddSelf: true, // Allows anyone with the link to join without approval
         conferenceData: {
           createRequest: {
             requestId: crypto.randomUUID()
@@ -358,248 +439,156 @@ class MeetLinkService {
         }
       };
 
-      console.log('🔍 Calendar API Event Data:', {
+      log('🔍 Calendar API Event Data:', {
         summary: event.summary,
         start: event.start?.dateTime || event.start?.date,
         end: event.end?.dateTime || event.end?.date,
-        attendees: attendees.map(a => a.email).join(', ') || 'None',
+        attendees: attendeeEmails.join(', ') || 'None (service account limitation)',
         conferenceData: event.conferenceData ? 'present' : 'none'
       });
 
-      // Service accounts cannot include attendees in events without Domain-Wide Delegation
-      // So we need to create the event WITHOUT attendees field, but still get the Meet link
-      // The attendees are documented in the description, and the Meet link is shared via email/WhatsApp
+      // Service account cannot use attendees - create event without them
+      log('⚠️ Service account cannot use attendees field - creating event without attendees');
+      log('   📧 Meet link will be shared via email/WhatsApp instead');
+      log('   📝 Attendees documented in event description');
       
-      // Add attendee emails to description so they're documented (even if not in attendees field)
-      if (attendees.length > 0) {
-        const attendeeList = attendees.map(a => a.email).join(', ');
-        event.description = (event.description || '') + 
-          `\n\nAttendees: ${attendeeList}\n\nJoin via the Google Meet link above.`;
-      }
-      
-      // Remove attendees from event object for service account (they can't use it)
-      // The Meet link will still be created via conferenceData
-      const eventWithoutAttendees = {
-        ...event,
-        attendees: undefined // Remove attendees - service account limitation
-      };
-      
-      let result;
-      try {
-        // Try with attendees first (in case OAuth is used, which allows attendees)
-        result = await calendar.events.insert({
+      const result = await calendar.events.insert({
         calendarId: 'primary',
         conferenceDataVersion: 1,
-          requestBody: event,
-          sendUpdates: 'all' // Try to send invites first
-        });
-        console.log('✅ Calendar event created with invites sent');
-      } catch (inviteError) {
-        // Check error message from different possible locations (Google API error structure)
-        const errorMessage = inviteError.message || 
-                            inviteError.response?.data?.error?.message || 
-                            JSON.stringify(inviteError.response?.data?.error || {});
-        
-        // If sending invites fails (service account limitation), create without attendees
-        if (errorMessage.includes('forbiddenForServiceAccounts') || 
-            errorMessage.includes('Domain-Wide Delegation') ||
-            errorMessage.includes('cannot invite attendees')) {
-          console.log('⚠️ Service account cannot use attendees - creating event without attendees field');
-          console.log('   📧 Meet link will be shared via email/WhatsApp instead');
-          console.log('   📝 Attendees documented in event description');
-          
-          // Create event WITHOUT attendees field (service account limitation)
-          result = await calendar.events.insert({
-            calendarId: 'primary',
-            conferenceDataVersion: 1,
-            requestBody: eventWithoutAttendees
-            // No attendees, no sendUpdates - service account limitation
-          });
-          console.log('✅ Calendar event created (without attendees - service account limitation)');
-        } else {
-          throw inviteError; // Re-throw if it's a different error
-        }
-      }
+        requestBody: event
+        // No attendees, no sendUpdates - service account limitation
+      });
+      
+      log('✅ Calendar event created (without attendees - service account limitation)');
 
-      console.log('✅ Calendar event created:', result.data.id);
+      log('✅ Calendar event created:', result.data.id);
       
       // Try to extract Meet link immediately from the created event
       let eventData = result.data;
       
-      console.log('🔍 Checking for Meet link in created event...');
-      console.log('   - Has conferenceData:', !!eventData.conferenceData);
-      console.log('   - Has entryPoints:', !!eventData.conferenceData?.entryPoints);
-      console.log('   - Has hangoutLink:', !!eventData.hangoutLink);
+      log('🔍 Checking for Meet link in created event...');
+      log('   - Has conferenceData:', !!eventData.conferenceData);
+      log('   - Has entryPoints:', !!eventData.conferenceData?.entryPoints);
+      log('   - Has hangoutLink:', !!eventData.hangoutLink);
       
-      // If conferenceData is missing, service account may have limitations
-      // Try fetching the event again after a short delay - sometimes Google populates it later
-      if (!eventData.conferenceData) {
-        console.log('⚠️ No conferenceData in initial response - service account limitation detected');
-        console.log('⏳ Waiting 2 seconds and fetching event again...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        try {
-          const { data: refreshedEvent } = await calendar.events.get({
-            calendarId: 'primary',
-            eventId: eventData.id,
-            conferenceDataVersion: 1
-          });
-          eventData = refreshedEvent;
-          console.log('   - After refresh - Has conferenceData:', !!eventData.conferenceData);
-          console.log('   - After refresh - Has entryPoints:', !!eventData.conferenceData?.entryPoints);
-          console.log('   - After refresh - Has hangoutLink:', !!eventData.hangoutLink);
-        } catch (refreshError) {
-          console.log('⚠️ Could not refresh event:', refreshError.message);
-        }
-      }
-      
-      // Check if Meet link is already available in entryPoints
-      if (eventData.conferenceData?.entryPoints) {
-        const meetEntry = eventData.conferenceData.entryPoints.find(ep => 
-          ep.entryPointType === 'video' || 
-          ep.uri?.includes('meet.google.com') ||
-          ep.uri?.includes('hangouts.google.com')
+      // Check if Meet link is already available
+      const immediateLink = this.extractMeetLink(eventData);
+      if (immediateLink) {
+        log('✅ REAL Meet link found immediately:', immediateLink);
+        return this.createResult(
+          true,
+          immediateLink,
+          'calendar_service_account',
+          eventData.id,
+          eventData.htmlLink
         );
-        if (meetEntry && meetEntry.uri) {
-          console.log('✅ REAL Meet link found immediately:', meetEntry.uri);
-          return {
-            success: true,
-            meetLink: meetEntry.uri,
-            eventId: eventData.id,
-            eventLink: eventData.htmlLink,
-            method: 'calendar_service_account'
-          };
-        }
       }
       
-      // Check hangoutLink as fallback
-      if (eventData.hangoutLink) {
-        console.log('✅ REAL Meet link found in hangoutLink:', eventData.hangoutLink);
-        return {
-          success: true,
-          meetLink: eventData.hangoutLink,
-          eventId: eventData.id,
-          eventLink: eventData.htmlLink,
-          method: 'calendar_service_account'
-        };
-      }
-      
-      // If no immediate Meet link, wait for conference
-      console.log('⏳ No immediate Meet link, waiting for conference...');
+      // If no immediate Meet link, wait for conference with exponential backoff
+      log('⏳ No immediate Meet link, waiting for conference...');
       const meetLink = await this.waitForConferenceReady(eventData.id, calendar);
       
       if (meetLink) {
-        console.log('✅ Real Meet link created with Calendar:', meetLink);
-        return {
-          success: true,
-          meetLink: meetLink,
-          eventId: eventData.id,
-          eventLink: eventData.htmlLink,
-          method: 'calendar_service_account'
-        };
+        log('✅ Real Meet link created with Calendar:', meetLink);
+        return this.createResult(
+          true,
+          meetLink,
+          'calendar_service_account',
+          eventData.id,
+          eventData.htmlLink
+        );
       }
       
-      // Final check: Sometimes Google populates the Meet link shortly after creation
-      // Wait a bit more and check one last time before giving up
-      console.log('⏳ Final check after timeout - sometimes Meet link appears shortly after...');
-      await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 more seconds
+      // Service account limitation - cannot create Meet conferences
+      log('⚠️ Conference timeout - Service account limitation detected');
+      log('⚠️ Service accounts CANNOT create Google Meet conferences via Calendar API');
+      log('⚠️ Solution: Use OAuth tokens (psychologist Google Calendar connection) for real Meet links');
       
-      try {
-        const { data: finalEventData } = await calendar.events.get({ 
-          calendarId: 'primary', 
-          eventId: eventData.id, 
-          conferenceDataVersion: 1 
-        });
-        
-        // Check for Meet link one more time
-        let finalMeetLink = null;
-        if (finalEventData.conferenceData?.entryPoints) {
-          const meetEntry = finalEventData.conferenceData.entryPoints.find(ep => 
-            ep.entryPointType === 'video' || 
-            ep.uri?.includes('meet.google.com') ||
-            ep.uri?.includes('hangouts.google.com')
-          );
-          if (meetEntry && meetEntry.uri) {
-            finalMeetLink = meetEntry.uri;
-          }
-        }
-        
-        if (!finalMeetLink && finalEventData.hangoutLink) {
-          finalMeetLink = finalEventData.hangoutLink;
-        }
-        
-        if (finalMeetLink) {
-          console.log('✅ Meet link found in final check:', finalMeetLink);
-          return {
-            success: true,
-            meetLink: finalMeetLink,
-            eventId: eventData.id,
-            eventLink: eventData.htmlLink,
-            method: 'calendar_service_account'
-          };
-        }
-      } catch (finalCheckError) {
-        console.log('⚠️ Final check failed:', finalCheckError.message);
-      }
-      
-      // Even if conference times out, return success with calendar event
-      // This happens when service accounts cannot create Meet conferences (Google limitation)
-      console.log('⚠️ Conference timeout - Service account limitation detected');
-      console.log('⚠️ Service accounts CANNOT create Google Meet conferences via Calendar API');
-      console.log('⚠️ This is a Google limitation, not a code issue');
-      console.log('⚠️ Solution: Use OAuth tokens (psychologist Google Calendar connection) for real Meet links');
-      console.log('⚠️ For now, using fallback link - users can create Meet manually or use the calendar event');
-      
-      // Return the calendar event link so users can access it and create Meet manually if needed
-      return {
-        success: false, // Mark as false since no real Meet link was created
-        meetLink: 'https://meet.google.com/new?hs=122&authuser=0', // Fallback
-        eventId: eventData.id,
-        eventLink: eventData.htmlLink, // Calendar event link - users can access this
-        method: 'service_account_limitation',
-        note: 'Service accounts cannot create Meet conferences - OAuth required for real Meet links. Calendar event created successfully.'
-      };
+      return this.createResult(
+        false,
+        null,
+        'service_account_limitation',
+        eventData.id,
+        eventData.htmlLink,
+        'Service accounts cannot create Meet conferences - OAuth required for real Meet links'
+      );
 
     } catch (error) {
-      console.error('❌ Calendar Meet creation failed:', error.message);
+      logError('❌ Calendar Meet creation failed:', error.message);
       
-      // Check if it's a service account permission issue
-      if (error.message.includes('Bad Request') || error.message.includes('insufficient authentication')) {
-        console.log('🔍 Service account cannot create Meet conferences - this is expected');
-        console.log('💡 OAuth tokens are required for real Meet link creation');
-        return {
-          success: false,
-          meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
-          method: 'service_account_limitation',
-          error: 'Service account cannot create Meet conferences',
-          note: 'OAuth tokens required for real Meet links - please complete OAuth setup'
-        };
+      const errorMsg = error.message || '';
+      if (errorMsg.includes('Bad Request') || errorMsg.includes('insufficient authentication')) {
+        log('🔍 Service account cannot create Meet conferences - this is expected');
+        log('💡 OAuth tokens are required for real Meet link creation');
+        return this.createResult(
+          false,
+          null,
+          'service_account_limitation',
+          null,
+          null,
+          'Service account cannot create Meet conferences'
+        );
       }
       
-      console.error('❌ Full error details:', JSON.stringify(error, null, 2));
-      return {
-        success: false,
-        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
-        method: 'calendar_error',
-        error: error.message,
-        note: 'Calendar API failed - using fallback'
-      };
+      return this.createResult(
+        false,
+        null,
+        'calendar_error',
+        null,
+        null,
+        error.message
+      );
     }
+  }
+
+  // Helper: Extract Meet link from event data
+  extractMeetLink(eventData) {
+    // Check entryPoints first
+    if (eventData.conferenceData?.entryPoints) {
+      const meetEntry = eventData.conferenceData.entryPoints.find(ep => 
+        ep.entryPointType === 'video' || 
+        ep.uri?.includes('meet.google.com') ||
+        ep.uri?.includes('hangouts.google.com')
+      );
+      if (meetEntry?.uri) {
+        return meetEntry.uri;
+      }
+    }
+    
+    // Check hangoutLink as fallback
+    if (eventData.hangoutLink) {
+      return eventData.hangoutLink;
+    }
+    
+    return null;
   }
 
   /**
    * Wait for conference to be ready and extract Meet link
+   * Uses exponential backoff for better reliability
    */
-  async waitForConferenceReady(eventId, calendar, timeoutMs = 30000, intervalMs = 2000) {
+  async waitForConferenceReady(eventId, calendar, timeoutMs = 30000) {
     try {
-      console.log('⏳ Waiting for conference to be ready...');
+      log('⏳ Waiting for conference to be ready...');
       
       const start = Date.now();
       let attempts = 0;
+      const baseInterval = 1000; // Start with 1 second
       
       while (Date.now() - start < timeoutMs) {
         attempts++;
-        console.log(`   🔍 Attempt ${attempts}: Checking conference status...`);
+        
+        // Exponential backoff: 1s, 2s, 4s, 6s, 8s, then cap at 8s
+        const waitTime = Math.min(baseInterval * Math.pow(2, Math.min(attempts - 1, 2)), 8000);
+        if (attempts > 3) {
+          // After 3 attempts, use fixed 8s interval
+          const fixedInterval = 8000;
+          await new Promise(resolve => setTimeout(resolve, fixedInterval));
+        } else if (attempts > 1) {
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+        
+        log(`   🔍 Attempt ${attempts}: Checking conference status...`);
         
         const { data } = await calendar.events.get({ 
           calendarId: 'primary', 
@@ -608,123 +597,99 @@ class MeetLinkService {
         });
         
         const status = data.conferenceData?.createRequest?.status?.statusCode;
-        console.log(`   📊 Conference Status: ${status || 'pending'}`);
+        log(`   📊 Conference Status: ${status || 'pending'}`);
         
-        // IMPORTANT: Check for Meet link even if status is pending
-        // Sometimes Google populates the link even before status becomes 'success'
-        // Also check hangoutLink which may be available regardless of status
-        let meetLink = null;
-        
-        // First try: conferenceData entryPoints (even if status is pending)
-        if (data.conferenceData?.entryPoints) {
-          const meetEntry = data.conferenceData.entryPoints.find(ep => 
-            ep.entryPointType === 'video' || 
-            ep.uri?.includes('meet.google.com') ||
-            ep.uri?.includes('hangouts.google.com')
-          );
-          if (meetEntry && meetEntry.uri) {
-            meetLink = meetEntry.uri;
-            console.log('   🔗 Meet link found in entryPoints (even with pending status):', meetLink);
-            return meetLink;
-          }
-        }
-        
-        // Second try: hangoutLink (may be available even if status is pending)
-        if (data.hangoutLink) {
-          meetLink = data.hangoutLink;
-          console.log('   🔗 Meet link found in hangoutLink:', meetLink);
+        // Check for Meet link (even if status is pending)
+        const meetLink = this.extractMeetLink(data);
+        if (meetLink) {
+          log('   🔗 Meet link found:', meetLink);
           return meetLink;
-        }
-        
-        // If status is success, we already checked above, but let's confirm
-        if (status === 'success') {
-          console.log('   🎉 Conference status is success, but no Meet link found yet');
-          // Continue waiting as link might populate shortly
         }
         
         if (status === 'failure') {
           throw new Error('Conference creation failed');
         }
         
-        // Wait before next attempt
-        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        if (status === 'success') {
+          log('   🎉 Conference status is success, but no Meet link found yet');
+          // Continue waiting as link might populate shortly
+        }
       }
       
-      console.log(`⏰ Conference still pending after ${timeoutMs}ms, returning null`);
+      log(`⏰ Conference still pending after ${timeoutMs}ms, returning null`);
       return null;
       
     } catch (error) {
-      console.error('❌ Error waiting for conference:', error);
+      logError('❌ Error waiting for conference:', error);
       return null;
     }
   }
 
   /**
    * Create a Meet link using the best available method
-   * Tries OAuth first, then falls back to Calendar API
+   * Priority: OAuth (if available) > Service Account > Fallback
    */
   async createMeetLink(sessionData, userAuth = null) {
     try {
-      console.log('🔄 Creating Meet link with best available method...');
+      log('🔄 Creating Meet link with best available method...');
       
-      // Ensure OAuth tokens are loaded before proceeding
-      if (!this.oauthTokens) {
-        console.log('⏳ Waiting for OAuth tokens to load...');
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+      // Ensure OAuth tokens are loaded
+      await this.ensureTokensLoaded();
       
-      // Try OAuth method first - check stored tokens or user auth
+      // Priority 1: Try OAuth method (if userAuth provided or stored tokens available)
       let oauthToken = null;
-      if (userAuth && userAuth.access_token) {
+      if (userAuth?.access_token) {
         oauthToken = userAuth.access_token;
-        console.log('   🔑 Using provided OAuth token...');
+        log('   🔑 Using provided OAuth token...');
       } else {
-        // Try to get valid OAuth token from stored tokens
         oauthToken = await this.getValidOAuthToken();
         if (oauthToken) {
-          console.log('   🔑 Using stored OAuth token...');
+          log('   🔑 Using stored OAuth token...');
         }
       }
       
       if (oauthToken) {
-        console.log('   🔑 Trying OAuth method...');
-        const oauthResult = await this.createMeetLinkWithOAuth(oauthToken, sessionData);
+        log('   🔑 Trying OAuth method...');
+        const oauthResult = await this.createMeetLinkWithOAuth(oauthToken, sessionData, userAuth);
         
         if (oauthResult.success) {
           return oauthResult;
         }
         
-        console.log('   ⚠️ OAuth method failed, trying Calendar method...');
+        log('   ⚠️ OAuth method failed, trying Calendar method...');
       } else {
-        console.log('   ⚠️ No OAuth token available, trying Calendar method...');
+        log('   ⚠️ No OAuth token available, trying Calendar method...');
       }
       
-      // Fall back to Calendar API method
-      console.log('   📅 Trying Calendar API method...');
+      // Priority 2: Fall back to Calendar API method (service account)
+      log('   📅 Trying Calendar API method...');
       const calendarResult = await this.createMeetLinkWithCalendar(sessionData);
       
       if (calendarResult.success) {
         return calendarResult;
       }
       
-      // If both methods fail, return fallback
-      console.log('   ⚠️ Both methods failed, returning fallback...');
-      return {
-        success: false,
-        meetLink: `https://meet.google.com/new?hs=122&authuser=0`,
-        method: 'fallback',
-        note: 'Manual Meet creation required - both OAuth and Calendar methods failed'
-      };
+      // Priority 3: Fallback link
+      log('   ⚠️ Both methods failed, returning fallback...');
+      return this.createResult(
+        false,
+        null,
+        'fallback',
+        null,
+        null,
+        'Manual Meet creation required - both OAuth and Calendar methods failed'
+      );
       
     } catch (error) {
-      console.error('❌ All Meet creation methods failed:', error.message);
-      return {
-        success: false,
-        meetLink: `https://meet.google.com/new?hs=122&authuser=0`,
-        method: 'fallback',
-        error: error.message,
-        note: 'Manual Meet creation required - all methods failed'
-      };
+      logError('❌ All Meet creation methods failed:', error.message);
+      return this.createResult(
+        false,
+        null,
+        'fallback',
+        null,
+        null,
+        error.message
+      );
     }
   }
 
@@ -734,9 +699,9 @@ class MeetLinkService {
    */
   async generateSessionMeetLink(sessionData, userAuth = null) {
     try {
-      console.log('🔄 Generating session Meet link...');
-      console.log('   📅 Session ID:', sessionData?.id || sessionData?.session_id);
-      console.log('   🔑 User Auth:', userAuth ? 'Available' : 'Not available');
+      log('🔄 Generating session Meet link...');
+      log('   📅 Session ID:', sessionData?.id || sessionData?.session_id);
+      log('   🔑 User Auth:', userAuth ? 'Available' : 'Not available');
       
       // Prepare session data - include emails for attendees (KEY to bypassing host approval)
       const meetSessionData = {
@@ -756,19 +721,20 @@ class MeetLinkService {
       // Create Meet link
       const result = await this.createMeetLink(meetSessionData, userAuth);
       
-      console.log('✅ Meet link generation result:', result);
+      log('✅ Meet link generation result:', result);
       
       return result;
       
     } catch (error) {
-      console.error('❌ Session Meet link generation failed:', error.message);
-      return {
-        success: false,
-        meetLink: `https://meet.google.com/new?hs=122&authuser=0`,
-        method: 'fallback',
-        error: error.message,
-        note: 'Manual Meet creation required - generation failed'
-      };
+      logError('❌ Session Meet link generation failed:', error.message);
+      return this.createResult(
+        false,
+        null,
+        'fallback',
+        null,
+        null,
+        error.message
+      );
     }
   }
 }

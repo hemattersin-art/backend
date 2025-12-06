@@ -479,7 +479,8 @@ class EmailService {
         scheduledDate,
         scheduledTime,
         sessionId,
-        meetLink
+        meetLink,
+        isFreeAssessment = false
       } = sessionData;
 
       const oldDateTime = new Date(`${oldDate}T${oldTime}`);
@@ -520,7 +521,8 @@ class EmailService {
           newTime: formattedNewTime,
           sessionId,
           meetLink,
-          type: 'client'
+          type: 'client',
+          isFreeAssessment
         });
       }
 
@@ -534,7 +536,8 @@ class EmailService {
           newTime: formattedNewTime,
           sessionId,
           meetLink,
-          type: 'psychologist'
+          type: 'psychologist',
+          isFreeAssessment
         });
       }
 
@@ -546,7 +549,9 @@ class EmailService {
   }
 
   async sendRescheduleEmail(emailData) {
-    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, meetLink, type } = emailData;
+    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, meetLink, type, isFreeAssessment = false } = emailData;
+    const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
+    const sessionTypeTitle = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
     const mailOptions = {
       from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
@@ -561,7 +566,7 @@ class EmailService {
           <div style="padding: 20px; background: #f8f9fa;">
             <h2 style="color: #333;">Hello ${name},</h2>
             
-            <p>Your therapy session has been rescheduled. Here are the updated details:</p>
+            <p>Your ${sessionType} has been rescheduled. Here are the updated details:</p>
             
             <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
               <h3 style="color: #856404; margin-top: 0;">Previous Schedule</h3>
@@ -578,7 +583,8 @@ class EmailService {
             <div style="background: #d1ecf1; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
               <h3 style="color: #0c5460; margin-top: 0;">Session Information</h3>
               <p><strong>Session ID:</strong> ${sessionId}</p>
-              <p><strong>Type:</strong> ${type === 'client' ? 'Client' : 'Therapist'}</p>
+              <p><strong>Type:</strong> ${sessionTypeTitle}</p>
+              <p><strong>Role:</strong> ${type === 'client' ? 'Client' : 'Therapist'}</p>
               ${meetLink ? `<p><strong>New Google Meet Link:</strong> <a href="${meetLink}" style="color: #17a2b8;">${meetLink}</a></p>` : ''}
             </div>
             

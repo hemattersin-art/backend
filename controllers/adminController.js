@@ -51,11 +51,15 @@ const getAllUsers = async (req, res) => {
     if (role === 'psychologist') {
       console.log('=== Fetching psychologists directly from psychologists table ===');
       
+      // Filter out assessment psychologist from admin view
+      const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com').toLowerCase();
+      
       // Fetch psychologists directly from psychologists table with pagination
       const offset = (page - 1) * limit;
       const { data: psychologists, error: psychError } = await supabase
         .from('psychologists')
         .select('*')
+        .neq('email', assessmentEmail)
         .range(offset, offset + limit - 1)
         .order('created_at', { ascending: order === 'asc' });
 
@@ -336,11 +340,15 @@ const getAllPsychologists = async (req, res) => {
     
     const { page = 1, limit = 100, search, sort = 'created_at', order = 'desc' } = req.query;
 
+    // Filter out assessment psychologist from admin view
+    const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assesment.koott@gmail.com').toLowerCase();
+
     // Fetch psychologists directly from psychologists table with pagination
     const offset = (page - 1) * limit;
     const { data: psychologists, error: psychError } = await supabase
       .from('psychologists')
       .select('*, individual_session_price')
+      .neq('email', assessmentEmail)
       .range(offset, offset + limit - 1)
       .order('created_at', { ascending: order === 'asc' });
 
@@ -1339,10 +1347,10 @@ const updatePsychologist = async (req, res) => {
           console.log('📦 Existing packages:', existingPackages);
           
           // Extract valid package IDs from the request
-          const updatedPackageIds = packages
-            .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
-            .map(pkg => parseInt(pkg.id));
-          
+            const updatedPackageIds = packages
+              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
+              .map(pkg => parseInt(pkg.id));
+            
           console.log('📦 Updated package IDs from request:', updatedPackageIds);
           console.log('📦 Total packages in request:', packages.length);
           console.log('📦 Packages with valid IDs:', updatedPackageIds.length);
