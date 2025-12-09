@@ -415,6 +415,7 @@ const getAllPsychologists = async (req, res) => {
       phd_college: psych.phd_college || '',
       description: psych.description || '',
       experience_years: psych.experience_years || 0,
+      designation: psych.designation || '', // Include designation field
       area_of_expertise: psych.area_of_expertise || [],
       personality_traits: psych.personality_traits || [], // NEW
       availability: [], // Will be populated below

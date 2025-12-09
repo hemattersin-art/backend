@@ -19,28 +19,46 @@ const register = async (req, res) => {
     // Check if user already exists
     if (role === 'client') {
       // Check users table first (for new system)
-      const { data: existingUser } = await supabase
+      const { data: existingUser, error: userCheckError } = await supabase
         .from('users')
         .select('id')
-        .eq('email', email)
-        .single();
+        .eq('email', email.toLowerCase().trim()) // Normalize email
+        .maybeSingle(); // Use maybeSingle() instead of single() to avoid error when no record found
+
+      if (userCheckError && userCheckError.code !== 'PGRST116') {
+        // PGRST116 is "not found" error which is expected, ignore it
+        console.error('Error checking existing user:', userCheckError);
+        return res.status(500).json(
+          errorResponse('Error checking account. Please try again.')
+        );
+      }
 
       if (existingUser) {
+        console.log('User already exists with email:', email);
         return res.status(400).json(
-          errorResponse('Client with this email already exists')
+          errorResponse('An account with this email already exists. Please login instead.')
         );
       }
 
       // Also check clients table for old entries (backward compatibility)
-      const { data: existingClient } = await supabase
+      const { data: existingClient, error: clientCheckError } = await supabase
         .from('clients')
         .select('id')
-        .eq('email', email)
-        .single();
+        .eq('email', email.toLowerCase().trim()) // Normalize email
+        .maybeSingle(); // Use maybeSingle() instead of single() to avoid error when no record found
+
+      if (clientCheckError && clientCheckError.code !== 'PGRST116') {
+        // PGRST116 is "not found" error which is expected, ignore it
+        console.error('Error checking existing client:', clientCheckError);
+        return res.status(500).json(
+          errorResponse('Error checking account. Please try again.')
+        );
+      }
 
       if (existingClient) {
+        console.log('Client already exists with email:', email);
         return res.status(400).json(
-          errorResponse('Client with this email already exists')
+          errorResponse('An account with this email already exists. Please login instead.')
         );
       }
     } else if (role === 'psychologist') {
@@ -80,10 +98,13 @@ const register = async (req, res) => {
       const { supabaseAdmin } = require('../config/supabase');
       
       // First create a user record in users table (same as Google sign-in)
+      // Normalize email to lowercase and trim
+      const normalizedEmail = email.toLowerCase().trim();
+      
       const { data: newUser, error: userError } = await supabaseAdmin
         .from('users')
         .insert({
-          email: email,
+          email: normalizedEmail,
           password_hash: hashedPassword,
           role: 'client',
           created_at: new Date().toISOString()
@@ -93,6 +114,14 @@ const register = async (req, res) => {
 
       if (userError) {
         console.error('Error creating user:', userError);
+        
+        // Check if it's a unique constraint violation (duplicate email)
+        if (userError.code === '23505' || userError.message?.includes('duplicate') || userError.message?.includes('unique')) {
+          return res.status(400).json(
+            errorResponse('An account with this email already exists. Please login instead.')
+          );
+        }
+        
         return res.status(500).json(
           errorResponse(`Failed to create user account: ${userError.message}`)
         );
@@ -106,10 +135,13 @@ const register = async (req, res) => {
         .insert({
           user_id: newUser.id,
           first_name: req.body.first_name || 'Pending',
-          last_name: req.body.last_name || 'Update',
+          last_name: req.body.last_name || '', // Use empty string instead of 'Update' since we only use full name as first_name
           phone_number: req.body.phone_number || '+91',
-          child_name: req.body.child_name || 'Pending',
+          child_name: req.body.child_name?.trim() || 'Pending', // Use 'Pending' as default since column has NOT NULL constraint
           child_age: req.body.child_age || 1,
+          client_message: req.body.client_message?.trim() || null,
+          terms_accepted: req.body.terms_accepted || false,
+          therapy_agreement_accepted: req.body.therapy_agreement_accepted || false,
           created_at: new Date().toISOString()
         })
         .select('*')
