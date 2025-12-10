@@ -894,6 +894,105 @@ The Little Care Team
     }
   }
 
+  /**
+   * Send account creation email with credentials (low priority, async)
+   * @param {string} email - User email
+   * @param {string} password - User password (plain text, only sent once)
+   * @param {string} name - User name (optional)
+   */
+  async sendAccountCreationEmail({ email, password, name = 'User' }) {
+    try {
+      if (!this.transporter) {
+        console.warn('📧 Email service not initialized, skipping account creation email');
+        return;
+      }
+
+      const subject = 'Welcome to Little Care - Your Account Details';
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #3f2e73; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+            .credentials { background-color: #fff; border: 2px solid #3f2e73; border-radius: 8px; padding: 20px; margin: 20px 0; }
+            .credential-item { margin: 15px 0; }
+            .label { font-weight: bold; color: #3f2e73; }
+            .value { font-family: monospace; font-size: 16px; color: #333; background-color: #f0f0f0; padding: 8px 12px; border-radius: 4px; display: inline-block; }
+            .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
+            .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🧸 Welcome to Little Care!</h1>
+            </div>
+            <div class="content">
+              <p>Hello ${name},</p>
+              <p>Your account has been successfully created. Please find your login credentials below:</p>
+              
+              <div class="credentials">
+                <div class="credential-item">
+                  <span class="label">Email:</span><br>
+                  <span class="value">${email}</span>
+                </div>
+                <div class="credential-item">
+                  <span class="label">Password:</span><br>
+                  <span class="value">${password}</span>
+                </div>
+              </div>
+              
+              <div class="warning">
+                <strong>⚠️ Important:</strong> Please save these credentials securely. For security reasons, we recommend changing your password after your first login.
+              </div>
+              
+              <p>You can now log in to your account and access all our services.</p>
+              
+              <p>If you have any questions or need assistance, please don't hesitate to contact us.</p>
+              
+              <p>Best regards,<br>The Little Care Team</p>
+            </div>
+            <div class="footer">
+              <p>This is an automated email. Please do not reply to this message.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const text = `
+Welcome to Little Care!
+
+Your account has been successfully created. Please find your login credentials below:
+
+Email: ${email}
+Password: ${password}
+
+⚠️ Important: Please save these credentials securely. For security reasons, we recommend changing your password after your first login.
+
+You can now log in to your account and access all our services.
+
+If you have any questions or need assistance, please don't hesitate to contact us.
+
+Best regards,
+The Little Care Team
+
+---
+This is an automated email. Please do not reply to this message.
+      `;
+
+      await this.sendEmail({ to: email, subject, html, text });
+      console.log('✅ Account creation email sent successfully to:', email);
+    } catch (error) {
+      // Log error but don't throw - this is low priority
+      console.error('❌ Failed to send account creation email (non-blocking):', error?.message || error);
+    }
+  }
+
   async sendCancellationNotification({
     to,
     clientName,

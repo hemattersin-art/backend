@@ -573,6 +573,12 @@ app.get('/api/public/psychologists', async (req, res) => {
 
     const formattedPsychologists = psychologists.map(formatPublicPsychologist);
 
+    // Set cache headers for egress reduction (5 minutes browser cache, 1 hour CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=300, s-maxage=3600',
+      'ETag': `"psychologists-${Date.now()}"`
+    });
+
     res.json({
       success: true,
       data: {
@@ -609,6 +615,12 @@ app.get('/api/public/psychologists/cache-version', async (req, res) => {
     const cacheVersion = latestPsychologist?.updated_at 
       ? new Date(latestPsychologist.updated_at).getTime()
       : Date.now();
+
+    // Set cache headers (1 minute browser cache, 5 minutes CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=60, s-maxage=300',
+      'ETag': `"cache-version-${cacheVersion}"`
+    });
 
     res.json({
       success: true,

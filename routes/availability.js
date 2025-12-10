@@ -22,6 +22,12 @@ router.get('/psychologist/:id', async (req, res, next) => {
 
     const availability = await availabilityService.getPsychologistAvailability(psychologistId, date);
 
+    // Set cache headers (2 minutes browser cache, 5 minutes CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=120, s-maxage=300',
+      'ETag': `"availability-${psychologistId}-${date}"`
+    });
+
     res.json(
       successResponse({
         message: 'Availability retrieved successfully',
@@ -58,6 +64,12 @@ router.get('/psychologist/:id/range', async (req, res, next) => {
       endDate
     );
 
+    // Set cache headers (2 minutes browser cache, 5 minutes CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=120, s-maxage=300',
+      'ETag': `"availability-range-${psychologistId}-${startDate}-${endDate}"`
+    });
+
     res.json(
       successResponse({
         message: 'Availability range retrieved successfully',
@@ -89,6 +101,12 @@ router.get('/psychologist/:id/check', async (req, res, next) => {
     console.log(`🔍 Checking availability for psychologist ${psychologistId} on ${date} at ${time}`);
 
     const isAvailable = await availabilityService.isTimeSlotAvailable(psychologistId, date, time);
+
+    // Set cache headers (1 minute browser cache, 2 minutes CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=60, s-maxage=120',
+      'ETag': `"availability-check-${psychologistId}-${date}-${time}"`
+    });
 
     res.json(
       successResponse({
@@ -166,6 +184,12 @@ router.get('/public/psychologist/:id', async (req, res, next) => {
       availableSlots: availability.availableSlots,
       blockedSlots: availability.blockedSlots
     };
+
+    // Set cache headers (2 minutes browser cache, 5 minutes CDN)
+    res.set({
+      'Cache-Control': 'public, max-age=120, s-maxage=300',
+      'ETag': `"public-availability-${psychologistId}-${date}"`
+    });
 
     res.json(
       successResponse({

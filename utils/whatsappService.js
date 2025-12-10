@@ -269,10 +269,6 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     isFreeAssessment = false
   } = details || {};
 
-  const sessionsUrl =
-    process.env.CLIENT_SESSIONS_URL ||
-    'https://little.care/profile/sessions';
-
   // 1) Welcome (message 1)
   const welcomeMessage = isFreeAssessment
     ? `👋 Welcome to Little Care! 🌈\n\n` +
@@ -297,13 +293,7 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     `• Choose a quiet place with good lighting and minimal background noise.\n\n` +
     `• Keep your device charged or connected to power.`;
 
-  // 4) Sessions page link (message 4)
-  const sessionsMessage =
-    `🔁 For rescheduling, cancellation, or messaging your psychologist, ` +
-    `please visit your sessions page:\n` +
-    `${sessionsUrl}`;
-
-  // 5) Contact / enquiries (message 5)
+  // 4) Contact / enquiries (message 4)
   const contactMessage =
     `📞 For any other enquiry or help, you can reach us on:\n` +
     `WhatsApp / Call: +91 95390 07766`;
@@ -313,7 +303,6 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     welcomeMessage,
     bookingMessage,
     instructionMessage,
-    sessionsMessage,
     contactMessage
   ];
 
