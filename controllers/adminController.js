@@ -1356,24 +1356,26 @@ const updatePsychologist = async (req, res) => {
           console.log('📦 Total packages in request:', packages.length);
           console.log('📦 Packages with valid IDs:', updatedPackageIds.length);
           
-          // SAFETY CHECK: Only delete packages if we have at least one valid package ID in the request
-          // This prevents accidental deletion when packages are sent without IDs
-          const hasValidPackageIds = updatedPackageIds.length > 0;
-          const hasNewPackages = packages.some(pkg => !pkg.id || isNaN(parseInt(pkg.id)) || parseInt(pkg.id) <= 0);
+          // CRITICAL SAFETY: Only delete packages if explicitly requested via deletePackages flag
+          // This prevents accidental deletion when updating other psychologist fields
+          // Packages should only be deleted through the dedicated delete endpoint or with explicit flag
+          const shouldDeletePackages = req.body.deletePackages === true || req.body.deletePackages === 'true';
           
-          // Only proceed with deletion if:
-          // 1. We have valid package IDs in the request (meaning it's an intentional update)
-          // 2. OR we have new packages being added (meaning the user is actively managing packages)
-          const shouldDeletePackages = hasValidPackageIds || hasNewPackages;
-          
-          if (!shouldDeletePackages && existingPackages && existingPackages.length > 0) {
-            console.log('⚠️  SAFETY: Skipping package deletion - no valid package IDs in request and no new packages. This prevents accidental deletion.');
-            console.log('⚠️  If you intended to delete packages, ensure they are included in the request with their IDs.');
-          } else if (existingPackages && existingPackages.length > 0 && shouldDeletePackages) {
+          if (!shouldDeletePackages) {
+            // SAFETY: Never delete packages unless explicitly requested
+            console.log('🔒 SAFETY: Package deletion disabled - packages will NOT be deleted unless deletePackages=true flag is set');
+            console.log('📦 Existing packages preserved:', existingPackages?.map(p => ({ id: p.id, name: p.name })));
+            console.log('💡 To delete packages, use DELETE /api/admin/psychologists/:id/packages/:packageId or set deletePackages=true');
+          } else if (existingPackages && existingPackages.length > 0) {
+            // Only delete if explicitly requested AND package IDs are provided
+            const updatedPackageIds = packages
+              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
+              .map(pkg => parseInt(pkg.id));
+            
             // First, delete packages that are not in the updated list
             for (const existingPkg of existingPackages) {
               if (!updatedPackageIds.includes(existingPkg.id)) {
-                console.log(`📦 Deleting removed package ${existingPkg.id} (${existingPkg.name})`);
+                console.log(`⚠️  DELETING package ${existingPkg.id} (${existingPkg.name}) - deletePackages flag was set`);
                 const { error: deleteError } = await supabase
                   .from('packages')
                   .delete()

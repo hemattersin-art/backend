@@ -217,15 +217,17 @@ function formatFriendlyDate(dateStr) {
 function formatFriendlyTime(timeStr) {
   if (!timeStr) return '';
   try {
+    // Time is already in IST format (HH:MM), just format it directly without timezone conversion
     const [h, m] = timeStr.split(':');
-    const date = new Date();
-    date.setHours(parseInt(h, 10), parseInt(m || '0', 10), 0, 0);
-    return date.toLocaleTimeString('en-IN', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZone: 'Asia/Kolkata'
-    });
+    const hours = parseInt(h, 10);
+    const minutes = parseInt(m || '0', 10);
+    
+    // Convert to 12-hour format with AM/PM
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    
+    return `${displayHours}:${displayMinutes} ${period}`;
   } catch {
     return timeStr;
   }

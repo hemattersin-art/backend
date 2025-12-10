@@ -207,7 +207,7 @@ class EmailService {
     } = emailData;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `Session Confirmed - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -323,7 +323,7 @@ class EmailService {
     } = emailData;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `New Session Scheduled - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -419,7 +419,7 @@ class EmailService {
     const { to, clientName, psychologistName, scheduledDate, scheduledTime, sessionId } = emailData;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `New Session Booked - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -554,7 +554,7 @@ class EmailService {
     const sessionTypeTitle = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `Session Rescheduled - ${newDate} at ${newTime}`,
       html: `
@@ -684,7 +684,7 @@ class EmailService {
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `Free Assessment Confirmed - ${assessmentDate} at ${assessmentTime}`,
       html: `
@@ -806,7 +806,7 @@ The Little Care Team
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
       to: to,
       subject: `Free Assessment Scheduled - ${assessmentDate} at ${assessmentTime}`,
       html: `
@@ -880,7 +880,7 @@ The Little Care Team
       }
 
       const mailOptions = {
-        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
         to: to,
         subject: subject,
         html: html,
@@ -1022,7 +1022,7 @@ This is an automated email. Please do not reply to this message.
       const otherParty = isPsychologist ? clientName : `Dr. ${psychologistName}`;
 
       const mailOptions = {
-        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
         to: to,
         subject: 'Session Cancelled',
         html: `
@@ -1112,7 +1112,7 @@ This is an automated email. Please do not reply to this message.
       });
 
       const mailOptions = {
-        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
         to: to,
         subject: 'No-Show Notice - Session Missed',
         html: `
@@ -1191,7 +1191,7 @@ This is an automated email. Please do not reply to this message.
   }) {
     try {
       const mailOptions = {
-        from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
         to: clientEmail,
         subject: 'Session Completed - Summary & Report Available',
         html: `
