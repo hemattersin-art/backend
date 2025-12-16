@@ -337,7 +337,10 @@ class MeetLinkService {
         calendarId: 'primary',
         resource: event,
         conferenceDataVersion: 1,
-        sendUpdates: 'all' // Send calendar invites - invited attendees can join without approval
+        // Important: we do NOT want Google to email attendees
+        // (those mails come from assessment.koott@gmail.com).
+        // Our own Nodemailer emails already go out from the Little Care address.
+        sendUpdates: 'none'
       });
 
       log('✅ Real Meet link created with OAuth via Calendar API');
