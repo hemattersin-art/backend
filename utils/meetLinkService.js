@@ -247,15 +247,19 @@ class MeetLinkService {
           log('🔄 Access token expired or expires soon, refreshing...');
           try {
             // Use getAccessToken() which automatically refreshes if needed
-            const { credentials } = await oauth2Client.getAccessToken();
-            accessToken = credentials.access_token;
+            // Returns { token, res } where token is the access token string
+            const { token } = await oauth2Client.getAccessToken();
+            accessToken = token;
+            
+            // Get updated credentials from OAuth client after refresh
+            const updatedCredentials = oauth2Client.credentials;
             log('✅ Token refreshed automatically');
             
             // Update userAuth with new token (caller should save this to database)
-            if (userAuth) {
-              userAuth.access_token = credentials.access_token;
-              userAuth.expiry_date = credentials.expiry_date;
-              userAuth.refresh_token = credentials.refresh_token || userAuth.refresh_token;
+            if (userAuth && updatedCredentials) {
+              userAuth.access_token = updatedCredentials.access_token || token;
+              userAuth.expiry_date = updatedCredentials.expiry_date;
+              userAuth.refresh_token = updatedCredentials.refresh_token || userAuth.refresh_token;
             }
           } catch (refreshError) {
             logError('❌ Auto-refresh failed:', refreshError.message);

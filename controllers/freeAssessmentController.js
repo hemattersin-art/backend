@@ -1121,7 +1121,9 @@ const bookFreeAssessment = async (req, res) => {
             totalAttendees: meetSessionData.attendees.length
           });
 
-          // Get psychologist's OAuth credentials for real Meet link creation
+          // Use Little Care Google account's OAuth credentials for real Meet link creation
+          // The FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL should be set to your Little Care Google account
+          // This ensures calendar invites and Meet links come from Little Care, not assessment.koott@gmail.com
           let userAuth = null;
           if (defaultPsychologistWithCredentials?.google_calendar_credentials) {
             const credentials = defaultPsychologistWithCredentials.google_calendar_credentials;
@@ -1137,7 +1139,8 @@ const bookFreeAssessment = async (req, res) => {
                   refresh_token: credentials.refresh_token,
                   expiry_date: credentials.expiry_date
                 };
-                console.log('✅ Using default assessment psychologist Google Calendar OAuth credentials for Meet link creation');
+                console.log('✅ Using Little Care Google Calendar OAuth credentials for Meet link creation');
+                console.log('   📧 Meet link will be created from:', psychologistEmail);
               } else if (credentials.refresh_token) {
                 // Token expired but we have refresh token
                 userAuth = {
@@ -1145,16 +1148,18 @@ const bookFreeAssessment = async (req, res) => {
                   refresh_token: credentials.refresh_token,
                   expiry_date: credentials.expiry_date
                 };
-                console.log('⚠️ Default assessment psychologist OAuth token expired, but refresh token available - service will attempt refresh');
+                console.log('⚠️ Little Care OAuth token expired, but refresh token available - service will attempt refresh');
               } else {
-                console.log('⚠️ Default assessment psychologist OAuth credentials expired and no refresh token - will use fallback method');
+                console.log('⚠️ Little Care OAuth credentials expired and no refresh token - will use fallback method');
               }
             }
           } else {
-            console.log('⚠️ Default assessment psychologist does not have Google Calendar connected - will use service account method (may not create real Meet link)');
+            console.log('⚠️ Little Care Google account does not have Google Calendar connected');
+            console.log('   💡 Please connect Google Calendar for the free assessment psychologist account');
+            console.log('   💡 Set FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL to your Little Care Google account email');
           }
 
-          // Create meet link (OAuth preferred if available; will add attendee to client calendar)
+          // Create meet link using Little Care Google account OAuth (creates real Meet links)
           const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
           let finalMeetLink = null;
           
@@ -1266,6 +1271,49 @@ const bookFreeAssessment = async (req, res) => {
           } catch (whatsappError) {
             console.error('❌ Error sending WhatsApp notifications for free assessment:', whatsappError);
           }
+
+          // Send confirmation email AFTER Meet link is created (so email contains real link)
+          try {
+            // Fetch user details for email
+            let userRowForEmail = null;
+            if (userAccountId) {
+              const result = await supabase
+                .from('users')
+                .select('email')
+                .eq('id', userAccountId)
+                .single();
+              userRowForEmail = result.data;
+            }
+
+            // Get client details for email
+            const { data: clientDetails } = await supabase
+              .from('clients')
+              .select('child_name, first_name, last_name')
+              .eq('id', client.id)
+              .single();
+
+            const clientName = clientDetails?.child_name || 
+                              (clientDetails?.first_name && clientDetails?.last_name 
+                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
+                                : clientDetails?.first_name || 'Client');
+
+            console.log('📧 Sending free assessment confirmation email with Meet link:', finalMeetLink);
+            await emailService.sendFreeAssessmentConfirmation({
+              clientName: clientName,
+              psychologistName: assessmentPsychologistPayload
+                ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
+                : 'Assessment Specialist',
+              assessmentDate: scheduledDate,
+              assessmentTime: scheduledTime,
+              assessmentNumber: nextAssessmentNumber,
+              clientEmail: userRowForEmail?.email,
+              psychologistEmail: assessmentPsychologistPayload?.email || null,
+              googleMeetLink: finalMeetLink // Use the real Meet link that was just created
+            });
+            console.log('✅ Free assessment confirmation email sent with Meet link');
+          } catch (emailError) {
+            console.error('❌ Error sending confirmation email:', emailError);
+          }
         } catch (e) {
           console.error('❌ Error creating meet link asynchronously:', e);
           const fallbackLink = 'https://meet.google.com/new?hs=122&authuser=0';
@@ -1277,6 +1325,33 @@ const bookFreeAssessment = async (req, res) => {
               google_meet_start_url: fallbackLink
             })
             .eq('id', session.id);
+          
+          // Still try to send email with fallback link
+          try {
+            let userRowForEmail = null;
+            if (userAccountId) {
+              const result = await supabase
+                .from('users')
+                .select('email')
+                .eq('id', userAccountId)
+                .single();
+              userRowForEmail = result.data;
+            }
+            await emailService.sendFreeAssessmentConfirmation({
+              clientName: 'Client',
+              psychologistName: assessmentPsychologistPayload
+                ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
+                : 'Assessment Specialist',
+              assessmentDate: scheduledDate,
+              assessmentTime: scheduledTime,
+              assessmentNumber: nextAssessmentNumber,
+              clientEmail: userRowForEmail?.email,
+              psychologistEmail: assessmentPsychologistPayload?.email || null,
+              googleMeetLink: fallbackLink
+            });
+          } catch (emailError) {
+            console.error('❌ Error sending fallback email:', emailError);
+          }
         }
       })();
     }
@@ -1289,49 +1364,6 @@ const bookFreeAssessment = async (req, res) => {
         free_assessment_count: nextAssessmentNumber
       })
       .eq('id', client.id);
-
-    // Fetch user details for email (clients table may not have name/email columns)
-    let userRowForEmail = null;
-    let userEmailError = null;
-    if (userAccountId) {
-      const result = await supabase
-        .from('users')
-        .select('email')
-        .eq('id', userAccountId)
-        .single();
-      userRowForEmail = result.data;
-      userEmailError = result.error;
-    }
-
-    if (userEmailError) {
-      console.error('Error fetching user email:', userEmailError);
-    }
-
-    console.log('📧 User email details:', {
-      email: userRowForEmail?.email,
-      userId: userId
-    });
-
-    // Send confirmation email (generic, without doctor or meet link)
-    try {
-      await emailService.sendFreeAssessmentConfirmation({
-        clientName: 'Client',
-        psychologistName: assessmentPsychologistPayload
-          ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
-          : 'Assessment Specialist',
-        assessmentDate: scheduledDate,
-        assessmentTime: scheduledTime,
-        assessmentNumber: nextAssessmentNumber,
-        clientEmail: userRowForEmail?.email,
-        psychologistEmail: assessmentPsychologistPayload?.email || null,
-        googleMeetLink: session?.google_meet_link || null
-      });
-    } catch (emailError) {
-      console.error('Error sending confirmation email:', emailError);
-    }
-
-    // WhatsApp will be sent asynchronously after meet link is created (see async function above)
-    // This ensures the real meet link is included in the WhatsApp message
 
     await removeTimeSlotFromDateConfig(scheduledDate, scheduledTime);
 
