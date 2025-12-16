@@ -647,7 +647,7 @@ const bookSession = async (req, res) => {
       }, 'Session booked successfully')
     );
 
-    // PRIORITY: Check and send reminder immediately if session is 12 hours away
+    // PRIORITY: Check and send reminder immediately if session is 2 hours away
     // This gives new bookings priority over batch reminder processing
     try {
       const sessionReminderService = require('../services/sessionReminderService');
@@ -1485,7 +1485,7 @@ const rescheduleSession = async (req, res) => {
 
     console.log('✅ Session rescheduled successfully');
     
-    // PRIORITY: Check and send reminder immediately if rescheduled session is 12 hours away
+    // PRIORITY: Check and send reminder immediately if rescheduled session is 2 hours away
     // This gives rescheduled bookings priority over batch reminder processing
     try {
       const sessionReminderService = require('../services/sessionReminderService');
@@ -2321,7 +2321,7 @@ const bookRemainingSession = async (req, res) => {
 
     console.log('✅ Remaining session booked successfully');
     
-    // PRIORITY: Check and send reminder immediately if remaining session booking is 12 hours away
+    // PRIORITY: Check and send reminder immediately if remaining session booking is 2 hours away
     // This gives new bookings priority over batch reminder processing
     try {
       const sessionReminderService = require('../services/sessionReminderService');

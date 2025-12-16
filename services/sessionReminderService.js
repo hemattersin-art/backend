@@ -15,7 +15,7 @@ class SessionReminderService {
 
   /**
    * Start the session reminder service
-   * Runs every hour to check for sessions 12 hours away
+   * Runs every hour to check for sessions 2 hours away
    */
   start() {
     console.log('🔔 Starting Session Reminder Service...');
@@ -39,22 +39,22 @@ class SessionReminderService {
   }
 
   /**
-   * Check for sessions 12 hours away and send WhatsApp reminders
+   * Check for sessions 2 hours away and send WhatsApp reminders
    */
   async checkAndSendReminders() {
     this.isRunning = true;
     console.log('🔍 Checking for sessions requiring reminders...');
 
     try {
-      // Get current time and calculate 12 hours from now
+      // Get current time and calculate 2 hours from now
       const now = dayjs().tz('Asia/Kolkata');
-      const targetTime = now.add(12, 'hours');
+      const targetTime = now.add(2, 'hours');
       
       console.log(`📅 Current time: ${now.format('YYYY-MM-DD HH:mm:ss')}`);
       console.log(`📅 Checking for sessions at: ${targetTime.format('YYYY-MM-DD HH:mm:ss')}`);
 
       // Query sessions that are:
-      // 1. Scheduled in approximately 12 hours (within a 1-hour window)
+      // 1. Scheduled in approximately 2 hours (within a 1-hour window)
       // 2. Status is 'booked' or 'rescheduled'
       // 3. Haven't had reminder sent yet (check notifications table)
       
@@ -112,18 +112,18 @@ class SessionReminderService {
 
       console.log(`📋 Found ${sessions.length} sessions for ${targetDate}`);
 
-      // Filter sessions that are approximately 12 hours away (within 1-hour window)
+      // Filter sessions that are approximately 2 hours away (within 1-hour window)
       const reminderSessions = sessions.filter(session => {
         if (!session.scheduled_time) return false;
         
         const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
         const timeDiff = sessionTime.diff(now, 'hour', true); // Difference in hours (decimal)
         
-        // Check if session is between 11.5 and 12.5 hours away (1-hour window)
-        return timeDiff >= 11.5 && timeDiff <= 12.5;
+        // Check if session is between 1.5 and 2.5 hours away (1-hour window)
+        return timeDiff >= 1.5 && timeDiff <= 2.5;
       });
 
-      console.log(`🔔 Found ${reminderSessions.length} sessions requiring 12-hour reminders`);
+      console.log(`🔔 Found ${reminderSessions.length} sessions requiring 2-hour reminders`);
 
       // Process sessions in batches with parallel processing within each batch
       // This balances speed with API rate limiting
@@ -166,7 +166,7 @@ class SessionReminderService {
         .from('notifications')
         .select('id')
         .eq('related_id', session.id)
-        .eq('type', 'session_reminder_12h')
+        .eq('type', 'session_reminder_2h')
         .limit(1);
 
       if (existingNotifications && existingNotifications.length > 0) {
@@ -196,7 +196,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your therapy session with Dr. ${psychologistName} is scheduled in 12 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const clientMessage = `🔔 Reminder: Your therapy session with Dr. ${psychologistName} is scheduled in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           (session.google_meet_link 
             ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
             : '') +
@@ -221,7 +221,7 @@ class SessionReminderService {
 
       // Send reminder to psychologist
       if (psychologist.phone) {
-        const psychologistMessage = `🔔 Reminder: You have a session with ${clientName} in 12 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const psychologistMessage = `🔔 Reminder: You have a session with ${clientName} in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           `👤 Client: ${clientName}\n` +
           (session.google_meet_link 
             ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
@@ -255,18 +255,18 @@ class SessionReminderService {
           {
             user_id: client.id,
             user_role: 'client',
-            type: 'session_reminder_12h',
+            type: 'session_reminder_2h',
             title: 'Session Reminder',
-            message: `Your session with Dr. ${psychologistName} is in 12 hours`,
+            message: `Your session with Dr. ${psychologistName} is in 2 hours`,
             related_id: session.id,
             is_read: false
           },
           {
             user_id: psychologist.id,
             user_role: 'psychologist',
-            type: 'session_reminder_12h',
+            type: 'session_reminder_2h',
             title: 'Session Reminder',
-            message: `Your session with ${clientName} is in 12 hours`,
+            message: `Your session with ${clientName} is in 2 hours`,
             related_id: session.id,
             is_read: false
           }
@@ -418,7 +418,7 @@ class SessionReminderService {
         return;
       }
 
-      // Check if session is approximately 12 hours away (within 1-hour window)
+      // Check if session is approximately 2 hours away (within 1-hour window)
       if (!session.scheduled_time) {
         console.log(`ℹ️  [PRIORITY] Session ${sessionId} has no scheduled time`);
         return;
@@ -427,13 +427,13 @@ class SessionReminderService {
       const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
       const timeDiff = sessionTime.diff(now, 'hour', true);
 
-      // Check if session is between 11.5 and 12.5 hours away
-      if (timeDiff >= 11.5 && timeDiff <= 12.5) {
-        console.log(`✅ [PRIORITY] Session ${sessionId} is in 12-hour window, sending reminder immediately...`);
+      // Check if session is between 1.5 and 2.5 hours away
+      if (timeDiff >= 1.5 && timeDiff <= 2.5) {
+        console.log(`✅ [PRIORITY] Session ${sessionId} is in 2-hour window, sending reminder immediately...`);
         await this.sendReminderForSession(session);
         console.log(`✅ [PRIORITY] Reminder sent immediately for session ${sessionId}`);
       } else {
-        console.log(`ℹ️  [PRIORITY] Session ${sessionId} is ${timeDiff.toFixed(2)} hours away (not in 12-hour window)`);
+        console.log(`ℹ️  [PRIORITY] Session ${sessionId} is ${timeDiff.toFixed(2)} hours away (not in 2-hour window)`);
       }
     } catch (error) {
       console.error(`❌ [PRIORITY] Error checking reminder for session ${sessionId}:`, error);

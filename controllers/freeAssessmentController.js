@@ -1328,28 +1328,28 @@ const bookFreeAssessment = async (req, res) => {
           
           // Still try to send email with fallback link
           try {
-            let userRowForEmail = null;
-            if (userAccountId) {
-              const result = await supabase
-                .from('users')
-                .select('email')
-                .eq('id', userAccountId)
-                .single();
-              userRowForEmail = result.data;
+    let userRowForEmail = null;
+    if (userAccountId) {
+      const result = await supabase
+        .from('users')
+        .select('email')
+        .eq('id', userAccountId)
+        .single();
+      userRowForEmail = result.data;
             }
-            await emailService.sendFreeAssessmentConfirmation({
-              clientName: 'Client',
-              psychologistName: assessmentPsychologistPayload
-                ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
-                : 'Assessment Specialist',
-              assessmentDate: scheduledDate,
-              assessmentTime: scheduledTime,
-              assessmentNumber: nextAssessmentNumber,
-              clientEmail: userRowForEmail?.email,
-              psychologistEmail: assessmentPsychologistPayload?.email || null,
+      await emailService.sendFreeAssessmentConfirmation({
+        clientName: 'Client',
+        psychologistName: assessmentPsychologistPayload
+          ? `${assessmentPsychologistPayload.first_name} ${assessmentPsychologistPayload.last_name}`.trim()
+          : 'Assessment Specialist',
+        assessmentDate: scheduledDate,
+        assessmentTime: scheduledTime,
+        assessmentNumber: nextAssessmentNumber,
+        clientEmail: userRowForEmail?.email,
+        psychologistEmail: assessmentPsychologistPayload?.email || null,
               googleMeetLink: fallbackLink
-            });
-          } catch (emailError) {
+      });
+    } catch (emailError) {
             console.error('❌ Error sending fallback email:', emailError);
           }
         }
