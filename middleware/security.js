@@ -314,21 +314,6 @@ const ipFilter = (req, res, next) => {
 
 // Request Validation Middleware
 const requestValidator = (req, res, next) => {
-  // Check for suspicious request patterns
-  const suspiciousHeaders = [
-    'x-forwarded-for',
-    'x-real-ip',
-    'x-client-ip'
-  ];
-
-  const hasSuspiciousHeaders = suspiciousHeaders.some(header => 
-    req.headers[header] && req.headers[header].includes(',')
-  );
-
-  if (hasSuspiciousHeaders) {
-    console.warn(`⚠️ Suspicious headers detected from IP: ${req.ip}`);
-  }
-
   // Validate request method
   const allowedMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'];
   if (!allowedMethods.includes(req.method)) {

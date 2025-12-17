@@ -324,7 +324,7 @@ const getReceiptByOrderId = async (req, res) => {
     // Find payment by razorpay_order_id
     const { data: payment, error: paymentError } = await supabaseAdmin
       .from('payments')
-      .select('id, session_id, client_id, razorpay_order_id, transaction_id')
+      .select('id, session_id, client_id, razorpay_order_id, transaction_id, status')
       .eq('razorpay_order_id', orderId)
       .single();
 
@@ -345,23 +345,7 @@ const getReceiptByOrderId = async (req, res) => {
       );
     }
 
-    // Get receipt by payment_id or session_id
-    const { data: receipt, error: receiptError } = await supabaseAdmin
-      .from('receipts')
-      .select('id, receipt_number, file_url, file_path, session_id, payment_id, created_at')
-      .eq('payment_id', payment.id)
-      .single();
-
-    if (receiptError || !receipt) {
-      console.log('❌ Receipt not found for payment:', payment.id);
-      return res.status(404).json(
-        errorResponse('Receipt not found')
-      );
-    }
-
-    console.log('✅ Receipt found for order:', orderId);
-
-    // Get session details for this payment
+    // Get session details for this payment (even if receipt doesn't exist yet)
     let sessionDetails = null;
     if (payment.session_id) {
       const { data: session, error: sessionError } = await supabaseAdmin
@@ -394,13 +378,39 @@ const getReceiptByOrderId = async (req, res) => {
       }
     }
 
+    // Get receipt by payment_id (may not exist yet if payment verification is still processing)
+    const { data: receipt, error: receiptError } = await supabaseAdmin
+      .from('receipts')
+      .select('id, receipt_number, file_url, file_path, session_id, payment_id, created_at')
+      .eq('payment_id', payment.id)
+      .single();
+
+    // If receipt doesn't exist yet, return payment and session info anyway
+    // This handles the case where payment verification is still processing
+    if (receiptError || !receipt) {
+      console.log('⚠️ Receipt not found for payment:', payment.id, '- Payment may still be processing');
+      return res.json(
+        successResponse({
+          receipt_available: false,
+          payment_status: payment.status || 'pending',
+          transaction_id: payment.transaction_id,
+          session: sessionDetails, // Include session details even without receipt
+          message: 'Receipt is being generated. Please check back in a moment.'
+        }, 'Payment found, receipt pending')
+      );
+    }
+
+    console.log('✅ Receipt found for order:', orderId);
+
     return res.json(
       successResponse({
+        receipt_available: true,
         receipt_number: receipt.receipt_number,
         file_url: receipt.file_url,
         file_path: receipt.file_path,
         created_at: receipt.created_at,
         transaction_id: payment.transaction_id,
+        payment_status: payment.status || 'success',
         session: sessionDetails // Include session details
       }, 'Receipt fetched successfully')
     );
