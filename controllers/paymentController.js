@@ -675,19 +675,37 @@ const handlePaymentSuccess = async (req, res) => {
 
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
-        
-        // Check if it's a unique constraint violation (double booking)
-        if (sessionError.code === '23505' || 
-            sessionError.message?.includes('unique') || 
-            sessionError.message?.includes('duplicate')) {
-          console.log('⚠️ Double booking detected - slot was just booked by another user');
-          // Rollback payment record
-          await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
-          return res.status(409).json(
-            errorResponse('This time slot was just booked by another user. Please select another time.')
-          );
+
+      // Check if it's a unique constraint violation (double booking)
+      if (
+        sessionError.code === '23505' ||
+        sessionError.message?.includes('unique') ||
+        sessionError.message?.includes('duplicate')
+      ) {
+        console.log('⚠️ Double booking detected - slot was just booked by another user');
+
+        // Instead of deleting the payment, preserve it as a usable credit-like record
+        // (paid, but no session). We keep status as 'pending' but attach Razorpay details.
+        try {
+          await supabase
+            .from('payments')
+            .update({
+              status: 'pending',
+              razorpay_payment_id: razorpay_payment_id,
+              razorpay_response: params,
+              // Keep session_id null so it can be used for a future booking
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', paymentRecord.id);
+        } catch (creditError) {
+          console.error('⚠️ Failed to update payment after double booking:', creditError);
         }
-      
+
+        return res.status(409).json(
+          errorResponse('This time slot was just booked by another user. Your payment is safe – please choose another available time.')
+        );
+      }
+
       // Send error notification email to admin
       try {
         await emailService.sendEmail({

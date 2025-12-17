@@ -1,5 +1,6 @@
 const express = require('express');
 const availabilityService = require('../utils/availabilityCalendarService');
+const calendarSyncService = require('../services/calendarSyncService');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const router = express.Router();
 
@@ -44,16 +45,32 @@ router.get('/psychologist/:id', async (req, res, next) => {
 /**
  * GET /api/availability/psychologist/:id/range
  * Get psychologist availability for a date range
+ * Optional: ?sync=1 will run a Google Calendar sync for this psychologist
+ *           before computing availability, so external events are blocked in real-time.
+ * NOTE: Use ?sync=1 sparingly (e.g. therapist profile page) as it triggers
+ *       a Google Calendar API call and DB updates.
  */
 router.get('/psychologist/:id/range', async (req, res, next) => {
   try {
     const { id: psychologistId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, sync } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json(
         errorResponse('Both startDate and endDate parameters are required (YYYY-MM-DD format)')
       );
+    }
+
+    // Optionally run a real-time Google Calendar sync for this psychologist
+    // when ?sync=1 or ?sync=true is passed (used by therapist profile page).
+    if (sync === '1' || sync === 'true') {
+      try {
+        console.log(`🔄 Running on-demand calendar sync for psychologist ${psychologistId} before availability range fetch`);
+        await calendarSyncService.syncPsychologistById(psychologistId);
+      } catch (syncError) {
+        console.error(`⚠️ On-demand calendar sync failed for psychologist ${psychologistId}:`, syncError.message || syncError);
+        // Do not fail the request if sync fails; fall back to last known DB state
+      }
     }
 
     console.log(`📅 Getting availability range for psychologist ${psychologistId} from ${startDate} to ${endDate}`);

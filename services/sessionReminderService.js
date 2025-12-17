@@ -30,12 +30,7 @@ class SessionReminderService {
       await this.checkAndSendReminders();
     });
 
-    console.log('✅ Session Reminder Service started (runs every hour)');
-    
-    // Also run immediately on startup (optional - can remove if not needed)
-    setTimeout(() => {
-      this.checkAndSendReminders();
-    }, 10000); // Wait 10 seconds after startup
+    console.log('✅ Session Reminder Service scheduled (runs every hour)');
   }
 
   /**

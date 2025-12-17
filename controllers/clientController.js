@@ -82,6 +82,86 @@ const getProfile = async (req, res) => {
   }
 };
 
+/**
+ * Get a usable payment credit for the authenticated client by transaction ID.
+ * Used when a payment succeeded but the original slot was taken by someone else.
+ */
+const getPaymentCredit = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { transactionId } = req.params;
+
+    if (!transactionId) {
+      return res.status(400).json(
+        errorResponse('Transaction ID is required')
+      );
+    }
+
+    if (userRole !== 'client') {
+      return res.status(403).json(
+        errorResponse('Only clients can access payment credits')
+      );
+    }
+
+    // In the clients table, id is the client_id used in payments
+    const { data: client, error: clientError } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('id', userId)
+      .single();
+
+    if (clientError || !client) {
+      console.error('Client profile not found for credit lookup:', clientError);
+      return res.status(404).json(
+        errorResponse('Client profile not found')
+      );
+    }
+
+    const clientId = client.id;
+
+    const { data: payment, error: paymentError } = await supabase
+      .from('payments')
+      .select('id, client_id, psychologist_id, amount, status, transaction_id, session_id, session_type, razorpay_payment_id')
+      .eq('transaction_id', transactionId)
+      .eq('client_id', clientId)
+      .single();
+
+    if (paymentError || !payment) {
+      console.error('Payment credit not found:', paymentError);
+      return res.status(404).json(
+        errorResponse('Payment credit not found')
+      );
+    }
+
+    // Treat as credit only if payment is still pending, has a Razorpay payment id and no session yet
+    if (payment.status !== 'pending' || !payment.razorpay_payment_id || payment.session_id) {
+      return res.status(400).json(
+        errorResponse('This payment cannot be used as a session credit')
+      );
+    }
+
+    return res.json(
+      successResponse(
+        {
+          payment_id: payment.id,
+          transaction_id: payment.transaction_id,
+          psychologist_id: payment.psychologist_id,
+          amount: payment.amount,
+          session_type: payment.session_type || 'Individual Session',
+          status: payment.status
+        },
+        'Payment credit fetched successfully'
+      )
+    );
+  } catch (error) {
+    console.error('Get payment credit error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching payment credit')
+    );
+  }
+};
+
 // Update client profile
 const updateProfile = async (req, res) => {
   try {
@@ -2702,6 +2782,213 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
   }
 };
 
+/**
+ * Book a session using an existing payment credit (no new payment).
+ * Expects: transaction_id, scheduled_date, scheduled_time, psychologist_id (must match credit).
+ */
+const bookSessionWithCredit = async (req, res) => {
+  try {
+    const { psychologist_id, scheduled_date, scheduled_time, transaction_id } = req.body;
+
+    if (!psychologist_id || !scheduled_date || !scheduled_time || !transaction_id) {
+      return res.status(400).json(
+        errorResponse('Missing required fields: psychologist_id, scheduled_date, scheduled_time, transaction_id')
+      );
+    }
+
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (userRole !== 'client') {
+      return res.status(403).json(
+        errorResponse('Only clients can book sessions')
+      );
+    }
+
+    // Get client profile
+    const { data: client, error: clientError } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('id', userId)
+      .single();
+
+    if (clientError || !client) {
+      console.error('Client profile not found:', clientError);
+      return res.status(404).json(
+        errorResponse('Client profile not found. Please complete your profile first.')
+      );
+    }
+
+    const clientId = client.id;
+
+    // Look up the payment credit
+    const { data: payment, error: paymentError } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('transaction_id', transaction_id)
+      .eq('client_id', clientId)
+      .single();
+
+    if (paymentError || !payment) {
+      console.error('Payment credit not found:', paymentError);
+      return res.status(404).json(
+        errorResponse('Payment credit not found')
+      );
+    }
+
+    // Credit is valid only if payment is still pending, has a Razorpay payment id and no session yet
+    if (payment.status !== 'pending' || !payment.razorpay_payment_id || payment.session_id) {
+      return res.status(400).json(
+        errorResponse('This payment credit has already been used or is not available')
+      );
+    }
+
+    if (payment.psychologist_id !== psychologist_id) {
+      return res.status(400).json(
+        errorResponse('This payment credit is not valid for the selected psychologist')
+      );
+    }
+
+    // Check time slot availability
+    console.log('🔍 Checking time slot availability for credit booking...');
+    const isAvailable = await availabilityService.isTimeSlotAvailable(
+      psychologist_id,
+      scheduled_date,
+      scheduled_time
+    );
+
+    if (!isAvailable) {
+      return res.status(400).json(
+        errorResponse('This time slot is not available. Please select another time.')
+      );
+    }
+
+    console.log('✅ Time slot is available for credit booking');
+
+    // Fetch client and psychologist details for meet link
+    const { data: clientDetails, error: clientDetailsError } = await supabase
+      .from('clients')
+      .select(`
+        first_name, 
+        last_name, 
+        child_name,
+        phone_number,
+        user:users(email)
+      `)
+      .eq('id', clientId)
+      .single();
+
+    if (clientDetailsError || !clientDetails) {
+      console.error('Error fetching client details for credit booking:', clientDetailsError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch client details')
+      );
+    }
+
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+      .from('psychologists')
+      .select('first_name, last_name, email, phone')
+      .eq('id', psychologist_id)
+      .single();
+
+    if (psychologistDetailsError || !psychologistDetails) {
+      console.error('Error fetching psychologist details for credit booking:', psychologistDetailsError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch psychologist details')
+      );
+    }
+
+    // Create Google Meet link (same as normal booking)
+    let meetData = null;
+    try {
+      const sessionData = {
+        summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
+        description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
+        startDate: scheduled_date,
+        startTime: scheduled_time,
+        endTime: addMinutesToTime(scheduled_time, 50)
+      };
+
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
+      if (meetResult.success) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || null,
+          method: meetResult.method
+        };
+      } else {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: null,
+          calendarLink: null,
+          method: meetResult.method || 'fallback'
+        };
+      }
+    } catch (meetError) {
+      console.error('⚠️ Error creating Google Meet link for credit booking:', meetError);
+    }
+
+    // Create session using the existing payment
+    const sessionInsert = {
+      client_id: clientId,
+      psychologist_id: psychologist_id,
+      scheduled_date,
+      scheduled_time,
+      status: 'booked',
+      price: payment.amount,
+      payment_id: payment.id
+    };
+
+    if (meetData) {
+      sessionInsert.google_meet_link = meetData.meetLink;
+      // Some deployments may not have a separate google_meet_event_id column; 
+      // we only store the meet link here to keep compatibility.
+    }
+
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .insert([sessionInsert])
+      .select('*')
+      .single();
+
+    if (sessionError) {
+      console.error('❌ Session creation failed for credit booking:', sessionError);
+      return res.status(500).json(
+        errorResponse('Failed to create session with existing payment. Please contact support.')
+      );
+    }
+
+    // Mark payment as fully used
+    const { error: updateError } = await supabase
+      .from('payments')
+      .update({
+        status: 'success',
+        session_id: session.id
+      })
+      .eq('id', payment.id);
+
+    if (updateError) {
+      console.error('⚠️ Failed to update payment status after credit booking:', updateError);
+    }
+
+    return res.json(
+      successResponse(
+        {
+          sessionId: session.id,
+          paymentId: payment.id
+        },
+        'Session booked successfully using existing payment'
+      )
+    );
+  } catch (error) {
+    console.error('Book session with credit error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while booking session with existing payment')
+    );
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -2720,5 +3007,7 @@ module.exports = {
   getFreeAssessmentAvailabilityForReschedule,
   reserveAssessmentSlot,
   bookAssessment,
-  getAssessmentSessions
+  getAssessmentSessions,
+  getPaymentCredit,
+  bookSessionWithCredit
 };

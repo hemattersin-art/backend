@@ -45,6 +45,10 @@ router.put('/assessments/sessions/:assessmentSessionId/reschedule', assessmentBo
 // Get client packages
 router.get('/packages', clientController.getClientPackages);
 
+// Payment credit and booking with existing payment
+router.get('/payment-credit/:transactionId', clientController.getPaymentCredit);
+router.post('/book-session-with-credit', clientController.bookSessionWithCredit);
+
 // Get all receipts for a client
 router.get('/receipts', getClientReceipts);
 
