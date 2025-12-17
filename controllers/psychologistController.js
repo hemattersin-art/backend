@@ -7,6 +7,50 @@ const {
   formatTime
 } = require('../utils/helpers');
 const assessmentSessionService = require('../services/assessmentSessionService');
+const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+/**
+ * Convert 12-hour time to 24-hour format for comparison
+ * Handles both "5:00 PM" and "17:00" formats
+ */
+function convertSlotTimeTo24Hour(timeStr) {
+  if (!timeStr) return null;
+  
+  const time = typeof timeStr === 'string' ? timeStr.trim() : String(timeStr).trim();
+  
+  // If already in 24-hour format (no AM/PM), extract HH:MM
+  if (!time.includes('AM') && !time.includes('PM')) {
+    // Extract first 5 characters (HH:MM) if longer string
+    const match = time.match(/(\d{1,2}):(\d{2})/);
+    if (match) {
+      const hours = parseInt(match[1]);
+      const minutes = match[2];
+      return `${String(hours).padStart(2, '0')}:${minutes}`;
+    }
+    return time.substring(0, 5);
+  }
+  
+  // Parse 12-hour format (e.g., "5:00 PM" or "5:00PM")
+  const match = time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+  
+  let hour24 = parseInt(match[1]);
+  const minutes = match[2];
+  const period = match[3].toUpperCase();
+  
+  if (period === 'PM' && hour24 !== 12) {
+    hour24 += 12;
+  } else if (period === 'AM' && hour24 === 12) {
+    hour24 = 0;
+  }
+  
+  return `${String(hour24).padStart(2, '0')}:${minutes}`;
+}
 
 // Get psychologist profile
 const getProfile = async (req, res) => {
@@ -695,8 +739,9 @@ const getAvailability = async (req, res) => {
           const processedAvailability = filteredAvailability.map(dayAvailability => {
             // Get all external events for this date (including multi-day events)
             const dayExternalEvents = externalSlots.filter(slot => {
-              const slotStartDate = new Date(slot.start).toISOString().split('T')[0];
-              const slotEndDate = new Date(slot.end).toISOString().split('T')[0];
+              // Extract dates in IST timezone to avoid day boundary issues
+              const slotStartDate = dayjs(slot.start).tz('Asia/Kolkata').format('YYYY-MM-DD');
+              const slotEndDate = dayjs(slot.end).tz('Asia/Kolkata').format('YYYY-MM-DD');
               
               // Include event if:
               // 1. Event starts on this date, OR
@@ -711,23 +756,30 @@ const getAvailability = async (req, res) => {
             // An event might span multiple time slots, so we need to check overlap
             const googleCalendarBlockedTimes = new Set();
             dayExternalEvents.forEach(event => {
-              const eventStart = new Date(event.start);
-              const eventEnd = new Date(event.end);
-              const eventStartDate = eventStart.toISOString().split('T')[0];
-              const eventEndDate = eventEnd.toISOString().split('T')[0];
+              // Extract dates in IST timezone to avoid day boundary issues
+              const eventStartTz = dayjs(event.start).tz('Asia/Kolkata');
+              const eventEndTz = dayjs(event.end).tz('Asia/Kolkata');
+              const eventStartDate = eventStartTz.format('YYYY-MM-DD');
+              const eventEndDate = eventEndTz.format('YYYY-MM-DD');
               const isMultiDayEvent = eventStartDate !== eventEndDate;
               
               // For each time slot in availability, check if it overlaps with this event
               (dayAvailability.time_slots || []).forEach(slot => {
+                // Store original slot format for blocking (normalized to HH:MM for consistency)
                 const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
-                const [slotHour, slotMinute] = slotTime.split(':').map(Number);
                 
-                // Create slot start and end times using the availability date (assuming 1-hour slots)
-                const availabilityDate = new Date(dayAvailability.date + 'T00:00:00');
-                const slotStart = new Date(availabilityDate);
-                slotStart.setHours(slotHour, slotMinute, 0, 0);
-                const slotEnd = new Date(slotStart);
-                slotEnd.setHours(slotHour + 1, slotMinute, 0, 0);
+                // Convert slot time to 24-hour format (handles both "5:00 PM" and "17:00" formats)
+                const time24Hour = convertSlotTimeTo24Hour(slot);
+                if (!time24Hour) return; // Skip invalid times
+                
+                const [slotHour, slotMinute] = time24Hour.split(':').map(Number);
+                
+                // Create slot start and end times using timezone-aware dayjs (Asia/Kolkata)
+                const slotStart = dayjs(`${dayAvailability.date} ${String(slotHour).padStart(2, '0')}:${String(slotMinute).padStart(2, '0')}:00`).tz('Asia/Kolkata');
+                const slotEnd = slotStart.add(60, 'minutes'); // 1-hour slot
+                
+                // Parse event times with timezone support (already parsed above, reuse)
+                // eventStartTz and eventEndTz are already defined above
                 
                 // Check if slot overlaps with event
                 let overlaps = false;
@@ -736,18 +788,16 @@ const getAvailability = async (req, res) => {
                   // Multi-day event: check if this date is the start date or end date
                   if (dayAvailability.date === eventStartDate) {
                     // On start date: block from event start time until end of day
-                    const endOfDay = new Date(availabilityDate);
-                    endOfDay.setHours(23, 59, 59, 999);
-                    overlaps = slotStart < endOfDay && slotEnd > eventStart;
+                    const endOfDay = dayjs(`${dayAvailability.date} 23:59:59`).tz('Asia/Kolkata');
+                    overlaps = slotStart.isBefore(eventEndTz) && slotEnd.isAfter(eventStartTz) && slotStart.isBefore(endOfDay);
                   } else if (dayAvailability.date === eventEndDate) {
                     // On end date: block from start of day until event end time
-                    const startOfDay = new Date(availabilityDate);
-                    startOfDay.setHours(0, 0, 0, 0);
-                    overlaps = slotStart < eventEnd && slotEnd > startOfDay;
+                    const startOfDay = dayjs(`${dayAvailability.date} 00:00:00`).tz('Asia/Kolkata');
+                    overlaps = slotStart.isBefore(eventEndTz) && slotEnd.isAfter(startOfDay);
                   }
                 } else {
-                  // Single-day event: standard overlap check
-                  overlaps = slotStart < eventEnd && slotEnd > eventStart;
+                  // Single-day event: standard overlap check using timezone-aware comparisons
+                  overlaps = slotStart.isBefore(eventEndTz) && slotEnd.isAfter(eventStartTz);
                 }
                 
                 if (overlaps) {

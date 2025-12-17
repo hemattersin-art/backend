@@ -152,7 +152,8 @@ class CalendarSyncService {
     const storedSyncToken = psychologist.google_calendar_credentials?.syncToken || null;
     
     // Date range only needed for full sync (when no sync token)
-    const syncDays = parseInt(process.env.CALENDAR_SYNC_DAYS) || 30;
+    // Sync for 3 weeks (21 days) to match availability window - daily availability service maintains 3 weeks
+    const syncDays = parseInt(process.env.CALENDAR_SYNC_DAYS) || 21;
     const startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
     const endDate = new Date();
@@ -493,14 +494,15 @@ class CalendarSyncService {
           }
           
           // Check if slot overlaps with event duration
-          // Event spans from eventInfo.startMinutes to eventInfo.endMinutes
-          // For a slot at X:XX, we check if it falls within the event range
-          // Since slots are typically on the hour (e.g., 9:00 AM, 10:00 AM), we check:
-          // - If slot time >= event start AND slot time < event end
-          // - We use < (strictly less than) for end time because if event ends at 11:00 AM, slot at 11:00 AM should be available
-          // - For full-day events, we block all slots
+          // Slots are typically 1 hour long (60 minutes)
+          // We need to check if the slot INTERVAL overlaps with the event INTERVAL
+          // Slot: [slotMinutes, slotMinutes + 60)
+          // Event: [eventInfo.startMinutes, eventInfo.endMinutes)
+          // Overlap occurs if: slotStart < eventEnd AND slotEnd > eventStart
+          const SLOT_DURATION_MINUTES = 60; // 1-hour slots
+          const slotEndMinutes = slotMinutes + SLOT_DURATION_MINUTES;
           
-          const overlaps = slotMinutes >= eventInfo.startMinutes && slotMinutes < eventInfo.endMinutes;
+          const overlaps = slotMinutes < eventInfo.endMinutes && slotEndMinutes > eventInfo.startMinutes;
           
           if (overlaps) {
             slotsToBlock.push({
@@ -537,7 +539,10 @@ class CalendarSyncService {
           availability.time_slots.forEach(slot => {
             const slotMinutes = slotToMinutes(slot);
             if (slotMinutes !== null) {
-              console.log(`     Slot ${slot} = ${slotMinutes} minutes (overlaps: ${slotMinutes >= eventInfo.startMinutes && slotMinutes < eventInfo.endMinutes})`);
+              const SLOT_DURATION_MINUTES = 60;
+              const slotEndMinutes = slotMinutes + SLOT_DURATION_MINUTES;
+              const overlaps = slotMinutes < eventInfo.endMinutes && slotEndMinutes > eventInfo.startMinutes;
+              console.log(`     Slot ${slot} = ${slotMinutes} minutes (overlaps: ${overlaps})`);
             }
           });
         }

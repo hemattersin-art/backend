@@ -157,6 +157,17 @@ const bookSession = async (req, res) => {
 
     if (createError) {
       console.error('Create session error:', createError);
+      
+      // Check if it's a unique constraint violation (double booking)
+      if (createError.code === '23505' || 
+          createError.message?.includes('unique') || 
+          createError.message?.includes('duplicate')) {
+        console.log('⚠️ Double booking detected - slot was just booked by another user');
+        return res.status(409).json(
+          errorResponse('This time slot was just booked by another user. Please select another time.')
+        );
+      }
+      
       return res.status(500).json(
         errorResponse('Failed to create session')
       );

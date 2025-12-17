@@ -5,14 +5,6 @@ const securityMonitor = require('../utils/securityMonitor');
 const advancedBotDetector = require('../utils/advancedBotDetector');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
-// Test endpoint (no auth required)
-router.get('/test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Security API is working',
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Get security alerts for admin dashboard
 router.get('/alerts', authenticateToken, requireAdmin, async (req, res) => {

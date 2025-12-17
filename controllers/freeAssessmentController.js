@@ -1546,83 +1546,6 @@ const adminListFreeAssessments = async (req, res) => {
 };
 
 // Test endpoint to check date-specific configurations
-const testDateConfigs = async (req, res) => {
-  try {
-    console.log('🔍 Testing date-specific configurations...');
-    
-    // Query all date-specific configurations
-    const { data: dateConfigs, error: dateConfigsError } = await supabase
-      .from('free_assessment_date_configs')
-      .select('*')
-      .eq('is_active', true);
-
-    if (dateConfigsError) {
-      console.error('❌ Error querying date configs:', dateConfigsError);
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to query date configurations',
-        details: dateConfigsError.message
-      });
-    }
-
-    console.log('✅ Found date configs:', dateConfigs?.length || 0);
-    console.log('🔍 Date configs:', dateConfigs);
-    
-    res.json({
-      success: true,
-      message: 'Date configurations check completed',
-      count: dateConfigs?.length || 0,
-      configs: dateConfigs || []
-    });
-
-  } catch (error) {
-    console.error('Test date configs error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      details: error.message
-    });
-  }
-};
-
-// Test endpoint to check global timeslots
-const testGlobalTimeslots = async (req, res) => {
-  try {
-    console.log('🔍 Testing global timeslots...');
-    
-    // Check if table exists by trying to query it
-    const { data: timeslots, error: timeslotsError } = await supabase
-      .from('free_assessment_timeslots')
-      .select('*')
-      .limit(5);
-
-    if (timeslotsError) {
-      console.error('❌ Error querying free_assessment_timeslots:', timeslotsError);
-      return res.status(500).json({
-        success: false,
-        error: 'Table does not exist or query failed',
-        details: timeslotsError.message
-      });
-    }
-
-    console.log('✅ Found timeslots:', timeslots?.length || 0);
-    
-    res.json({
-      success: true,
-      message: 'Global timeslots check completed',
-      count: timeslots?.length || 0,
-      sample: timeslots?.slice(0, 3) || []
-    });
-
-  } catch (error) {
-    console.error('Test global timeslots error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      details: error.message
-    });
-  }
-};
 
 module.exports = {
   getFreeAssessmentStatus,
@@ -1630,7 +1553,5 @@ module.exports = {
   getFreeAssessmentAvailabilityRange,
   bookFreeAssessment,
   cancelFreeAssessment,
-  testGlobalTimeslots,
-  testDateConfigs,
   adminListFreeAssessments
 };

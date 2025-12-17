@@ -7,8 +7,6 @@ const {
   getFreeAssessmentAvailabilityRange,
   bookFreeAssessment,
   cancelFreeAssessment,
-  testGlobalTimeslots,
-  testDateConfigs,
   adminListFreeAssessments
 } = require('../controllers/freeAssessmentController');
 
@@ -30,10 +28,5 @@ router.put('/cancel/:assessmentId', authenticateToken, cancelFreeAssessment);
 // Admin: List free assessments
 router.get('/admin/list', authenticateToken, requireAdmin, adminListFreeAssessments);
 
-// Test global timeslots
-router.get('/test-timeslots', authenticateToken, testGlobalTimeslots);
-
-// Test date-specific configurations
-router.get('/test-date-configs', authenticateToken, testDateConfigs);
 
 module.exports = router;

@@ -3647,6 +3647,19 @@ const createManualBooking = async (req, res) => {
 
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
+        
+        // Check if it's a unique constraint violation (double booking)
+        if (sessionError.code === '23505' || 
+            sessionError.message?.includes('unique') || 
+            sessionError.message?.includes('duplicate')) {
+          console.log('⚠️ Double booking detected - slot was just booked by another user');
+          // Rollback payment record
+          await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
+          return res.status(409).json(
+            errorResponse('This time slot was just booked by another user. Please select another time.')
+          );
+        }
+        
       // Rollback payment record
       await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
       return res.status(500).json(

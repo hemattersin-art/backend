@@ -90,6 +90,24 @@ router.post('/trigger-session-reminders', async (req, res) => {
   }
 });
 
+// Manual trigger for calendar conflict check (admin only, for testing)
+router.post('/trigger-calendar-conflict-check', async (req, res) => {
+  try {
+    const dailyCalendarConflictAlert = require('../services/dailyCalendarConflictAlert');
+    await dailyCalendarConflictAlert.triggerConflictCheck();
+    res.json({
+      success: true,
+      message: 'Calendar conflict check triggered successfully'
+    });
+  } catch (error) {
+    console.error('Error triggering calendar conflict check:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
 
 // File uploads (admin only)

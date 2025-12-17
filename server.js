@@ -33,6 +33,7 @@ const calendarSyncService = require('./services/calendarSyncService');
 const sessionReminderService = require('./services/sessionReminderService');
 const dailyAvailabilityService = require('./services/dailyAvailabilityService');
 const dailyFreeAssessmentService = require('./services/dailyFreeAssessmentService');
+const dailyCalendarConflictAlert = require('./services/dailyCalendarConflictAlert');
 const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
@@ -124,123 +125,6 @@ app.get('/api/security/status', (req, res) => {
   });
 });
 
-// Test OAuth Meet endpoint
-app.post('/api/test-oauth-meet', async (req, res) => {
-  try {
-    const { summary, description } = req.body;
-    
-    const { google } = require('googleapis');
-    
-    // Create OAuth2 client
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
-
-    // Generate OAuth URL for user to authorize
-           const authUrl = oauth2Client.generateAuthUrl({
-             access_type: 'offline',
-             scope: [
-               'https://www.googleapis.com/auth/calendar',
-               'https://www.googleapis.com/auth/calendar.events'
-             ]
-           });
-
-    res.json({
-      success: true,
-      message: 'OAuth URL generated successfully',
-      authUrl: authUrl,
-      instructions: [
-        '1. User clicks the OAuth URL',
-        '2. User authorizes Meet permissions',
-        '3. User gets access token',
-        '4. Use access token to create Meet links'
-      ]
-    });
-  } catch (error) {
-    console.error('OAuth Meet test error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Test OAuth with local redirect URI
-// GET endpoint for easier browser access
-app.get('/api/test-oauth-local', async (req, res) => {
-  try {
-    const { google } = require('googleapis');
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      'http://localhost:5001/api/oauth2/callback' // Local redirect URI
-    );
-    const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      prompt: 'consent', // Force consent screen to get refresh token
-      scope: [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/calendar.events'
-      ]
-    });
-
-    res.json({
-      success: true,
-      message: 'OAuth authorization URL generated',
-      authUrl: authUrl,
-      instructions: [
-        '1. Click the authUrl above',
-        '2. Grant permissions to your Google account',
-        '3. OAuth tokens will be stored automatically',
-        '4. Real Meet links will be created after this setup'
-      ]
-    });
-  } catch (error) {
-    console.error('❌ OAuth URL generation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-app.post('/api/test-oauth-local', async (req, res) => {
-  try {
-    const { google } = require('googleapis');
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      'http://localhost:5001/api/oauth2/callback' // Local redirect URI
-    );
-    const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      prompt: 'consent', // Force consent screen to get refresh token
-      scope: [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/calendar.events'
-      ]
-    });
-    res.json({
-      success: true,
-      message: 'OAuth URL generated for local testing',
-      authUrl: authUrl,
-      instructions: [
-        '1. Click the OAuth URL (uses localhost redirect)',
-        '2. Authorize Meet permissions',
-        '3. Get redirected to localhost callback',
-        '4. Test real Meet link creation'
-      ]
-    });
-  } catch (error) {
-    console.error('OAuth local test error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 // OAuth callback handler for Google Meet integration
 app.get('/api/oauth2/callback', async (req, res) => {
@@ -332,94 +216,6 @@ app.get('/api/oauth2/callback', async (req, res) => {
 
 
 
-// TEMPORARY TEST ENDPOINT - Create test psychologist
-app.post('/api/test/create-psychologist', async (req, res) => {
-  try {
-    const supabase = require('./config/supabase');
-    const { hashPassword } = require('./utils/helpers');
-    
-                    const testPsychologist = {
-                  email: 'test@example.com',
-                  password: 'password123',
-                  first_name: 'Test',
-                  last_name: 'Doctor',
-                  phone: '+1234567890',
-                  ug_college: 'University of Psychology',
-                  pg_college: 'Graduate School of Mental Health',
-                  phd_college: 'Doctoral Institute of Psychology',
-                  area_of_expertise: ['Anxiety', 'Depression', 'Trauma'],
-                  description: 'Experienced psychologist specializing in anxiety and depression treatment.',
-                  experience_years: 8
-                };
-
-    // Check if psychologist already exists
-    const { data: existingPsychologist } = await supabase
-      .from('psychologists')
-      .select('id')
-      .eq('email', testPsychologist.email)
-      .single();
-
-    if (existingPsychologist) {
-      return res.status(200).json({
-        success: true,
-        message: 'Test psychologist already exists',
-        data: {
-          email: testPsychologist.email,
-          password: testPsychologist.password
-        }
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(testPsychologist.password);
-
-    // Create psychologist in psychologists table
-    const { data: psychologist, error: psychologistError } = await supabase
-      .from('psychologists')
-      .insert([{
-        email: testPsychologist.email,
-        password_hash: hashedPassword,
-        first_name: testPsychologist.first_name,
-        last_name: testPsychologist.last_name,
-        phone: testPsychologist.phone,
-        ug_college: testPsychologist.ug_college,
-        pg_college: testPsychologist.pg_college,
-        phd_college: testPsychologist.phd_college,
-        area_of_expertise: testPsychologist.area_of_expertise,
-        description: testPsychologist.description,
-        experience_years: testPsychologist.experience_years
-      }])
-      .select('*')
-      .single();
-
-    if (psychologistError) {
-      console.error('Test psychologist creation error:', psychologistError);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to create test psychologist',
-        error: psychologistError.message
-      });
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Test psychologist created successfully',
-      data: {
-        email: testPsychologist.email,
-        password: testPsychologist.password,
-        id: psychologist.id
-      }
-    });
-
-  } catch (error) {
-    console.error('Test psychologist creation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error',
-      error: error.message
-    });
-  }
-});
 
 // Public endpoint to get all psychologists (no authentication required)
 const formatPublicPsychologist = (psych) => {
@@ -853,111 +649,6 @@ app.post('/api/debug/create-psychologist', async (req, res) => {
   }
 });
 
-// TEMPORARY: Create test client user (for debugging)
-app.post('/api/debug/create-client', async (req, res) => {
-  try {
-    const supabase = require('./config/supabase');
-    const { hashPassword } = require('./utils/helpers');
-    
-    const testClient = {
-      email: 'testclient@test.com',
-      password: 'client123',
-      first_name: 'John',
-      last_name: 'Doe',
-      phone: '+1987654321',
-      child_name: 'Emma',
-      child_age: 12
-    };
-
-    // Check if client already exists
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', testClient.email)
-      .single();
-
-    if (existingUser) {
-      return res.status(200).json({
-        success: true,
-        message: 'Test client already exists',
-        data: {
-          email: testClient.email,
-          password: testClient.password,
-          role: 'client'
-        }
-      });
-    }
-
-    // Hash password
-    const hashedPassword = await hashPassword(testClient.password);
-
-    // Create user with client role
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .insert([{
-        email: testClient.email,
-        password_hash: hashedPassword,
-        role: 'client',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select('id, email, role, created_at')
-      .single();
-
-    if (userError) {
-      console.error('User creation error:', userError);
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to create user account'
-      });
-    }
-
-    // Create client profile
-    const { data: client, error: clientError } = await supabase
-      .from('clients')
-      .insert([{
-        user_id: user.id,
-        first_name: testClient.first_name,
-        last_name: testClient.last_name,
-        phone_number: testClient.phone,
-        child_name: testClient.child_name,
-        child_age: testClient.child_age,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select('*')
-      .single();
-
-    if (clientError) {
-      console.error('Client profile creation error:', clientError);
-      // Delete user if profile creation fails
-      await supabase.from('users').delete().eq('id', user.id);
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to create client profile'
-      });
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Test client created successfully',
-      data: {
-        id: user.id,
-        email: testClient.email,
-        password: testClient.password,
-        role: 'client',
-        name: `${testClient.first_name} ${testClient.last_name}`
-      }
-    });
-
-  } catch (error) {
-    console.error('Create client error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 // TEMPORARY: Create test admin user (for debugging)
 app.post('/api/debug/create-admin', async (req, res) => {
@@ -1285,6 +976,9 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   
   // Start Daily Free Assessment Availability service (adds next day at 12 AM)
   dailyFreeAssessmentService.start();
+  
+  // Start Daily Calendar Conflict Monitor service (checks for conflicts at 1 AM)
+  dailyCalendarConflictAlert.start();
 });
 
 module.exports = app;

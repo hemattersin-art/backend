@@ -8,7 +8,6 @@ const {
   createBlog,
   updateBlog,
   deleteBlog,
-  createTestBlog
 } = require('../controllers/blogController');
 const { upload, uploadBlogImage, uploadMultipleBlogImages } = require('../controllers/blogUploadController');
 
@@ -29,7 +28,5 @@ router.post('/admin/upload-image', authenticateToken, requireAdmin, upload.singl
 // Multiple images upload route
 router.post('/admin/upload-multiple-images', authenticateToken, requireAdmin, upload.array('images', 10), uploadMultipleBlogImages);
 
-// Test route to create dummy blog (for development/testing)
-router.post('/test/create-dummy', createTestBlog);
 
 module.exports = router;
