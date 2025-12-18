@@ -120,11 +120,17 @@ async function sendAssessmentWhatsapps({ session, clientName, meetLink }) {
 
   if (clientPhone) {
     try {
+      // Extract psychologist name if available
+      const psychologistName = session.psychologist?.first_name && session.psychologist?.last_name
+        ? `${session.psychologist.first_name} ${session.psychologist.last_name}`.trim()
+        : null;
+      
       await sendBookingConfirmation(clientPhone, {
         childName: session.client?.child_name || clientName,
         date: scheduledDate,
         time: scheduledTime,
-        meetLink
+        meetLink,
+        psychologistName: psychologistName // Add psychologist name if available
       });
       console.log('✅ Assessment WhatsApp sent to client');
     } catch (error) {

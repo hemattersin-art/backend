@@ -1045,6 +1045,7 @@ const bookSession = async (req, res) => {
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
+            psychologistName: psychologistName, // Add psychologist name to WhatsApp message
           };
           const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
           if (clientWaResult?.success) {
@@ -2868,6 +2869,7 @@ const bookRemainingSession = async (req, res) => {
           date: scheduled_date,
           time: scheduled_time,
           meetLink: meetData.meetLink,
+          psychologistName: psychologistName, // Add psychologist name to WhatsApp message
           packageInfo: packageInfo
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);

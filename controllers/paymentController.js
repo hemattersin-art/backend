@@ -1191,6 +1191,7 @@ const handlePaymentSuccess = async (req, res) => {
           date: actualScheduledDate,
           time: actualScheduledTime,
           meetLink: meetData.meetLink,
+          psychologistName: psychologistName, // Add psychologist name to WhatsApp message
           // Pass receipt URL so we can send the PDF via WhatsApp as well
           receiptUrl: receiptResult?.fileUrl || null
         };

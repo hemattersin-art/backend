@@ -3764,7 +3764,8 @@ const createManualBooking = async (req, res) => {
             childName: childName,
             date: scheduled_date,
             time: scheduled_time,
-            meetLink: meetData.meetLink
+            meetLink: meetData.meetLink,
+            psychologistName: psychologistName // Add psychologist name to WhatsApp message
           };
           await sendBookingConfirmation(client.phone_number, clientDetails);
         } else {

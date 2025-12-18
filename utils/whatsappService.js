@@ -235,10 +235,10 @@ function formatFriendlyTime(timeStr) {
 
 /**
  * Build main booking confirmation message
- * @param {Object} details - { childName, date, time, meetLink, isFreeAssessment?, packageInfo? }
+ * @param {Object} details - { childName, date, time, meetLink, psychologistName?, isFreeAssessment?, packageInfo? }
  * @returns {string} Formatted message
  */
-function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment = false, packageInfo = null }) {
+function buildBookingMessage({ childName, date, time, meetLink, psychologistName = null, isFreeAssessment = false, packageInfo = null }) {
   const friendlyDate = formatFriendlyDate(date);
   const friendlyTime = formatFriendlyTime(time);
   const sessionType = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
@@ -249,6 +249,11 @@ function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment
     childName.toLowerCase() !== 'pending';
   
   const childLine = hasChildName ? `👧 Child: ${childName}\n\n` : '';
+
+  // Psychologist name line (if provided)
+  const psychologistLine = psychologistName && psychologistName.trim() 
+    ? `👨‍⚕️ Therapist: Dr. ${psychologistName.trim()}\n\n` 
+    : '';
 
   // Package information line
   let packageLine = '';
@@ -262,6 +267,7 @@ function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment
     `🧸 ${sessionType} Confirmed!\n\n` +
     `Session details:\n\n` +
     childLine +
+    psychologistLine +
     (packageLine || '') +
     `📅 Date: ${friendlyDate || date}\n\n` +
     `⏰ Time: ${friendlyTime || time} (IST)\n\n` +
@@ -273,7 +279,7 @@ function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment
 /**
  * Send booking confirmation WhatsApp messages (multi-part)
  * @param {string} toPhoneE164 - Phone number in E.164 format
- * @param {Object} details - { childName, date, time, meetLink, receiptUrl?, isFreeAssessment?, packageInfo? }
+ * @param {Object} details - { childName, date, time, meetLink, psychologistName?, receiptUrl?, isFreeAssessment?, packageInfo? }
  * @returns {Promise<Object>} - { success: boolean, ... }
  */
 async function sendBookingConfirmation(toPhoneE164, details) {
@@ -282,6 +288,7 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     date,
     time,
     meetLink,
+    psychologistName,
     receiptUrl,
     isFreeAssessment = false,
     packageInfo = null
@@ -303,6 +310,7 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     date,
     time,
     meetLink,
+    psychologistName,
     isFreeAssessment,
     packageInfo
   });
