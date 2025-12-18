@@ -44,6 +44,8 @@ router.post('/availability/update-all', adminController.updateAllPsychologistsAv
 
 // Package management for psychologists
 router.post('/psychologists/:psychologistId/packages', adminController.createPsychologistPackages);
+router.get('/packages/check-missing', adminController.checkMissingPackages);
+router.delete('/packages/:packageId', adminController.deletePackage);
 
 // User management
 router.post('/users', adminController.createUser);

@@ -1200,7 +1200,11 @@ const updatePsychologist = async (req, res) => {
 
     // Remove fields that are not in the psychologists table
     // Capture password separately so we can update the linked user record
-    const { price, availability, packages, password, ...psychologistUpdateData } = updateData;
+    // Also remove deletePackages flag (it's not a database column, just a control flag)
+    const { price, availability, packages, password, deletePackages, ...psychologistUpdateData } = updateData;
+    
+    // Explicitly remove deletePackages if it somehow got through (safety check)
+    delete psychologistUpdateData.deletePackages;
     
     // Convert display_order to integer if provided
     if (psychologistUpdateData.display_order !== undefined) {
@@ -1337,10 +1341,12 @@ const updatePsychologist = async (req, res) => {
       
       try {
         // Get existing packages for this psychologist
-        const { data: existingPackages, error: fetchError } = await supabase
+        const { data: existingPackagesData, error: fetchError } = await supabaseAdmin
           .from('packages')
           .select('id, name, session_count')
           .eq('psychologist_id', psychologistId);
+
+        let existingPackages = existingPackagesData || [];
 
         if (fetchError) {
           console.error('Error fetching existing packages:', fetchError);
@@ -1368,15 +1374,15 @@ const updatePsychologist = async (req, res) => {
             console.log('💡 To delete packages, use DELETE /api/admin/psychologists/:id/packages/:packageId or set deletePackages=true');
           } else if (existingPackages && existingPackages.length > 0) {
             // Only delete if explicitly requested AND package IDs are provided
-            const updatedPackageIds = packages
-              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
-              .map(pkg => parseInt(pkg.id));
+            
+            // Track which packages were deleted
+            const deletedPackageIds = [];
             
             // First, delete packages that are not in the updated list
             for (const existingPkg of existingPackages) {
               if (!updatedPackageIds.includes(existingPkg.id)) {
                 console.log(`⚠️  DELETING package ${existingPkg.id} (${existingPkg.name}) - deletePackages flag was set`);
-                const { error: deleteError } = await supabase
+                const { error: deleteError } = await supabaseAdmin
                   .from('packages')
                   .delete()
                   .eq('id', existingPkg.id);
@@ -1385,7 +1391,21 @@ const updatePsychologist = async (req, res) => {
                   console.error(`❌ Error deleting package ${existingPkg.id}:`, deleteError);
                 } else {
                   console.log(`✅ Package ${existingPkg.id} deleted successfully`);
+                  deletedPackageIds.push(existingPkg.id);
                 }
+              }
+            }
+            
+            // Refresh existingPackages after deletion to remove deleted packages from cache
+            if (deletedPackageIds.length > 0) {
+              const { data: refreshedPackages, error: refreshError } = await supabase
+                .from('packages')
+                .select('id, name, session_count')
+                .eq('psychologist_id', psychologistId);
+              
+              if (!refreshError && refreshedPackages) {
+                existingPackages = refreshedPackages;
+                console.log('📦 Refreshed existing packages after deletion:', existingPackages);
               }
             }
           }
@@ -1402,12 +1422,18 @@ const updatePsychologist = async (req, res) => {
             const isExistingPackage = pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0;
             
             if (isExistingPackage) {
-              // Update existing package
+              // Update existing package - check if it still exists (wasn't deleted)
               const existingPackage = existingPackages.find(ep => ep.id === parseInt(pkg.id));
-              if (existingPackage) {
+              
+              // Skip if package was deleted
+              if (!existingPackage) {
+                console.log(`📦 Package ${pkg.id} was deleted or not found, skipping update`);
+                continue;
+              }
+              
                 console.log(`📦 Updating existing package ${pkg.id} (${pkg.name}) with price $${pkg.price}`);
                 
-                const { error: updateError } = await supabase
+              const { error: updateError } = await supabaseAdmin
                   .from('packages')
                   .update({ 
                     price: parseInt(pkg.price),
@@ -1419,11 +1445,9 @@ const updatePsychologist = async (req, res) => {
 
                 if (updateError) {
                   console.error(`❌ Error updating package ${pkg.id}:`, updateError);
+                // Don't throw - continue with other packages
                 } else {
                   console.log(`✅ Package ${pkg.id} updated successfully`);
-                }
-              } else {
-                console.log(`📦 Package ${pkg.id} not found in database, skipping update`);
               }
             } else {
               // Create new package
@@ -1458,7 +1482,7 @@ const updatePsychologist = async (req, res) => {
               
               console.log(`📦 Inserting package data - count:`, packageData?.length || 0);
               
-              const { data: insertedPackage, error: createError } = await supabase
+              const { data: insertedPackage, error: createError } = await supabaseAdmin
                 .from('packages')
                 .insert(packageData)
                 .select('*');
@@ -1475,6 +1499,8 @@ const updatePsychologist = async (req, res) => {
         }
       } catch (error) {
         console.error('❌ Error handling package updates:', error);
+        console.error('❌ Package update error stack:', error.stack);
+        // Don't throw - allow the psychologist update to continue even if package updates fail
       }
     } else if (packages && Array.isArray(packages) && packages.length === 0) {
       // SAFETY: Empty array could mean "delete all" OR "packages not included in update"
@@ -3727,8 +3753,15 @@ const createManualBooking = async (req, res) => {
         
         if (meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
           // Use booking confirmation for real Meet links
+          // Only include childName if child_name exists and is not empty/null/'Pending'
+          const childName = client.child_name && 
+            client.child_name.trim() !== '' && 
+            client.child_name.toLowerCase() !== 'pending'
+            ? client.child_name 
+            : null;
+          
           const clientDetails = {
-            childName: client.child_name || client.first_name,
+            childName: childName,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink
@@ -3982,6 +4015,153 @@ const updateAllPsychologistsAvailability = async (req, res) => {
   }
 };
 
+// Check which doctors are missing 3-session and 6-session packages
+const checkMissingPackages = async (req, res) => {
+  try {
+    // Get all psychologists
+    const { data: psychologists, error: psychError } = await supabaseAdmin
+      .from('psychologists')
+      .select('id, first_name, last_name, email')
+      .order('first_name');
+
+    if (psychError) {
+      return res.status(500).json(
+        errorResponse('Failed to fetch psychologists')
+      );
+    }
+
+    if (!psychologists || psychologists.length === 0) {
+      return res.json(
+        successResponse({
+          total: 0,
+          complete: 0,
+          missing: 0,
+          missingDoctors: []
+        }, 'No psychologists found')
+      );
+    }
+
+    const missingPackages = [];
+    const allGood = [];
+
+    // Check each psychologist
+    for (const psychologist of psychologists) {
+      const { data: packages, error: packagesError } = await supabaseAdmin
+        .from('packages')
+        .select('id, session_count, name, price')
+        .eq('psychologist_id', psychologist.id)
+        .in('session_count', [3, 6]);
+
+      if (packagesError) {
+        console.error(`Error fetching packages for ${psychologist.first_name} ${psychologist.last_name}:`, packagesError);
+        continue;
+      }
+
+      const sessionCounts = (packages || []).map(p => p.session_count);
+      const has3Session = sessionCounts.includes(3);
+      const has6Session = sessionCounts.includes(6);
+
+      const missing = [];
+      if (!has3Session) missing.push('3-session');
+      if (!has6Session) missing.push('6-session');
+
+      if (missing.length > 0) {
+        missingPackages.push({
+          id: psychologist.id,
+          name: `${psychologist.first_name} ${psychologist.last_name}`,
+          email: psychologist.email,
+          missing: missing,
+          existingPackages: packages || []
+        });
+      } else {
+        allGood.push({
+          id: psychologist.id,
+          name: `${psychologist.first_name} ${psychologist.last_name}`
+        });
+      }
+    }
+
+    res.json(
+      successResponse({
+        total: psychologists.length,
+        complete: allGood.length,
+        missing: missingPackages.length,
+        missingDoctors: missingPackages,
+        completeDoctors: allGood
+      }, 'Package check completed')
+    );
+
+  } catch (error) {
+    console.error('Check missing packages error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while checking packages')
+    );
+  }
+};
+
+// Delete package (admin only)
+const deletePackage = async (req, res) => {
+  try {
+    const { packageId } = req.params;
+
+    // Check if package exists
+    const { data: package, error: packageError } = await supabaseAdmin
+      .from('packages')
+      .select('id, psychologist_id, name, session_count')
+      .eq('id', packageId)
+      .single();
+
+    if (packageError || !package) {
+      return res.status(404).json(
+        errorResponse('Package not found')
+      );
+    }
+
+    // Check if package is being used in any sessions
+    const { data: sessions, error: sessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('id')
+      .eq('package_id', packageId)
+      .limit(1);
+
+    if (sessionsError) {
+      console.error('Error checking sessions:', sessionsError);
+      return res.status(500).json(
+        errorResponse('Failed to check package usage')
+      );
+    }
+
+    if (sessions && sessions.length > 0) {
+      return res.status(400).json(
+        errorResponse('Cannot delete package that is being used in sessions')
+      );
+    }
+
+    // Delete the package
+    const { error: deleteError } = await supabaseAdmin
+      .from('packages')
+      .delete()
+      .eq('id', packageId);
+
+    if (deleteError) {
+      console.error('Delete package error:', deleteError);
+      return res.status(500).json(
+        errorResponse('Failed to delete package')
+      );
+    }
+
+    res.json(
+      successResponse(null, 'Package deleted successfully')
+    );
+
+  } catch (error) {
+    console.error('Delete package error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while deleting package')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -4009,5 +4189,7 @@ module.exports = {
   handleRescheduleRequest,
   createManualBooking,
   approveAssessmentRescheduleRequest,
-  getRescheduleRequests
+  getRescheduleRequests,
+  checkMissingPackages,
+  deletePackage
 };

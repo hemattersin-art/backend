@@ -255,8 +255,8 @@ const updateProfile = async (req, res) => {
 
           // Prepare update payload - child_name is already handled above if null/empty
           const updatePayload = {
-            ...updateData,
-            updated_at: new Date().toISOString()
+              ...updateData,
+              updated_at: new Date().toISOString()
           };
 
           // Now attempt the update
@@ -284,9 +284,9 @@ const updateProfile = async (req, res) => {
             let { data: updatedClient, error: updateError } = await supabaseAdmin
               .from('clients')
               .update(updatePayloadToUse)
-              .eq(attempt.column, attempt.value)
-              .select('*')
-              .single();
+            .eq(attempt.column, attempt.value)
+            .select('*')
+            .single();
 
             // If update fails due to NOT NULL constraint, try with default values
             if (updateError && updateError.code === '23502') {
@@ -307,16 +307,16 @@ const updateProfile = async (req, res) => {
               updateError = retryResult.error;
             }
 
-            if (!updateError && updatedClient) {
-              client = updatedClient;
-              error = null;
+          if (!updateError && updatedClient) {
+            client = updatedClient;
+            error = null;
               lastErrorDetails = null;
-              break;
-            }
+            break;
+          }
 
-            // Record the last error but continue trying other identifiers
-            if (updateError) {
-              error = updateError;
+          // Record the last error but continue trying other identifiers
+          if (updateError) {
+            error = updateError;
               lastErrorDetails = { attempt, error: updateError };
               console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
             }
@@ -439,6 +439,147 @@ const getSessions = async (req, res) => {
 
       const { data: sessions, error, count } = await query;
 
+      if (error) {
+        console.error('Error fetching sessions:', error);
+        // If package relationship fails, try without it
+        if (error.message && (error.message.includes('package') || error.message.includes('relation') || error.code === 'PGRST116')) {
+          console.log('Retrying query without package relationship...');
+          let fallbackQuery = supabase
+            .from('sessions')
+            .select(`
+              *,
+              psychologist:psychologists(
+                id,
+                first_name,
+                last_name,
+                area_of_expertise,
+                cover_image_url
+              )
+            `)
+            .eq('client_id', clientId);
+
+          if (status) {
+            fallbackQuery = fallbackQuery.eq('status', status);
+          }
+
+          const offset = (page - 1) * limit;
+          fallbackQuery = fallbackQuery.range(offset, offset + limit - 1).order('scheduled_date', { ascending: false });
+
+          const { data: fallbackSessions, error: fallbackError } = await fallbackQuery;
+          
+          if (fallbackError) {
+            console.error('Fallback query also failed:', fallbackError);
+            return res.status(500).json(
+              errorResponse('Failed to fetch sessions: ' + fallbackError.message)
+            );
+          }
+
+          // Also fetch assessment sessions for fallback
+          let assessmentSessions = [];
+          try {
+            const assessQuery = supabaseAdmin
+              .from('assessment_sessions')
+              .select(`
+                id,
+                assessment_id,
+                assessment_slug,
+                psychologist_id,
+                scheduled_date,
+                scheduled_time,
+                status,
+                amount,
+                payment_id,
+                created_at,
+                assessment:assessments(
+                  id,
+                  slug,
+                  hero_title,
+                  seo_title
+                ),
+                psychologist:psychologists(
+                  id,
+                  first_name,
+                  last_name,
+                  area_of_expertise,
+                  cover_image_url
+                )
+              `)
+              .eq('client_id', clientId);
+            
+            if (status) {
+              assessQuery.eq('status', status);
+            }
+            
+            const { data: assessData } = await assessQuery.order('scheduled_date', { ascending: false });
+            
+            assessmentSessions = (assessData || []).map(a => ({
+              ...a,
+              session_type: 'assessment',
+              type: 'assessment'
+            }));
+          } catch (assessError) {
+            console.log('Assessment sessions fetch error (non-blocking):', assessError);
+          }
+
+          // Fetch package information for fallback sessions that have package_id
+          const fallbackSessionsWithPackages = await Promise.all((fallbackSessions || []).map(async (session) => {
+            if (session.package_id) {
+              try {
+                const { data: packageData, error: packageError } = await supabase
+                  .from('packages')
+                  .select('id, package_type, price, description, session_count')
+                  .eq('id', session.package_id)
+                  .single();
+                
+                if (!packageError && packageData) {
+                  // Calculate package progress: count completed sessions for this package
+                  const { data: packageSessions, error: sessionsError } = await supabase
+                    .from('sessions')
+                    .select('id, status')
+                    .eq('package_id', session.package_id)
+                    .eq('client_id', clientId);
+                  
+                  if (!sessionsError && packageSessions) {
+                    const totalSessions = packageData.session_count || 0;
+                    const completedSessions = packageSessions.filter(
+                      s => s.status === 'completed'
+                    ).length;
+                    
+                    packageData.completed_sessions = completedSessions;
+                    packageData.total_sessions = totalSessions;
+                    packageData.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+                  }
+                  
+                  session.package = packageData;
+                }
+              } catch (err) {
+                console.log('Error fetching package for session:', session.id, err);
+              }
+            }
+            return session;
+          }));
+
+          // Combine with assessment sessions
+          const allSessions = [...(fallbackSessionsWithPackages || []), ...assessmentSessions]
+            .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
+
+          return res.json(
+            successResponse({
+              sessions: allSessions,
+              pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total: (fallbackSessionsWithPackages?.length || 0) + assessmentSessions.length
+              }
+            })
+          );
+        }
+        
+        return res.status(500).json(
+          errorResponse('Failed to fetch sessions: ' + error.message)
+        );
+      }
+
       // Also fetch assessment sessions
       let assessmentSessions = [];
       try {
@@ -487,8 +628,46 @@ const getSessions = async (req, res) => {
         console.log('Assessment sessions fetch error (non-blocking):', assessError);
       }
 
+      // Fetch package information for sessions that have package_id
+      const sessionsWithPackages = await Promise.all((sessions || []).map(async (session) => {
+        if (session.package_id) {
+          try {
+            const { data: packageData, error: packageError } = await supabase
+              .from('packages')
+              .select('id, package_type, price, description, session_count')
+              .eq('id', session.package_id)
+              .single();
+            
+            if (!packageError && packageData) {
+              // Calculate package progress: count completed sessions for this package
+              const { data: packageSessions, error: sessionsError } = await supabase
+                .from('sessions')
+                .select('id, status')
+                .eq('package_id', session.package_id)
+                .eq('client_id', clientId);
+              
+              if (!sessionsError && packageSessions) {
+                const totalSessions = packageData.session_count || 0;
+                const completedSessions = packageSessions.filter(
+                  s => s.status === 'completed'
+                ).length;
+                
+                packageData.completed_sessions = completedSessions;
+                packageData.total_sessions = totalSessions;
+                packageData.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+              }
+              
+              session.package = packageData;
+            }
+          } catch (err) {
+            console.log('Error fetching package for session:', session.id, err);
+          }
+        }
+        return session;
+      }));
+
       // Combine regular sessions and assessment sessions
-      const allSessions = [...(sessions || []), ...assessmentSessions]
+      const allSessions = [...(sessionsWithPackages || []), ...assessmentSessions]
         .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
 
       res.json(
@@ -746,25 +925,15 @@ const bookSession = async (req, res) => {
     console.log('   - Status:', session.status);
     console.log('   - Price:', session.price);
 
-    // Block the booked slot from availability (best-effort)
+    // Block the booked slot from availability using the availability service
     try {
-      const hhmm = (session.scheduled_time || '').substring(0,5);
-      const { data: avail } = await supabase
-        .from('availability')
-        .select('id, time_slots')
-        .eq('psychologist_id', psychologist_id)
-        .eq('date', session.scheduled_date)
-        .single();
-      if (avail && Array.isArray(avail.time_slots)) {
-        const filtered = avail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== hhmm);
-        if (filtered.length !== avail.time_slots.length) {
-          await supabase
-            .from('availability')
-            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
-            .eq('id', avail.id);
-          console.log('✅ Availability updated to block booked slot', { date: session.scheduled_date, time: hhmm });
-        }
-      }
+      const availabilityService = require('../utils/availabilityCalendarService');
+      await availabilityService.updateAvailabilityOnBooking(
+        psychologist_id,
+        session.scheduled_date,
+        session.scheduled_time
+      );
+      console.log('✅ Availability updated to block booked slot');
     } catch (blockErr) {
       console.warn('⚠️ Failed to update availability after booking:', blockErr?.message);
     }
@@ -837,8 +1006,15 @@ const bookSession = async (req, res) => {
         // Send WhatsApp to client
         const clientPhone = clientDetails.phone_number || null;
         if (clientPhone && meetData?.meetLink) {
+          // Only include childName if child_name exists and is not empty/null/'Pending'
+          const childName = clientDetails.child_name && 
+            clientDetails.child_name.trim() !== '' && 
+            clientDetails.child_name.toLowerCase() !== 'pending'
+            ? clientDetails.child_name 
+            : null;
+          
           const clientDetails_wa = {
-            childName: clientDetails.child_name || clientDetails.first_name,
+            childName: childName,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
@@ -2147,21 +2323,41 @@ const submitSessionFeedback = async (req, res) => {
 const getClientPackages = async (req, res) => {
   try {
     const userId = req.user.id;
+    let clientId = null;
 
-    // Get client ID
-    const { data: client, error: clientError } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('id', userId)
-      .single();
+    // Try multiple lookup strategies (same pattern as updateProfile)
+    // Priority: 1) client_id (from middleware), 2) user_id (new system), 3) id (old system fallback)
+    if (req.user.client_id) {
+      clientId = req.user.client_id;
+    } else {
+      // Try new system: lookup by user_id
+      const { data: clientByUserId, error: errorByUserId } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
 
-    if (clientError || !client) {
+      if (clientByUserId && !errorByUserId) {
+        clientId = clientByUserId.id;
+      } else {
+        // Fallback to old system: lookup by id (backward compatibility)
+        const { data: clientById, error: errorById } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('id', userId)
+          .single();
+
+        if (clientById && !errorById) {
+          clientId = clientById.id;
+        }
+      }
+    }
+
+    if (!clientId) {
       return res.status(404).json(
         errorResponse('Client profile not found')
       );
     }
-
-    const clientId = client.id;
 
     const fetchClientPackages = async () => {
       return await supabase
@@ -2318,20 +2514,41 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
-    // Get client ID
-    const { data: client, error: clientError } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('id', userId)
-      .single();
+    // Get client ID - use multi-strategy lookup (same pattern as getClientPackages)
+    let clientId = null;
 
-    if (clientError || !client) {
+    // Priority: 1) client_id (from middleware), 2) user_id (new system), 3) id (old system fallback)
+    if (req.user.client_id) {
+      clientId = req.user.client_id;
+    } else {
+      // Try new system: lookup by user_id
+      const { data: clientByUserId, error: errorByUserId } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (clientByUserId && !errorByUserId) {
+        clientId = clientByUserId.id;
+      } else {
+        // Fallback to old system: lookup by id (backward compatibility)
+        const { data: clientById, error: errorById } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('id', userId)
+          .single();
+
+        if (clientById && !errorById) {
+          clientId = clientById.id;
+        }
+      }
+    }
+
+    if (!clientId) {
       return res.status(404).json(
         errorResponse('Client profile not found')
       );
     }
-
-    const clientId = client.id;
 
     // Get client package and verify ownership
     const { data: clientPackage, error: packageError } = await supabase
@@ -2486,6 +2703,9 @@ const bookRemainingSession = async (req, res) => {
       : Math.max(totalSessions - 1, 0);
     const updatedRemaining = Math.max(currentRemaining - 1, 0);
 
+    // Calculate completed sessions (total - remaining after this booking)
+    const completedSessions = totalSessions - updatedRemaining;
+
     // Update remaining sessions in client package
     const { error: updateError } = await supabase
       .from('client_packages')
@@ -2505,6 +2725,14 @@ const bookRemainingSession = async (req, res) => {
                       `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
     const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
+    // Package information for notifications
+    const packageInfo = {
+      totalSessions: totalSessions,
+      completedSessions: completedSessions,
+      remainingSessions: updatedRemaining,
+      packageType: clientPackage.package?.package_type || null
+    };
+
     // Send email notifications
     try {
       const emailService = require('../utils/emailService');
@@ -2518,7 +2746,8 @@ const bookRemainingSession = async (req, res) => {
         scheduledDate: scheduled_date,
         scheduledTime: scheduled_time,
         meetLink: meetData.meetLink,
-        price: 0
+        price: 0,
+        packageInfo: packageInfo
       });
       console.log('✅ Email notifications sent successfully');
     } catch (emailError) {
@@ -2534,11 +2763,19 @@ const bookRemainingSession = async (req, res) => {
       // Send WhatsApp to client
       const clientPhone = clientDetails.phone_number || null;
       if (clientPhone && meetData?.meetLink) {
+        // Only include childName if child_name exists and is not empty/null/'Pending'
+        const childName = clientDetails.child_name && 
+          clientDetails.child_name.trim() !== '' && 
+          clientDetails.child_name.toLowerCase() !== 'pending'
+          ? clientDetails.child_name 
+          : null;
+        
         const clientDetails_wa = {
-          childName: clientDetails.child_name || clientDetails.first_name,
+          childName: childName,
           date: scheduled_date,
           time: scheduled_time,
           meetLink: meetData.meetLink,
+          packageInfo: packageInfo
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
@@ -2555,7 +2792,14 @@ const bookRemainingSession = async (req, res) => {
       // Send WhatsApp to psychologist
       const psychologistPhone = psychologistDetails.phone || null;
       if (psychologistPhone && meetData?.meetLink) {
-        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        let psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\n`;
+        
+        // Add package information if it's a package session
+        if (packageInfo && packageInfo.totalSessions) {
+          psychologistMessage += `📦 Package Session: ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} completed, ${packageInfo.remainingSessions || 0} remaining\n\n`;
+        }
+        
+        psychologistMessage += `Join via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
         
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {

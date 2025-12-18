@@ -235,19 +235,34 @@ function formatFriendlyTime(timeStr) {
 
 /**
  * Build main booking confirmation message
- * @param {Object} details - { childName, date, time, meetLink, isFreeAssessment? }
+ * @param {Object} details - { childName, date, time, meetLink, isFreeAssessment?, packageInfo? }
  * @returns {string} Formatted message
  */
-function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment = false }) {
-  const childLabel = childName || 'your child';
+function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment = false, packageInfo = null }) {
   const friendlyDate = formatFriendlyDate(date);
   const friendlyTime = formatFriendlyTime(time);
   const sessionType = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
+  // Only include child line if childName is provided and not empty/null/'Pending'
+  const hasChildName = childName && 
+    childName.trim() !== '' && 
+    childName.toLowerCase() !== 'pending';
+  
+  const childLine = hasChildName ? `👧 Child: ${childName}\n\n` : '';
+
+  // Package information line
+  let packageLine = '';
+  if (packageInfo && packageInfo.totalSessions) {
+    const completed = packageInfo.completedSessions || 0;
+    const remaining = packageInfo.remainingSessions || 0;
+    packageLine = `📦 Package Session: ${completed}/${packageInfo.totalSessions} completed, ${remaining} remaining\n\n`;
+  }
+
   return (
     `🧸 ${sessionType} Confirmed!\n\n` +
     `Session details:\n\n` +
-    `👧 Child: ${childLabel}\n\n` +
+    childLine +
+    (packageLine || '') +
     `📅 Date: ${friendlyDate || date}\n\n` +
     `⏰ Time: ${friendlyTime || time} (IST)\n\n` +
     (meetLink ? `🔗 Google Meet: ${meetLink}\n\n` : '\n') +
@@ -258,7 +273,7 @@ function buildBookingMessage({ childName, date, time, meetLink, isFreeAssessment
 /**
  * Send booking confirmation WhatsApp messages (multi-part)
  * @param {string} toPhoneE164 - Phone number in E.164 format
- * @param {Object} details - { childName, date, time, meetLink, receiptUrl?, isFreeAssessment? }
+ * @param {Object} details - { childName, date, time, meetLink, receiptUrl?, isFreeAssessment?, packageInfo? }
  * @returns {Promise<Object>} - { success: boolean, ... }
  */
 async function sendBookingConfirmation(toPhoneE164, details) {
@@ -268,13 +283,17 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     time,
     meetLink,
     receiptUrl,
-    isFreeAssessment = false
+    isFreeAssessment = false,
+    packageInfo = null
   } = details || {};
 
   // 1) Welcome (message 1)
   const welcomeMessage = isFreeAssessment
     ? `👋 Welcome to Little Care! 🌈\n\n` +
       `Thank you for booking a free assessment with our child specialists.`
+    : packageInfo
+    ? `👋 Welcome to Little Care! 🌈\n\n` +
+      `Thank you for booking your next package session with our child specialists.`
     : `👋 Welcome to Little Care! 🌈\n\n` +
       `Thank you for booking a therapy session with our child specialists.`;
 
@@ -284,7 +303,8 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     date,
     time,
     meetLink,
-    isFreeAssessment
+    isFreeAssessment,
+    packageInfo
   });
 
   // 3) Preparation / instructions (message 3)

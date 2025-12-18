@@ -319,11 +319,11 @@ const createConversation = async (req, res) => {
       // If still not found, try to lookup client by user_id
       if (!clientId || clientId === userId) {
         const { data: clientData, error: clientDataError } = await supabaseAdmin
-          .from('clients')
-          .select('id')
+        .from('clients')
+        .select('id')
           .eq('user_id', userId)
-          .single();
-        
+        .single();
+
         if (!clientDataError && clientData) {
           clientId = clientData.id;
           console.log('🔍 Found client by user_id:', clientId);

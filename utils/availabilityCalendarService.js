@@ -424,22 +424,35 @@ class AvailabilityCalendarService {
       console.log(`🔄 Updating availability for psychologist ${psychologistId} on ${date} at ${time}`);
       
       // Convert 24-hour format to 12-hour format for comparison
+      // Handle both "08:00:00" and "08:00" formats
       let timeToMatch = time;
+      let timeToMatchAlt = null; // Alternative format (e.g., "8:00 AM" vs "08:00 AM")
+      
       if (time.includes(':')) {
-        const [hour, minute] = time.split(':');
+        const timeParts = time.split(':');
+        const hour = parseInt(timeParts[0]);
+        const minute = timeParts[1] || '00';
+        const minuteOnly = minute.split(' ')[0]; // Remove AM/PM if present
+        
         const hourNum = parseInt(hour);
+        
+        // Create both formats: "8:00 AM" and "08:00 AM" to handle variations
         if (hourNum === 0) {
-          timeToMatch = `12:${minute} AM`;
+          timeToMatch = `12:${minuteOnly} AM`;
+          timeToMatchAlt = `12:${minuteOnly.padStart(2, '0')} AM`;
         } else if (hourNum === 12) {
-          timeToMatch = `12:${minute} PM`;
+          timeToMatch = `12:${minuteOnly} PM`;
+          timeToMatchAlt = `12:${minuteOnly.padStart(2, '0')} PM`;
         } else if (hourNum > 12) {
-          timeToMatch = `${hourNum - 12}:${minute} PM`;
+          timeToMatch = `${hourNum - 12}:${minuteOnly} PM`;
+          timeToMatchAlt = `${String(hourNum - 12).padStart(2, '0')}:${minuteOnly.padStart(2, '0')} PM`;
         } else {
-          timeToMatch = `${hourNum}:${minute} AM`;
+          timeToMatch = `${hourNum}:${minuteOnly} AM`;
+          timeToMatchAlt = `${String(hourNum).padStart(2, '0')}:${minuteOnly.padStart(2, '0')} AM`;
         }
       }
       
-      console.log(`🔄 Converting ${time} to ${timeToMatch} for availability update`);
+      console.log(`🔄 Converting ${time} to ${timeToMatch} (alt: ${timeToMatchAlt}) for availability update`);
       
       // Get current availability for this date
       const { data: availabilityData, error: availabilityError } = await supabase
@@ -460,10 +473,46 @@ class AvailabilityCalendarService {
       }
       
       // Remove the booked time slot from time_slots array
+      // Try to match both formats to handle variations in slot format
       const currentTimeSlots = availabilityData.time_slots || [];
-      const updatedTimeSlots = currentTimeSlots.filter(slot => slot !== timeToMatch);
+      let slotRemoved = false;
+      const updatedTimeSlots = currentTimeSlots.filter(slot => {
+        const slotStr = typeof slot === 'string' ? slot.trim() : String(slot).trim();
+        const normalizedSlot = slotStr.toLowerCase().replace(/\s+/g, ' ');
+        
+        // Normalize both time formats for comparison
+        const normalizedMatch = timeToMatch.toLowerCase().replace(/\s+/g, ' ');
+        const normalizedMatchAlt = timeToMatchAlt ? timeToMatchAlt.toLowerCase().replace(/\s+/g, ' ') : null;
+        
+        // Also try matching by extracting just the time part (e.g., "8:00" from "8:00 AM")
+        // But we need to also check AM/PM to avoid matching "8:00 PM" with "8:00 AM"
+        const slotTimeOnly = slotStr.match(/(\d{1,2}):(\d{2})/)?.[0];
+        const matchTimeOnly = timeToMatch.match(/(\d{1,2}):(\d{2})/)?.[0];
+        const slotPeriod = slotStr.match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+        const matchPeriod = timeToMatch.match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+        
+        // Match if:
+        // 1. Exact normalized match (handles format variations)
+        // 2. Time matches AND period matches (to avoid matching 8:00 PM with 8:00 AM)
+        const timeMatches = slotTimeOnly && matchTimeOnly && slotTimeOnly === matchTimeOnly;
+        const periodMatches = slotPeriod && matchPeriod && slotPeriod === matchPeriod;
+        
+        const matches = normalizedSlot === normalizedMatch || 
+                       (normalizedMatchAlt && normalizedSlot === normalizedMatchAlt) ||
+                       (timeMatches && periodMatches);
+        
+        if (matches) {
+          slotRemoved = true;
+          console.log(`   🗑️  Removing slot: "${slotStr}" (matched with ${timeToMatch})`);
+        }
+        
+        return !matches;
+      });
       
       console.log(`📅 Current slots: ${currentTimeSlots.length}, After booking: ${updatedTimeSlots.length}`);
+      if (!slotRemoved && currentTimeSlots.length > 0) {
+        console.warn(`⚠️  Warning: Could not find matching slot format. Looking for "${timeToMatch}" in slots:`, currentTimeSlots);
+      }
       
       // Update the availability record
       const { error: updateError } = await supabase

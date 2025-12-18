@@ -54,7 +54,8 @@ class EmailService {
         amount, // Also accept 'amount' as alias for 'price'
         status,
         psychologistId,
-        clientId
+        clientId,
+        packageInfo // Package information: { totalSessions, completedSessions, remainingSessions, packageType }
       } = sessionData;
 
       // Use consistent date/time format
@@ -143,7 +144,8 @@ class EmailService {
           outlookCalendarLink,
           price: finalPrice || 0,
           receiptUrl: sessionData.receiptUrl || null, // Receipt URL
-          receiptPdfBuffer: sessionData.receiptPdfBuffer || null // Receipt PDF buffer to attach
+          receiptPdfBuffer: sessionData.receiptPdfBuffer || null, // Receipt PDF buffer to attach
+          packageInfo: packageInfo || null // Package information
         });
       } else {
         console.log('⚠️ Skipping client email (placeholder or missing):', clientEmail);
@@ -163,7 +165,8 @@ class EmailService {
           calendarInvite: calendarInvites.psychologist,
           googleCalendarLink,
           outlookCalendarLink,
-          price: finalPrice || 0
+          price: finalPrice || 0,
+          packageInfo: packageInfo || null // Package information
         });
       } else {
         console.log('⚠️ Skipping psychologist email (placeholder or missing):', psychologistEmail);
@@ -203,7 +206,8 @@ class EmailService {
       outlookCalendarLink,
       price,
       receiptUrl,
-      receiptPdfBuffer
+      receiptPdfBuffer,
+      packageInfo
     } = emailData;
 
     const mailOptions = {
@@ -226,7 +230,15 @@ class EmailService {
               <p><strong>Date:</strong> ${scheduledDate}</p>
               <p><strong>Time:</strong> ${scheduledTime}</p>
               <p><strong>Therapist:</strong> ${psychologistName}</p>
-              <p><strong>Session Fee:</strong> ₹${price || 'TBD'}</p>
+              ${packageInfo && packageInfo.totalSessions ? `
+              <div style="background: #f0f4ff; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 3px solid #3f2e73;">
+                <p style="margin: 0; color: #3f2e73; font-weight: bold;">📦 Package Session</p>
+                <p style="margin: 5px 0 0 0; color: #555;">
+                  <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
+                </p>
+              </div>
+              ` : ''}
+              <p><strong>Session Fee:</strong> ${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</p>
               <p><strong>Session ID:</strong> ${sessionId}</p>
             </div>
             
@@ -319,7 +331,8 @@ class EmailService {
       calendarInvite,
       googleCalendarLink,
       outlookCalendarLink,
-      price
+      price,
+      packageInfo
     } = emailData;
 
     const mailOptions = {
@@ -342,7 +355,15 @@ class EmailService {
               <p><strong>Date:</strong> ${scheduledDate}</p>
               <p><strong>Time:</strong> ${scheduledTime}</p>
               <p><strong>Client:</strong> ${clientName}</p>
-              <p><strong>Session Fee:</strong> ₹${price || 'TBD'}</p>
+              ${packageInfo && packageInfo.totalSessions ? `
+              <div style="background: #f0f4ff; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 3px solid #3f2e73;">
+                <p style="margin: 0; color: #3f2e73; font-weight: bold;">📦 Package Session</p>
+                <p style="margin: 5px 0 0 0; color: #555;">
+                  <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
+                </p>
+              </div>
+              ` : ''}
+              <p><strong>Session Fee:</strong> ${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</p>
               <p><strong>Session ID:</strong> ${sessionId}</p>
             </div>
             

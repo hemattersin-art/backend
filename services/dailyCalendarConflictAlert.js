@@ -169,7 +169,12 @@ class CalendarConflictMonitorService {
       );
 
       const calendarEvents = calendarResult.busySlots || [];
-      const activeEvents = calendarEvents.filter(e => e.status !== 'cancelled');
+      // Filter out cancelled events and exclude certain event titles (like recurring meetings)
+      const excludedEventTitles = ['Weekly Meeting', 'weekly meeting', 'WEEKLY MEETING'];
+      const activeEvents = calendarEvents.filter(e => 
+        e.status !== 'cancelled' && 
+        !excludedEventTitles.some(excluded => e.title && e.title.includes(excluded))
+      );
 
       // Check each day in the date range
       let currentDate = startDate;
@@ -221,8 +226,11 @@ class CalendarConflictMonitorService {
         }
 
         // Reverse check: Calendar events that should block slots but might not be in availability
+        // Exclude certain event titles (like recurring meetings)
+        const excludedEventTitles = ['Weekly Meeting', 'weekly meeting', 'WEEKLY MEETING'];
         for (const event of dayEvents) {
           if (event.status === 'cancelled') continue;
+          if (excludedEventTitles.some(excluded => event.title && event.title.includes(excluded))) continue;
           
           const eventStart = dayjs(event.start).tz('Asia/Kolkata');
           const eventEnd = dayjs(event.end).tz('Asia/Kolkata');

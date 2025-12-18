@@ -370,10 +370,18 @@ const createPaymentOrder = async (req, res) => {
 // Handle Razorpay success response
 const handlePaymentSuccess = async (req, res) => {
   try {
+    console.log('🚀 Payment Success Handler Called');
+    console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+    console.log('📥 Request headers:', req.headers);
+    
     const razorpayConfig = getRazorpayConfig();
     const params = req.body;
 
-    console.log('Razorpay Success Response:', params);
+    console.log('✅ Razorpay Success Response received:', {
+      razorpay_order_id: params?.razorpay_order_id,
+      razorpay_payment_id: params?.razorpay_payment_id,
+      has_signature: !!params?.razorpay_signature
+    });
 
     // Extract Razorpay payment details
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = params;
@@ -897,8 +905,15 @@ const handlePaymentSuccess = async (req, res) => {
       // Send WhatsApp to client
       const clientPhone = clientDetails.phone_number || null;
       if (clientPhone && meetData?.meetLink) {
+        // Only include childName if child_name exists and is not empty/null/'Pending'
+        const childName = clientDetails.child_name && 
+          clientDetails.child_name.trim() !== '' && 
+          clientDetails.child_name.toLowerCase() !== 'pending'
+          ? clientDetails.child_name 
+          : null;
+        
         const clientDetails_wa = {
-          childName: clientDetails.child_name || clientDetails.first_name,
+          childName: childName,
           date: actualScheduledDate,
           time: actualScheduledTime,
           meetLink: meetData.meetLink,

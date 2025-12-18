@@ -8,24 +8,32 @@ const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
-    console.log('🔍 Auth Middleware Debug:', {
-      method: req.method,
-      url: req.url,
-      hasAuthHeader: !!authHeader,
-      tokenPreview: token ? token.substring(0, 20) + '...' : 'none',
-      origin: req.headers.origin
-    });
+    // Only log auth debug in development mode
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+      console.log('🔍 Auth Middleware Debug:', {
+        method: req.method,
+        url: req.url,
+        hasAuthHeader: !!authHeader,
+        tokenPreview: token ? token.substring(0, 20) + '...' : 'none',
+        origin: req.headers.origin
+      });
+    }
 
     if (!token) {
-      console.log('🔍 No token provided');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 No token provided');
+      }
       return res.status(401).json({
         error: 'Access denied',
         message: 'No token provided'
       });
     }
 
-    console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
-    console.log('Token received:', token.substring(0, 20) + '...');
+    // Only log token details in development with debug flag
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+      console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
+      console.log('Token received:', token.substring(0, 20) + '...');
+    }
     
     let decoded;
     let userId;
@@ -33,38 +41,52 @@ const authenticateToken = async (req, res, next) => {
     try {
       // First try to verify as backend JWT token
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('Decoded backend token:', decoded);
+      if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+        console.log('Decoded backend token:', decoded);
+      }
       userId = decoded.userId || decoded.id;
     } catch (backendJwtError) {
-      console.log('Not a backend JWT token, trying Supabase verification...');
+      if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+        console.log('Not a backend JWT token, trying Supabase verification...');
+      }
       
       try {
         // Try to verify as Supabase JWT token
         const { data: { user: supabaseUser }, error: supabaseError } = await supabase.auth.getUser(token);
         
         if (supabaseError || !supabaseUser) {
-          console.error('Supabase token verification failed:', supabaseError);
+          if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+            console.error('Supabase token verification failed:', supabaseError);
+          }
           return res.status(401).json({ 
             error: 'Invalid token', 
             message: 'Token verification failed' 
           });
         }
         
-        console.log('Supabase user verified:', supabaseUser);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('Supabase user verified:', supabaseUser);
+        }
         
         // For Supabase users, we need to find them in our database
         // Check clients table first (since clients are stored directly in clients table)
-        console.log('🔍 Looking up client in database for email:', supabaseUser.email);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 Looking up client in database for email:', supabaseUser.email);
+        }
         const { data: client, error: clientError } = await supabase
           .from('clients')
           .select('*')
           .eq('email', supabaseUser.email)
           .single();
 
-        console.log('🔍 Client lookup result:', { client, clientError });
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 Client lookup result:', { client, clientError });
+        }
 
         if (client && !clientError) {
-          console.log('🔍 Found existing client:', client.id);
+          if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+            console.log('🔍 Found existing client:', client.id);
+          }
           req.user = {
             id: client.id,
             email: client.email,
@@ -76,33 +98,45 @@ const authenticateToken = async (req, res, next) => {
         }
 
         // If not found in clients table, check users table (for admins/superadmins)
-        console.log('🔍 Looking up user in users table for email:', supabaseUser.email);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 Looking up user in users table for email:', supabaseUser.email);
+        }
         const { data: user, error: userError } = await supabase
           .from('users')
           .select('*')
           .eq('email', supabaseUser.email)
           .single();
 
-        console.log('🔍 User lookup result:', { user, userError });
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 User lookup result:', { user, userError });
+        }
 
         if (user && !userError) {
-          console.log('🔍 Found existing user:', user.id);
+          if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+            console.log('🔍 Found existing user:', user.id);
+          }
           req.user = user;
           return next();
         }
 
         // If not found in users table, check psychologists table
-        console.log('🔍 Looking up psychologist for email:', supabaseUser.email);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 Looking up psychologist for email:', supabaseUser.email);
+        }
         const { data: psychologist, error: psychologistError } = await supabase
           .from('psychologists')
           .select('*')
           .eq('email', supabaseUser.email)
           .single();
 
-        console.log('🔍 Psychologist lookup result:', { psychologist, psychologistError });
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('🔍 Psychologist lookup result:', { psychologist, psychologistError });
+        }
 
         if (psychologist && !psychologistError) {
-          console.log('🔍 Found existing psychologist:', psychologist.id);
+          if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+            console.log('🔍 Found existing psychologist:', psychologist.id);
+          }
           req.user = {
             id: psychologist.id,
             email: psychologist.email,
@@ -114,7 +148,9 @@ const authenticateToken = async (req, res, next) => {
         }
 
         // If user not found in either table, create them as a new client
-        console.log('Creating new client from Supabase:', supabaseUser.email);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.log('Creating new client from Supabase:', supabaseUser.email);
+        }
         
         try {
           // Create client directly in clients table (following the same pattern as registration)
@@ -150,7 +186,9 @@ const authenticateToken = async (req, res, next) => {
             ...newClient
           };
           
-          console.log('Successfully created new client:', req.user.email);
+          if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+            console.log('Successfully created new client:', req.user.email);
+          }
           return next();
           
         } catch (createError) {
@@ -162,7 +200,9 @@ const authenticateToken = async (req, res, next) => {
         }
         
       } catch (supabaseJwtError) {
-        console.error('Supabase JWT verification failed:', supabaseJwtError);
+        if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+          console.error('Supabase JWT verification failed:', supabaseJwtError);
+        }
         return res.status(401).json({ 
           error: 'Invalid token', 
           message: 'Token verification failed' 
@@ -200,18 +240,22 @@ const authenticateToken = async (req, res, next) => {
     }
 
     // If not a psychologist, check users table for clients/admins
-    console.log('🔍 Looking up user in users table with userId:', userId);
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+      console.log('🔍 Looking up user in users table with userId:', userId);
+    }
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', userId)
       .single();
 
-    console.log('🔍 User lookup result:', { 
-      found: !!user, 
-      error: userError?.message || null,
-      userId: userId 
-    });
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+      console.log('🔍 User lookup result:', { 
+        found: !!user, 
+        error: userError?.message || null,
+        userId: userId 
+      });
+    }
 
     if (userError || !user) {
       console.error('❌ User not found in either table:', { 
@@ -230,7 +274,13 @@ const authenticateToken = async (req, res, next) => {
       });
     }
     
-    console.log('✅ User found:', { id: user.id, email: user.email, role: user.role });
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
+      console.log('✅ User found:', {
+        id: user.id,
+        email: user.email,
+        role: user.role
+      });
+    }
 
     // If user is a client, fetch the client profile data
     if (user.role === 'client') {

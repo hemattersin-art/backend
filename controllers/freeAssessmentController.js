@@ -1220,16 +1220,18 @@ const bookFreeAssessment = async (req, res) => {
               .single();
             
             const clientPhone = clientDetails?.phone_number || null;
-            const clientName = clientDetails?.child_name || 
-                              (clientDetails?.first_name && clientDetails?.last_name 
-                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
-                                : clientDetails?.first_name || 'Client');
+            // Only include childName if child_name exists and is not empty/null/'Pending'
+            const childName = clientDetails?.child_name && 
+              clientDetails.child_name.trim() !== '' && 
+              clientDetails.child_name.toLowerCase() !== 'pending'
+              ? clientDetails.child_name 
+              : null;
             
             // Send WhatsApp to client with the real meet link
             if (clientPhone && finalMeetLink) {
               try {
                 await sendBookingConfirmation(clientPhone, {
-                  childName: clientName,
+                  childName: childName,
                   date: scheduledDate,
                   time: scheduledTime,
                   meetLink: finalMeetLink,
