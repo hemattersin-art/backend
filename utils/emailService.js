@@ -19,10 +19,19 @@ class EmailService {
 
       // Verify connection
       await this.transporter.verify();
-      console.log('Email service initialized successfully');
+      console.log('✅ Email service initialized successfully');
     } catch (error) {
-      console.error('Email service initialization failed:', error);
-      // Continue without email service
+      if (error.code === 'EAUTH') {
+        console.error('❌ Email service authentication failed:');
+        console.error('   Gmail credentials are invalid or missing.');
+        console.error('   For Gmail with 2FA, you MUST use an App Password (not your regular password).');
+        console.error('   Generate one at: https://myaccount.google.com/apppasswords');
+        console.error('   Set EMAIL_USER and EMAIL_PASSWORD in your .env file.');
+      } else {
+        console.error('❌ Email service initialization failed:', error.message);
+      }
+      // Continue without email service - emails will fail silently
+      this.transporter = null;
     }
   }
 

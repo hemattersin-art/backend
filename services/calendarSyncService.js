@@ -185,11 +185,7 @@ class CalendarSyncService {
           })
           .eq('id', psychologist.id);
         
-        if (syncResult.isIncremental) {
-          console.log(`📊 Incremental sync for ${psychologist.first_name} ${psychologist.last_name}: ${syncResult.externalEvents.length} new/changed events`);
-        } else {
-          console.log(`📊 Full sync for ${psychologist.first_name} ${psychologist.last_name}: ${syncResult.externalEvents.length} events`);
-        }
+        // Removed verbose sync logs - only keep summary at the end
       } catch (tokenError) {
         console.error(`⚠️ Failed to store sync token for ${psychologist.first_name} ${psychologist.last_name}:`, tokenError.message);
       }
@@ -463,7 +459,7 @@ class CalendarSyncService {
         const availability = availabilityMap.get(eventInfo.date);
         
         if (!availability) {
-          console.log(`⚠️ No availability record found for date ${eventInfo.date} (event: "${eventInfo.title}")`);
+          // Removed verbose log - no availability record is expected for some dates
           continue; // No availability record for this date
         }
         
@@ -476,7 +472,7 @@ class CalendarSyncService {
         const slotToMinutes = (slotStr) => {
           const normalizedSlot = normalizeTimeTo24Hour(slotStr);
           if (!normalizedSlot) {
-            console.log(`⚠️ Could not normalize slot: ${slotStr}`);
+            // Removed verbose log - slot normalization errors are handled silently
             return null;
           }
           
@@ -529,22 +525,7 @@ class CalendarSyncService {
             });
           });
           
-          console.log(`✅ Blocking ${slotsToBlock.length} slot(s) on ${eventInfo.date} for event "${eventInfo.title}" (${Math.floor(eventInfo.startMinutes/60)}:${String(eventInfo.startMinutes%60).padStart(2,'0')} - ${Math.floor(eventInfo.endMinutes/60)}:${String(eventInfo.endMinutes%60).padStart(2,'0')})`);
-          console.log(`   Blocked slots: ${slotsToBlock.map(s => s.slot).join(', ')}`);
-        } else if (availability.time_slots && availability.time_slots.length > 0) {
-          // Debug: Why didn't we block anything?
-          console.log(`⚠️ Event "${eventInfo.title}" on ${eventInfo.date} did not block any slots`);
-          console.log(`   Event duration: ${Math.floor(eventInfo.startMinutes/60)}:${String(eventInfo.startMinutes%60).padStart(2,'0')} - ${Math.floor(eventInfo.endMinutes/60)}:${String(eventInfo.endMinutes%60).padStart(2,'0')} (${eventInfo.startMinutes}-${eventInfo.endMinutes} minutes)`);
-          console.log(`   Available slots: ${availability.time_slots.join(', ')}`);
-          availability.time_slots.forEach(slot => {
-            const slotMinutes = slotToMinutes(slot);
-            if (slotMinutes !== null) {
-              const SLOT_DURATION_MINUTES = 60;
-              const slotEndMinutes = slotMinutes + SLOT_DURATION_MINUTES;
-              const overlaps = slotMinutes < eventInfo.endMinutes && slotEndMinutes > eventInfo.startMinutes;
-              console.log(`     Slot ${slot} = ${slotMinutes} minutes (overlaps: ${overlaps})`);
-            }
-          });
+          // Removed verbose slot-by-slot logs - only keep summary at the end
         }
       } catch (error) {
         console.error(`Error processing event "${eventInfo.title}":`, error);
@@ -576,7 +557,13 @@ class CalendarSyncService {
       await Promise.all(updatePromises);
       
       if (blockedSlots.length > 0) {
-        console.log(`✅ Blocked ${blockedSlots.length} time slot(s) across ${updatesToApply.size} date(s) for ${psychologist.first_name} ${psychologist.last_name}`);
+        // Summary log only (no verbose details)
+        if (blockedSlots.length > 0) {
+          // Summary log only (no verbose details)
+          if (blockedSlots.length > 0) {
+            console.log(`✅ Blocked ${blockedSlots.length} time slot(s) across ${updatesToApply.size} date(s) for ${psychologist.first_name} ${psychologist.last_name}`);
+          }
+        }
       }
     }
 
