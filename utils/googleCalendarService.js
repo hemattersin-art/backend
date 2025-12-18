@@ -96,10 +96,16 @@ class GoogleCalendarService {
       const oauth2Client = this.createOAuthClient(credentials);
       const { credentials: newCredentials } = await oauth2Client.refreshAccessToken();
       
+      // Validate that newCredentials exists and has access_token
+      if (!newCredentials || !newCredentials.access_token) {
+        throw new Error('Token refresh returned invalid credentials');
+      }
+      
       return {
         ...credentials,
         access_token: newCredentials.access_token,
-        refresh_token: newCredentials.refresh_token || credentials.refresh_token
+        refresh_token: newCredentials.refresh_token || credentials.refresh_token,
+        expiry_date: newCredentials.expiry_date || credentials.expiry_date
       };
     } catch (error) {
       console.error('Error refreshing access token:', error);

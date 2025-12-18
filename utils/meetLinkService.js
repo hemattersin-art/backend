@@ -256,10 +256,13 @@ class MeetLinkService {
             log('✅ Token refreshed automatically');
             
             // Update userAuth with new token (caller should save this to database)
-            if (userAuth && updatedCredentials) {
+            if (userAuth && updatedCredentials && updatedCredentials.access_token) {
               userAuth.access_token = updatedCredentials.access_token || token;
               userAuth.expiry_date = updatedCredentials.expiry_date;
               userAuth.refresh_token = updatedCredentials.refresh_token || userAuth.refresh_token;
+            } else if (userAuth && token) {
+              // Fallback: use the token from getAccessToken() directly
+              userAuth.access_token = token;
             }
           } catch (refreshError) {
             logError('❌ Auto-refresh failed:', refreshError.message);
