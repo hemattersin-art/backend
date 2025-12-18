@@ -1,5 +1,30 @@
 const nodemailer = require('nodemailer');
 
+// Shared helper: Format time string (HH:MM:SS or HH:MM) to 12-hour format (h:mm AM/PM IST)
+// Time is already stored in IST format, so no timezone conversion needed
+function formatTimeFromString(timeStr) {
+  if (!timeStr) return 'N/A';
+  try {
+    // Handle formats: "18:00:00" or "18:00"
+    const timeParts = timeStr.split(':');
+    const hours = parseInt(timeParts[0], 10);
+    const minutes = timeParts[1] || '00';
+    
+    if (isNaN(hours) || hours < 0 || hours > 23) {
+      return timeStr;
+    }
+    
+    // Convert to 12-hour format
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMinutes = minutes.padStart(2, '0');
+    
+    return `${displayHours}:${displayMinutes} ${period} IST`;
+  } catch {
+    return timeStr;
+  }
+}
+
 class EmailService {
   constructor() {
     this.transporter = null;
@@ -8,24 +33,100 @@ class EmailService {
 
   async initializeTransporter() {
     try {
-      // Configure email transporter (you can use Gmail, SendGrid, etc.)
-      this.transporter = nodemailer.createTransport({
-        service: process.env.EMAIL_SERVICE || 'gmail',
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASSWORD
+      const emailUser = process.env.EMAIL_USER;
+      const emailPassword = process.env.EMAIL_PASSWORD;
+      const emailService = process.env.EMAIL_SERVICE || 'gmail';
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : null;
+      const smtpSecure = process.env.SMTP_SECURE === 'true';
+
+      // Check if it's a Google Workspace account (domain is not @gmail.com)
+      const isGoogleWorkspace = emailUser && !emailUser.endsWith('@gmail.com') && emailUser.includes('@');
+      const workspaceDomain = isGoogleWorkspace ? emailUser.split('@')[1] : null;
+
+      if (!emailUser || !emailPassword) {
+        throw new Error('EMAIL_USER and EMAIL_PASSWORD must be set in environment variables');
+      }
+
+      // Configure email transporter
+      let transporterConfig;
+
+      if (smtpHost) {
+        // Custom SMTP configuration (for Google Workspace or other providers)
+        transporterConfig = {
+          host: smtpHost,
+          port: smtpPort || 587,
+          secure: smtpSecure || false, // true for 465, false for other ports
+          auth: {
+            user: emailUser,
+            pass: emailPassword
+          },
+          tls: {
+            rejectUnauthorized: false // For self-signed certificates (use with caution)
+          }
+        };
+        
+        if (isGoogleWorkspace) {
+          console.log(`📧 Configuring email for Google Workspace: ${workspaceDomain}`);
+          console.log(`   SMTP Host: ${smtpHost}`);
+          console.log(`   SMTP Port: ${smtpPort || 587}`);
         }
-      });
+      } else if (isGoogleWorkspace) {
+        // Google Workspace with default Gmail SMTP settings
+        transporterConfig = {
+          host: 'smtp.gmail.com',
+          port: 587,
+          secure: false, // true for 465, false for other ports
+          auth: {
+            user: emailUser,
+            pass: emailPassword
+          },
+          tls: {
+            rejectUnauthorized: false
+          }
+        };
+        console.log(`📧 Configuring email for Google Workspace: ${workspaceDomain}`);
+        console.log(`   Using default Gmail SMTP (smtp.gmail.com:587)`);
+        console.log(`   Note: You may need to use an App Password if 2FA is enabled`);
+      } else {
+        // Regular Gmail account
+        transporterConfig = {
+          service: 'gmail',
+          auth: {
+            user: emailUser,
+            pass: emailPassword
+          }
+        };
+        console.log(`📧 Configuring email for Gmail account`);
+      }
+
+      this.transporter = nodemailer.createTransport(transporterConfig);
 
       // Verify connection
       await this.transporter.verify();
       console.log('✅ Email service initialized successfully');
+      
+      if (isGoogleWorkspace) {
+        console.log(`   ✅ Google Workspace account verified: ${emailUser}`);
+      }
     } catch (error) {
       if (error.code === 'EAUTH') {
         console.error('❌ Email service authentication failed:');
-        console.error('   Gmail credentials are invalid or missing.');
-        console.error('   For Gmail with 2FA, you MUST use an App Password (not your regular password).');
-        console.error('   Generate one at: https://myaccount.google.com/apppasswords');
+        const emailUser = process.env.EMAIL_USER || 'not set';
+        const isWorkspace = emailUser && !emailUser.endsWith('@gmail.com') && emailUser.includes('@');
+        
+        if (isWorkspace) {
+          console.error(`   Google Workspace account: ${emailUser}`);
+          console.error('   For Google Workspace:');
+          console.error('   1. Ensure 2-Step Verification is enabled');
+          console.error('   2. Generate an App Password at: https://myaccount.google.com/apppasswords');
+          console.error('   3. Use the App Password (16 characters) as EMAIL_PASSWORD');
+          console.error('   4. Or configure custom SMTP with SMTP_HOST, SMTP_PORT in .env');
+        } else {
+          console.error('   Gmail credentials are invalid or missing.');
+          console.error('   For Gmail with 2FA, you MUST use an App Password (not your regular password).');
+          console.error('   Generate one at: https://myaccount.google.com/apppasswords');
+        }
         console.error('   Set EMAIL_USER and EMAIL_PASSWORD in your .env file.');
       } else {
         console.error('❌ Email service initialization failed:', error.message);
@@ -94,29 +195,20 @@ class EmailService {
         throw new Error('Email service not properly initialized');
       }
       
-      // Parse date and time in IST (UTC+5:30)
-      const sessionDateTime = new Date(`${finalSessionDate}T${finalSessionTime}+05:30`);
-      const formattedDate = sessionDateTime.toLocaleDateString('en-IN', {
+      // Format date
+      const sessionDateObj = new Date(`${finalSessionDate}T00:00:00`);
+      const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
-      const formattedTime = sessionDateTime.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Kolkata',
-        timeZoneName: 'short'
-      });
+      
+      // Format time directly (no timezone conversion - time is already in IST)
+      const formattedTime = formatTimeFromString(finalSessionTime);
 
-      console.log('📅 Email formatting (IST):');
-      console.log('   - Original time:', `${finalSessionDate}T${finalSessionTime}`);
-      console.log('   - Session DateTime:', sessionDateTime.toISOString());
-      console.log('   - Session DateTime (local):', sessionDateTime.toString());
-      console.log('   - Session DateTime (IST):', sessionDateTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
-      console.log('   - Formatted Date:', formattedDate);
-      console.log('   - Formatted Time:', formattedTime);
+      // Removed verbose logging - time is formatted directly from stored value
 
       // Generate calendar invites
       const { createCalendarInvites, generateGoogleCalendarLink, generateOutlookCalendarLink } = require('./calendarInviteGenerator');
@@ -220,7 +312,7 @@ class EmailService {
     } = emailData;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `Session Confirmed - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -296,7 +388,7 @@ class EmailService {
               </ul>
             </div>
             
-            <p>If you need to reschedule or have any questions, please contact us at support@kuttikal.com</p>
+            <p>If you need to reschedule or have any questions, please contact us at support@littlecare.com</p>
             
             <p>We look forward to supporting you on your wellness journey!</p>
             
@@ -306,7 +398,7 @@ class EmailService {
           <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
             <p style="color: #6c757d; font-size: 14px;">
               This email was sent to confirm your therapy session. 
-              If you have any questions, please contact support@kuttikal.com
+              If you have any questions, please contact support@littlecare.com
             </p>
           </div>
         </div>
@@ -345,7 +437,7 @@ class EmailService {
     } = emailData;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `New Session Scheduled - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -449,7 +541,7 @@ class EmailService {
     const { to, clientName, psychologistName, scheduledDate, scheduledTime, sessionId } = emailData;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `New Session Booked - ${scheduledDate} at ${scheduledTime}`,
       html: `
@@ -513,32 +605,27 @@ class EmailService {
         isFreeAssessment = false
       } = sessionData;
 
-      const oldDateTime = new Date(`${oldDate}T${oldTime}`);
-      const newDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+      // Format dates
+      const oldDateObj = new Date(`${oldDate}T00:00:00`);
+      const newDateObj = new Date(`${scheduledDate}T00:00:00`);
 
-      const formattedOldDate = oldDateTime.toLocaleDateString('en-US', {
+      const formattedOldDate = oldDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
-        day: 'numeric'
+        day: 'numeric',
+        timeZone: 'Asia/Kolkata'
       });
-      const formattedOldTime = oldDateTime.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
+      const formattedOldTime = formatTimeFromString(oldTime);
 
-      const formattedNewDate = newDateTime.toLocaleDateString('en-US', {
+      const formattedNewDate = newDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
-        day: 'numeric'
+        day: 'numeric',
+        timeZone: 'Asia/Kolkata'
       });
-      const formattedNewTime = newDateTime.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
+      const formattedNewTime = formatTimeFromString(scheduledTime);
 
       // Send reschedule notifications
       if (clientEmail) {
@@ -584,7 +671,7 @@ class EmailService {
     const sessionTypeTitle = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `Session Rescheduled - ${newDate} at ${newTime}`,
       html: `
@@ -660,20 +747,17 @@ class EmailService {
       } = assessmentData;
 
       // Parse date and time in IST (UTC+5:30)
-      const assessmentDateTime = new Date(`${assessmentDate}T${assessmentTime}+05:30`);
-      const formattedDate = assessmentDateTime.toLocaleDateString('en-IN', {
+      // Format date
+      const assessmentDateObj = new Date(`${assessmentDate}T00:00:00`);
+      const formattedDate = assessmentDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
-      const formattedTime = assessmentDateTime.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Kolkata',
-        timeZoneName: 'short'
-      });
+      // Format time directly (no timezone conversion - time is already in IST)
+      const formattedTime = formatTimeFromString(assessmentTime);
 
       // Send email to client
       if (clientEmail && !clientEmail.includes('placeholder')) {
@@ -714,7 +798,7 @@ class EmailService {
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `Free Assessment Confirmed - ${assessmentDate} at ${assessmentTime}`,
       html: `
@@ -836,7 +920,7 @@ The Little Care Team
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
       to: to,
       subject: `Free Assessment Scheduled - ${assessmentDate} at ${assessmentTime}`,
       html: `
@@ -910,7 +994,7 @@ The Little Care Team
       }
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
         to: to,
         subject: subject,
         html: html,
@@ -1033,26 +1117,23 @@ This is an automated email. Please do not reply to this message.
     isPsychologist = false
   }) {
     try {
-      const sessionDateTime = new Date(`${sessionDate}T${sessionTime}`);
-      const formattedDate = sessionDateTime.toLocaleDateString('en-IN', {
+      // Format date
+      const sessionDateObj = new Date(`${sessionDate}T00:00:00`);
+      const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
-      const formattedTime = sessionDateTime.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Kolkata',
-        timeZoneName: 'short'
-      });
+      // Format time directly (no timezone conversion - time is already in IST)
+      const formattedTime = formatTimeFromString(sessionTime);
 
       const recipientName = isPsychologist ? psychologistName : clientName;
       const otherParty = isPsychologist ? clientName : `Dr. ${psychologistName}`;
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
         to: to,
         subject: 'Session Cancelled',
         html: `
@@ -1085,7 +1166,7 @@ This is an automated email. Please do not reply to this message.
               </div>
               
               <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://kuttikal.vercel.app'}/profile" 
+                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
                    style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
                   Book New Session
                 </a>
@@ -1126,23 +1207,20 @@ This is an automated email. Please do not reply to this message.
     sessionId
   }) {
     try {
-      const sessionDateTime = new Date(`${sessionDate}T${sessionTime}`);
-      const formattedDate = sessionDateTime.toLocaleDateString('en-IN', {
+      // Format date
+      const sessionDateObj = new Date(`${sessionDate}T00:00:00`);
+      const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
-      const formattedTime = sessionDateTime.toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Asia/Kolkata',
-        timeZoneName: 'short'
-      });
+      // Format time directly (no timezone conversion - time is already in IST)
+      const formattedTime = formatTimeFromString(sessionTime);
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
         to: to,
         subject: 'No-Show Notice - Session Missed',
         html: `
@@ -1173,14 +1251,14 @@ This is an automated email. Please do not reply to this message.
                   <strong>Let us know the reason or contact our team to reschedule:</strong>
                 </p>
                 <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-                  <li>📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@kuttikal.com'}</li>
+                  <li>📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@littlecare.com'}</li>
                   <li>📱 WhatsApp: ${process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || 'Contact us via our support number'}</li>
                   <li>💬 Book a new session from your profile</li>
                 </ul>
               </div>
               
               <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://kuttikal.vercel.app'}/profile" 
+                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
                    style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
                   Reschedule Session
                 </a>
@@ -1221,7 +1299,7 @@ This is an automated email. Please do not reply to this message.
   }) {
     try {
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@kuttikal.com'}>`,
+        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
         to: clientEmail,
         subject: 'Session Completed - Summary & Report Available',
         html: `
@@ -1251,7 +1329,7 @@ This is an automated email. Please do not reply to this message.
               </p>
               
               <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://kuttikal.vercel.app'}/profile" 
+                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
                    style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
                   View Session Summary & Report
                 </a>

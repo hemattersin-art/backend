@@ -276,7 +276,7 @@ class EmailVerificationService {
       'password_reset': 'Reset Your Password - Little Care',
       'email_change': 'Verify Your New Email - Little Care'
     };
-    return subjects[verificationType] || 'Email Verification - Kuttikal';
+    return subjects[verificationType] || 'Email Verification - Little Care';
   }
 
   /**

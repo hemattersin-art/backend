@@ -634,26 +634,117 @@ const getAvailability = async (req, res) => {
 
       const { data: bookedAssessmentSessions, error: assessmentSessionsError } = await bookedAssessmentSessionsQuery;
 
-      // Create a map of booked times by date: { 'YYYY-MM-DD': Set(['HH:MM', ...]) }
+      // Helper function to convert 24-hour time to 12-hour format for comparison
+      const convertTo12Hour = (time24) => {
+        if (!time24) return null;
+        const timeStr = typeof time24 === 'string' ? time24 : String(time24);
+        const timeOnly = timeStr.split(' ')[0]; // Remove timezone if present
+        const [hours, minutes = '00'] = timeOnly.split(':');
+        const hourNum = parseInt(hours, 10);
+        if (isNaN(hourNum)) return null;
+        
+        const minuteStr = minutes.padStart(2, '0');
+        if (hourNum === 0) return `12:${minuteStr} AM`;
+        if (hourNum === 12) return `12:${minuteStr} PM`;
+        if (hourNum > 12) return `${hourNum - 12}:${minuteStr} PM`;
+        return `${hourNum}:${minuteStr} AM`;
+      };
+
+      // Create a map of booked times by date: { 'YYYY-MM-DD': Set(['9:00 PM', '21:00', ...]) }
+      // Store both 12-hour and 24-hour formats for matching
       const bookedTimesByDate = new Map();
       [...(bookedSessions || []), ...(bookedAssessmentSessions || [])].forEach(session => {
         if (!session.scheduled_date || !session.scheduled_time) return;
         const dateKey = session.scheduled_date;
-        const timeKey = typeof session.scheduled_time === 'string' 
+        const time24 = typeof session.scheduled_time === 'string' 
           ? session.scheduled_time.substring(0, 5) 
-          : session.scheduled_time;
+          : String(session.scheduled_time).substring(0, 5);
+        const time12 = convertTo12Hour(session.scheduled_time);
+        
         if (!bookedTimesByDate.has(dateKey)) {
           bookedTimesByDate.set(dateKey, new Set());
         }
-        bookedTimesByDate.get(dateKey).add(timeKey);
+        // Add both formats for matching
+        bookedTimesByDate.get(dateKey).add(time24);
+        if (time12) {
+          bookedTimesByDate.get(dateKey).add(time12);
+          // Also add variations like "9:00PM", "9:00 PM", "09:00 PM"
+          bookedTimesByDate.get(dateKey).add(time12.replace(' ', ''));
+          if (time12.includes(':')) {
+            const [hour, rest] = time12.split(':');
+            const paddedHour = hour.padStart(2, '0');
+            bookedTimesByDate.get(dateKey).add(`${paddedHour}:${rest}`);
+            bookedTimesByDate.get(dateKey).add(`${paddedHour}:${rest.replace(' ', '')}`);
+          }
+        }
       });
 
       // Filter out booked slots from availability
       const filteredAvailability = (availability || []).map(dayAvailability => {
         const bookedTimes = bookedTimesByDate.get(dayAvailability.date) || new Set();
         const availableSlots = (dayAvailability.time_slots || []).filter(slot => {
-          const slotTime = typeof slot === 'string' ? slot.substring(0, 5) : String(slot).substring(0, 5);
-          return !bookedTimes.has(slotTime);
+          const slotStr = typeof slot === 'string' ? slot.trim() : String(slot).trim();
+          if (!slotStr) return false;
+          
+          // Check if slot matches any booked time format
+          const slotNormalized = slotStr.toLowerCase();
+          const isBooked = Array.from(bookedTimes).some(bookedTime => {
+            const bookedStr = String(bookedTime).trim();
+            const bookedNormalized = bookedStr.toLowerCase();
+            
+            // Exact match
+            if (slotNormalized === bookedNormalized) return true;
+            
+            // Match without spaces (e.g., "9:00PM" vs "9:00 PM")
+            if (slotNormalized.replace(/\s+/g, '') === bookedNormalized.replace(/\s+/g, '')) return true;
+            
+            // Extract time components for both slot and booked time
+            const slotTimeMatch = slotStr.match(/(\d{1,2}):(\d{2})/);
+            const bookedTimeMatch = bookedStr.match(/(\d{1,2}):(\d{2})/);
+            
+            if (!slotTimeMatch || !bookedTimeMatch) return false;
+            
+            const slotHour = parseInt(slotTimeMatch[1], 10);
+            const slotMin = slotTimeMatch[2];
+            const bookedHour = parseInt(bookedTimeMatch[1], 10);
+            const bookedMin = bookedTimeMatch[2];
+            
+            // Check AM/PM for both
+            const slotPeriod = slotStr.match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+            const bookedPeriod = bookedStr.match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+            
+            // Convert both to 24-hour format for accurate comparison
+            let slotHour24 = slotHour;
+            let bookedHour24 = bookedHour;
+            
+            // Convert slot to 24-hour
+            if (slotPeriod === 'PM' && slotHour !== 12) {
+              slotHour24 = slotHour + 12;
+            } else if (slotPeriod === 'AM' && slotHour === 12) {
+              slotHour24 = 0;
+            }
+            
+            // Convert booked to 24-hour
+            if (bookedPeriod === 'PM' && bookedHour !== 12) {
+              bookedHour24 = bookedHour + 12;
+            } else if (bookedPeriod === 'AM' && bookedHour === 12) {
+              bookedHour24 = 0;
+            }
+            
+            // If booked time is already in 24-hour format (no period), use it directly
+            if (!bookedPeriod && bookedHour >= 0 && bookedHour <= 23) {
+              bookedHour24 = bookedHour;
+            }
+            
+            // Compare in 24-hour format
+            if (slotHour24 === bookedHour24 && slotMin === bookedMin) {
+              return true;
+            }
+            
+            return false;
+          });
+          
+          return !isBooked;
         });
 
         return {

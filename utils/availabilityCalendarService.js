@@ -308,6 +308,7 @@ class AvailabilityCalendarService {
       };
 
       // Create a map of booked sessions by date (convert to 12-hour format to match availability)
+      // Store multiple format variations to ensure matching
       const bookedSlotsByDate = {};
       allBookedSessions.forEach(session => {
         if (!bookedSlotsByDate[session.scheduled_date]) {
@@ -315,7 +316,22 @@ class AvailabilityCalendarService {
         }
         
         const time12Hour = convertTo12Hour(session.scheduled_time);
-        bookedSlotsByDate[session.scheduled_date].add(time12Hour);
+        if (time12Hour) {
+          // Add multiple format variations for reliable matching
+          bookedSlotsByDate[session.scheduled_date].add(time12Hour); // "9:00 PM"
+          bookedSlotsByDate[session.scheduled_date].add(time12Hour.replace(' ', '')); // "9:00PM"
+          // Also add with padded hour
+          if (time12Hour.includes(':')) {
+            const [hour, rest] = time12Hour.split(':');
+            const paddedHour = hour.padStart(2, '0');
+            bookedSlotsByDate[session.scheduled_date].add(`${paddedHour}:${rest}`); // "09:00 PM"
+            bookedSlotsByDate[session.scheduled_date].add(`${paddedHour}:${rest.replace(' ', '')}`); // "09:00PM"
+          }
+          // Also add the original 24-hour format for matching
+          const time24 = session.scheduled_time.substring(0, 5); // "21:00"
+          bookedSlotsByDate[session.scheduled_date].add(time24);
+        }
+        
         const sessionType = session.status === 'reserved' ? 'assessment (reserved)' : 
                            bookedSessions?.some(s => s.id === session.id) ? 'regular therapy' : 'assessment';
         console.log(`   🚫 Blocked: ${session.scheduled_date} at ${session.scheduled_time} → ${time12Hour} (${session.status}, ${sessionType})`);
@@ -363,9 +379,54 @@ class AvailabilityCalendarService {
           const googleCalendarSlots = googleCalendarSlotsByDate[dateStr] || new Set();
           
           // Create formatted time slots showing both available and blocked (including Google Calendar)
+          // Use flexible matching to handle format variations
           const formattedTimeSlots = timeSlots.map(timeString => {
-            const isBooked = bookedSlots.has(timeString);
-            const isGoogleCalendarBlocked = googleCalendarSlots.has(timeString);
+            const timeStr = typeof timeString === 'string' ? timeString.trim() : String(timeString).trim();
+            const timeNormalized = timeStr.toLowerCase();
+            
+            // Check if this slot is booked (try multiple format variations)
+            let isBooked = bookedSlots.has(timeStr);
+            if (!isBooked) {
+              // Try variations: with/without spaces, padded/unpadded hour
+              isBooked = Array.from(bookedSlots).some(booked => {
+                const bookedStr = String(booked).trim().toLowerCase();
+                const timeNoSpace = timeNormalized.replace(/\s+/g, '');
+                const bookedNoSpace = bookedStr.replace(/\s+/g, '');
+                // Exact match
+                if (timeNormalized === bookedStr || timeNoSpace === bookedNoSpace) return true;
+                // Match time portion (e.g., "9:00" from "9:00 PM" or "21:00")
+                const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
+                const bookedMatch = String(booked).match(/(\d{1,2}):(\d{2})/);
+                if (timeMatch && bookedMatch) {
+                  // Convert both to 24-hour for comparison
+                  const timeHour = parseInt(timeMatch[1], 10);
+                  const timeMin = timeMatch[2];
+                  const bookedHour = parseInt(bookedMatch[1], 10);
+                  const bookedMin = bookedMatch[2];
+                  
+                  const timePeriod = timeStr.match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+                  const bookedPeriod = String(booked).match(/\s*(AM|PM)/i)?.[1]?.toUpperCase();
+                  
+                  let timeHour24 = timeHour;
+                  let bookedHour24 = bookedHour;
+                  
+                  // Convert to 24-hour
+                  if (timePeriod === 'PM' && timeHour !== 12) timeHour24 = timeHour + 12;
+                  else if (timePeriod === 'AM' && timeHour === 12) timeHour24 = 0;
+                  
+                  if (bookedPeriod === 'PM' && bookedHour !== 12) bookedHour24 = bookedHour + 12;
+                  else if (bookedPeriod === 'AM' && bookedHour === 12) bookedHour24 = 0;
+                  
+                  // If booked is already 24-hour (no period), use it directly
+                  if (!bookedPeriod && bookedHour >= 0 && bookedHour <= 23) bookedHour24 = bookedHour;
+                  
+                  return timeHour24 === bookedHour24 && timeMin === bookedMin;
+                }
+                return false;
+              });
+            }
+            
+            const isGoogleCalendarBlocked = googleCalendarSlots.has(timeStr);
             const isBlocked = isBooked || isGoogleCalendarBlocked;
             
             let reason = 'available';
@@ -383,6 +444,19 @@ class AvailabilityCalendarService {
           
           const availableTimeSlots = formattedTimeSlots.filter(slot => slot.available);
           const blockedTimeSlots = formattedTimeSlots.filter(slot => !slot.available);
+          
+          // Debug: Log booked slots for this date
+          const bookedForDate = bookedSlotsByDate[dateStr];
+          if (bookedForDate && bookedForDate.size > 0) {
+            console.log(`   🔍 Debug ${dateStr}: Booked slots in Set:`, Array.from(bookedForDate));
+            console.log(`   🔍 Debug ${dateStr}: Available slots from DB:`, timeSlots);
+            const blockedSlots = formattedTimeSlots.filter(s => !s.available);
+            if (blockedSlots.length > 0) {
+              console.log(`   🔍 Debug ${dateStr}: Blocked slots found:`, blockedSlots.map(s => s.time));
+            } else {
+              console.log(`   ⚠️  Debug ${dateStr}: No blocked slots found, but booked sessions exist!`);
+            }
+          }
           
           const dayData = {
             date: dateStr,

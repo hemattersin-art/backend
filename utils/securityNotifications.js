@@ -285,7 +285,7 @@ class SecurityNotificationSystem extends EventEmitter {
       return admins.map(admin => admin.email);
     } catch (error) {
       console.error('Failed to get admin emails:', error);
-      return [process.env.ADMIN_EMAIL || 'admin@kuttikal.com'];
+      return [process.env.ADMIN_EMAIL || 'admin@littlecare.com'];
     }
   }
 

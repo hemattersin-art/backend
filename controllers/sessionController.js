@@ -737,7 +737,7 @@ const updateSessionStatus = async (req, res) => {
             `📅 Date: ${sessionDateTime}\n` +
             `👤 Psychologist: Dr. ${psychologistName}\n\n` +
             `Please let us know the reason or contact our team to reschedule:\n` +
-            `📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@kuttikal.com'}\n` +
+            `📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@littlecare.com'}\n` +
             `📱 WhatsApp: ${supportPhone}\n\n` +
             `We're here to help you reschedule or address any concerns.`;
 

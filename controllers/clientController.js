@@ -10,6 +10,7 @@ const {
 } = require('../utils/helpers');
 const availabilityService = require('../utils/availabilityCalendarService');
 const meetLinkService = require('../utils/meetLinkService');
+const userInteractionLogger = require('../utils/userInteractionLogger');
 const { reserveAssessmentSlot, bookAssessment, getAssessmentSessions } = require('./assessmentBookingController');
 
 // Get client profile
@@ -712,6 +713,19 @@ const bookSession = async (req, res) => {
 
     // Validate required fields
     if (!psychologist_id || !scheduled_date || !scheduled_time) {
+      // Log booking failure
+      await userInteractionLogger.logBooking({
+        userId: req.user.id,
+        userRole: req.user.role,
+        psychologistId,
+        packageId: package_id,
+        scheduledDate: scheduled_date,
+        scheduledTime: scheduled_time,
+        price,
+        status: 'failure',
+        error: new Error('Missing required fields')
+      });
+      
       return res.status(400).json(
         errorResponse('Missing required fields: psychologist_id, scheduled_date, scheduled_time')
       );
@@ -905,6 +919,19 @@ const bookSession = async (req, res) => {
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
       
+      // Log booking failure
+      await userInteractionLogger.logBooking({
+        userId,
+        userRole,
+        psychologistId: psychologist_id,
+        packageId: package_id,
+        scheduledDate: scheduled_date,
+        scheduledTime: scheduled_time,
+        price,
+        status: 'failure',
+        error: sessionError
+      });
+      
       // Check if it's a unique constraint violation (double booking)
       if (sessionError.code === '23505' || 
           sessionError.message?.includes('unique') || 
@@ -1066,6 +1093,20 @@ const bookSession = async (req, res) => {
     }
 
     console.log('✅ Session booking completed successfully with Meet link and email notifications');
+    
+    // Log successful booking
+    await userInteractionLogger.logBooking({
+      userId,
+      userRole,
+      psychologistId: psychologist_id,
+      packageId: package_id,
+      scheduledDate: scheduled_date,
+      scheduledTime: scheduled_time,
+      price: session.price,
+      status: 'success',
+      sessionId: session.id
+    });
+    
     res.status(201).json(
       successResponse({
         session,
@@ -1095,6 +1136,20 @@ const bookSession = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Session booking error:', error);
+    
+    // Log booking failure
+    await userInteractionLogger.logBooking({
+      userId: req.user?.id,
+      userRole: req.user?.role,
+      psychologistId: req.body?.psychologist_id,
+      packageId: req.body?.package_id,
+      scheduledDate: req.body?.scheduled_date,
+      scheduledTime: req.body?.scheduled_time,
+      price: req.body?.price,
+      status: 'failure',
+      error
+    });
+    
     res.status(500).json(
       errorResponse('Internal server error while booking session')
     );
@@ -1342,10 +1397,36 @@ const requestReschedule = async (req, res) => {
 
     if (updateError) {
       console.error('Update session status error:', updateError);
+      
+      // Log reschedule failure
+      await userInteractionLogger.logReschedule({
+        userId,
+        userRole: req.user.role,
+        sessionId,
+        oldDate: session.scheduled_date,
+        oldTime: session.scheduled_time,
+        newDate: null,
+        newTime: null,
+        status: 'failure',
+        error: updateError
+      });
+      
       return res.status(500).json(
         errorResponse('Failed to create reschedule request')
       );
     }
+
+    // Log reschedule request
+    await userInteractionLogger.logReschedule({
+      userId,
+      userRole: req.user.role,
+      sessionId,
+      oldDate: session.scheduled_date,
+      oldTime: session.scheduled_time,
+      newDate: null,
+      newTime: null,
+      status: 'success'
+    });
 
     res.json(
       successResponse(updatedSession, 'Reschedule request sent successfully')
@@ -1930,6 +2011,18 @@ const rescheduleSession = async (req, res) => {
       console.error('❌ Error initiating priority reminder check:', reminderError);
       // Don't block response
     }
+    
+    // Log successful reschedule
+    await userInteractionLogger.logReschedule({
+      userId,
+      userRole: req.user.role,
+      sessionId,
+      oldDate: session.scheduled_date,
+      oldTime: session.scheduled_time,
+      newDate: formatDate(new_date),
+      newTime: formatTime(new_time),
+      status: 'success'
+    });
     
     res.json(
       successResponse(updatedSession, 'Session rescheduled successfully')

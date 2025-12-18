@@ -46,7 +46,7 @@ function generateCalendarInvite(sessionData) {
   const createdDate = formatICalDateIST(new Date());
 
   // Generate unique UID
-  const uid = `session-${sessionId}-${crypto.randomUUID()}@kuttikal.com`;
+  const uid = `session-${sessionId}-${crypto.randomUUID()}@littlecare.com`;
 
   // Calendar invite content with IST timezone
   const icalContent = [
@@ -70,7 +70,7 @@ function generateCalendarInvite(sessionData) {
     `DTSTART;TZID=Asia/Kolkata:${startDate}`,
     `DTEND;TZID=Asia/Kolkata:${endDate}`,
     `SUMMARY:Therapy Session - ${clientName} with ${psychologistName}`,
-    `DESCRIPTION:Online therapy session scheduled through Kuttikal.\\n\\n` +
+    `DESCRIPTION:Online therapy session scheduled through Little Care.\\n\\n` +
     `Client: ${clientName}\\n` +
     `Psychologist: ${psychologistName}\\n` +
     `Session Fee: $${price}\\n\\n` +

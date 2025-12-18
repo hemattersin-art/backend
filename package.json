@@ -1,5 +1,5 @@
 {
-  "name": "kuttikal-backend",
+  "name": "littlecare-backend",
   "version": "1.0.0",
   "description": "Backend for Little Care Child Therapy Platform",
   "main": "server.js",

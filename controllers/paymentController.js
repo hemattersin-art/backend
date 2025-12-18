@@ -11,6 +11,7 @@ const meetLinkService = require('../utils/meetLinkService');
 const assessmentSessionService = require('../services/assessmentSessionService');
 const { addMinutesToTime } = require('../utils/helpers');
 const emailService = require('../utils/emailService');
+const userInteractionLogger = require('../utils/userInteractionLogger');
 
 // Generate and store PDF receipt in Supabase storage
 const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psychologistData) => {
@@ -76,6 +77,19 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
           reject(receiptError);
         } else {
           console.log('✅ Receipt metadata stored successfully');
+          
+          // Log receipt generation
+          if (clientData?.id) {
+            userInteractionLogger.logReceipt({
+              userId: clientData.id,
+              userRole: 'client',
+              paymentId: paymentData.id,
+              sessionId: sessionData.id,
+              amount: paymentData.amount,
+              status: 'success',
+              action: 'generate'
+            }).catch(err => console.error('Error logging receipt:', err));
+          }
           
           // Verify the receipt was stored by querying it back
           const { data: verifyReceipt, error: verifyError } = await supabaseAdmin
@@ -376,6 +390,19 @@ const handlePaymentSuccess = async (req, res) => {
     
     const razorpayConfig = getRazorpayConfig();
     const params = req.body;
+    
+    // Log payment success callback received (before we have clientId from payment record)
+    await userInteractionLogger.logInteraction({
+      userId: 'pending', // Will be updated after payment record lookup
+      userRole: 'client',
+      action: 'payment_success_callback',
+      status: 'received',
+      details: {
+        razorpayOrderId: params?.razorpay_order_id,
+        razorpayPaymentId: params?.razorpay_payment_id,
+        hasSignature: !!params?.razorpay_signature
+      }
+    });
 
     console.log('✅ Razorpay Success Response received:', {
       razorpay_order_id: params?.razorpay_order_id,
@@ -416,9 +443,41 @@ const handlePaymentSuccess = async (req, res) => {
       razorpay_signature,
       razorpayConfig.keySecret
     );
+    
+    // Use clientId from payment record for logging
+    const clientId = paymentRecord.client_id;
+    
+    // Log signature verification
+    await userInteractionLogger.logInteraction({
+      userId: clientId,
+      userRole: 'client',
+      action: 'payment_signature_verification',
+      status: isValidSignature ? 'success' : 'failure',
+      details: {
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        paymentId: paymentRecord.id
+      }
+    });
 
     if (!isValidSignature) {
       console.error('❌ Invalid Razorpay payment signature');
+      
+      // Log invalid signature
+      await userInteractionLogger.logInteraction({
+        userId: clientId,
+        userRole: 'client',
+        action: 'payment_signature_verification',
+        status: 'failure',
+        details: {
+          paymentId: paymentRecord.id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          errorType: 'invalid_signature'
+        },
+        error: new Error('Invalid Razorpay payment signature')
+      });
+      
       return res.status(400).json({
         success: false,
         message: 'Invalid payment signature'
@@ -427,8 +486,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     console.log('✅ Payment signature verified successfully');
 
-    // Use data from payment record
-    const clientId = paymentRecord.client_id;
+    // Use data from payment record (clientId already defined above)
     const actualPsychologistId = paymentRecord.psychologist_id;
     const actualScheduledDate = paymentRecord.razorpay_params?.notes?.scheduledDate;
     const actualScheduledTime = paymentRecord.razorpay_params?.notes?.scheduledTime;
@@ -684,6 +742,27 @@ const handlePaymentSuccess = async (req, res) => {
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
 
+      // Log payment success but session creation failure
+      await userInteractionLogger.logBooking({
+        userId: clientId,
+        userRole: 'client',
+        psychologistId: actualPsychologistId,
+        packageId: actualPackageId,
+        scheduledDate: actualScheduledDate,
+        scheduledTime: actualScheduledTime,
+        price: paymentRecord.amount,
+        status: 'failure',
+        error: sessionError,
+        details: {
+          paymentId: paymentRecord.id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          paymentStatus: 'success',
+          sessionCreationFailed: true,
+          errorType: 'session_creation_failed_after_payment'
+        }
+      });
+
       // Check if it's a unique constraint violation (double booking)
       if (
         sessionError.code === '23505' ||
@@ -691,6 +770,24 @@ const handlePaymentSuccess = async (req, res) => {
         sessionError.message?.includes('duplicate')
       ) {
         console.log('⚠️ Double booking detected - slot was just booked by another user');
+
+        // Log double booking scenario
+        await userInteractionLogger.logInteraction({
+          userId: clientId,
+          userRole: 'client',
+          action: 'booking_double_booking',
+          status: 'failure',
+          details: {
+            paymentId: paymentRecord.id,
+            razorpayOrderId: razorpay_order_id,
+            razorpayPaymentId: razorpay_payment_id,
+            psychologistId: actualPsychologistId,
+            scheduledDate: actualScheduledDate,
+            scheduledTime: actualScheduledTime,
+            errorType: 'double_booking_after_payment'
+          },
+          error: sessionError
+        });
 
         // Instead of deleting the payment, preserve it as a usable credit-like record
         // (paid, but no session). We keep status as 'pending' but attach Razorpay details.
@@ -731,6 +828,7 @@ const handlePaymentSuccess = async (req, res) => {
             <p><strong>Error Details:</strong> ${JSON.stringify(sessionError, null, 2)}</p>
             <p><strong>Payment Record:</strong> ${JSON.stringify(paymentRecord, null, 2)}</p>
             <p><em>Please investigate and manually create the session if needed.</em></p>
+            <p><em>This error has been logged to Google Drive user interaction logs.</em></p>
           `
         });
         console.log('✅ Error notification email sent to admin');
@@ -745,6 +843,81 @@ const handlePaymentSuccess = async (req, res) => {
     }
 
     console.log('✅ Session created successfully:', session.id);
+
+    // Block the booked slot from availability IMMEDIATELY
+    try {
+      const availabilityService = require('../utils/availabilityCalendarService');
+      await availabilityService.updateAvailabilityOnBooking(
+        actualPsychologistId,
+        actualScheduledDate,
+        actualScheduledTime
+      );
+      console.log('✅ Availability updated to block booked slot');
+    } catch (blockErr) {
+      console.warn('⚠️ Failed to update availability after booking:', blockErr?.message);
+      // Log availability update failure
+      await userInteractionLogger.logInteraction({
+        userId: clientId,
+        userRole: 'client',
+        action: 'availability_update',
+        status: 'failure',
+        details: {
+          sessionId: session.id,
+          psychologistId: actualPsychologistId,
+          scheduledDate: actualScheduledDate,
+          scheduledTime: actualScheduledTime
+        },
+        error: blockErr
+      });
+    }
+
+    // Log comprehensive booking flow with all details
+    await userInteractionLogger.logBooking({
+      userId: clientId,
+      userRole: 'client',
+      psychologistId: actualPsychologistId,
+      packageId: actualPackageId,
+      scheduledDate: actualScheduledDate,
+      scheduledTime: actualScheduledTime,
+      price: paymentRecord.amount,
+      status: 'success',
+      sessionId: session.id,
+      detailedFlow: {
+        paymentId: paymentRecord.id,
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        paymentMethod: 'razorpay',
+        bookingFlow: 'payment_success',
+        paymentRequest: {
+          scheduledDate: paymentRecord.scheduled_date || actualScheduledDate,
+          scheduledTime: paymentRecord.scheduled_time || actualScheduledTime,
+          psychologistId: actualPsychologistId,
+          clientId: clientId,
+          amount: paymentRecord.amount,
+          packageId: actualPackageId,
+          sessionType: paymentRecord.session_type,
+          clientName: clientDetails?.child_name || `${clientDetails?.first_name} ${clientDetails?.last_name}`.trim(),
+          clientEmail: clientDetails?.user?.email || clientDetails?.email,
+          clientPhone: clientDetails?.phone_number
+        },
+        razorpayConfig: {
+          environment: process.env.RAZORPAY_USE_PRODUCTION === 'true' ? 'production' : 'test',
+          keyId: razorpayConfig?.keyId ? razorpayConfig.keyId.substring(0, 10) + '...' : null
+        },
+        sessionData: {
+          sessionId: session.id,
+          status: session.status,
+          price: session.price,
+          createdAt: session.created_at
+        },
+        paymentRecord: {
+          transactionId: paymentRecord.transaction_id,
+          status: 'success',
+          amount: paymentRecord.amount,
+          createdAt: paymentRecord.created_at
+        }
+      }
+    });
 
     // Update payment status to completed
     const { error: updateError } = await supabase
@@ -773,9 +946,52 @@ const handlePaymentSuccess = async (req, res) => {
         clientDetails,
         psychologistDetails
       );
-      console.log('✅ Receipt generated successfully');
+      
+      if (receiptResult && receiptResult.fileUrl) {
+        console.log('✅ Receipt generated successfully:', {
+          receiptNumber: receiptResult.receiptNumber,
+          fileUrl: receiptResult.fileUrl,
+          fileSize: receiptResult.fileSize
+        });
+      } else {
+        console.warn('⚠️ Receipt generation returned no file URL:', receiptResult);
+      }
+      
+      // Log receipt generation with details
+      await userInteractionLogger.logReceipt({
+        userId: clientId,
+        userRole: 'client',
+        paymentId: paymentRecord.id,
+        sessionId: session.id,
+        amount: paymentRecord.amount,
+        status: receiptResult?.fileUrl ? 'success' : 'partial',
+        action: 'generate',
+        details: {
+          receiptNumber: receiptResult?.receiptNumber,
+          fileUrl: receiptResult?.fileUrl,
+          fileSize: receiptResult?.fileSize,
+          pdfGenerated: !!receiptResult?.pdfBuffer,
+          hasFileUrl: !!receiptResult?.fileUrl
+        }
+      });
     } catch (receiptError) {
       console.error('❌ Error generating receipt:', receiptError);
+      console.error('❌ Receipt error stack:', receiptError.stack);
+      // Log receipt generation failure
+      await userInteractionLogger.logReceipt({
+        userId: clientId,
+        userRole: 'client',
+        paymentId: paymentRecord.id,
+        sessionId: session.id,
+        amount: paymentRecord.amount,
+        status: 'failure',
+        action: 'generate',
+        error: receiptError,
+        details: {
+          errorType: receiptError.name || 'Unknown',
+          errorMessage: receiptError.message || String(receiptError)
+        }
+      });
       // Continue even if receipt generation fails
     }
 
@@ -795,6 +1011,16 @@ const handlePaymentSuccess = async (req, res) => {
     // ASYNC: Create gmeet link, send emails and WhatsApp in background (don't wait)
     // This runs after response is sent, so it doesn't block the user
     (async () => {
+      // Initialize WhatsApp logs tracking at outer scope so it's accessible everywhere
+      let whatsappLogs = {
+        clientSent: false,
+        psychologistSent: false,
+        receiptSent: false,
+        clientMessageIds: [],
+        psychologistMessageIds: [],
+        receiptMessageId: null
+      };
+      
       try {
         console.log('🔄 Starting async gmeet link creation and notifications...');
         
@@ -838,6 +1064,21 @@ const handlePaymentSuccess = async (req, res) => {
           method: meetResult.method
         };
             console.log('✅ Real Meet link created successfully (async):', meetResult);
+            
+            // Log Google Meet link creation
+            await userInteractionLogger.logInteraction({
+              userId: clientId,
+              userRole: 'client',
+              action: 'google_meet_creation',
+              status: 'success',
+              details: {
+                sessionId: session.id,
+                meetLink: meetResult.meetLink,
+                eventId: meetResult.eventId,
+                method: meetResult.method,
+                hasOAuthTokens: !!userAuth
+              }
+            });
             
             // Update session with meet link
             await supabase
@@ -890,13 +1131,46 @@ const handlePaymentSuccess = async (req, res) => {
       });
       
           console.log('✅ Confirmation emails sent successfully with receipt (async)');
+          
+          // Log email sending success
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'email_confirmation',
+            status: 'success',
+            details: {
+              sessionId: session.id,
+              clientEmail: clientDetails?.user?.email || clientDetails?.email,
+              psychologistEmail: psychologistDetails?.email,
+              hasReceipt: !!receiptResult?.fileUrl,
+              meetLink: meetData?.meetLink
+            }
+          });
     } catch (emailError) {
           console.error('❌ Error sending confirmation emails (async):', emailError);
+          
+          // Log email sending failure
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'email_confirmation',
+            status: 'failure',
+            details: {
+              sessionId: session.id,
+              clientEmail: clientDetails?.user?.email || clientDetails?.email,
+              psychologistEmail: psychologistDetails?.email
+            },
+            error: emailError
+          });
     }
 
         // Send WhatsApp messages (async)
     try {
           console.log('📱 Sending WhatsApp messages via WhatsApp API (async)...');
+          console.log('📱 Client phone:', clientDetails.phone_number);
+          console.log('📱 Psychologist phone:', psychologistDetails.phone);
+          console.log('📱 Meet link available:', !!meetData?.meetLink);
+          console.log('📱 Receipt URL available:', !!receiptResult?.fileUrl);
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
@@ -923,10 +1197,18 @@ const handlePaymentSuccess = async (req, res) => {
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
               console.log('✅ WhatsApp confirmation & receipt sent to client via WhatsApp API (async)');
+              whatsappLogs.clientSent = true;
+              if (clientWaResult.data?.msgId) {
+                whatsappLogs.clientMessageIds.push(clientWaResult.data.msgId);
+              }
+              if (clientWaResult.receiptMsgId) {
+                whatsappLogs.receiptSent = true;
+                whatsappLogs.receiptMessageId = clientWaResult.receiptMsgId;
+              }
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
         } else {
-          console.warn('⚠️ Client WhatsApp send failed');
+          console.warn('⚠️ Client WhatsApp send failed:', clientWaResult?.error || clientWaResult);
         }
       } else {
         console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
@@ -950,23 +1232,92 @@ const handlePaymentSuccess = async (req, res) => {
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {
               console.log('✅ WhatsApp notification sent to psychologist via WhatsApp API (async)');
-        } else if (psychologistWaResult?.skipped) {
-          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
-        } else {
-          console.warn('⚠️ Psychologist WhatsApp send failed');
-        }
+              whatsappLogs.psychologistSent = true;
+              if (psychologistWaResult.data?.msgId) {
+                whatsappLogs.psychologistMessageIds.push(psychologistWaResult.data.msgId);
+              }
+          } else if (psychologistWaResult?.skipped) {
+            console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+          } else {
+            console.warn('⚠️ Psychologist WhatsApp send failed:', psychologistWaResult?.error || psychologistWaResult);
+          }
       } else {
         console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
       }
       
           console.log('✅ WhatsApp messages sent successfully via UltraMsg (async)');
+          
+          // Log comprehensive WhatsApp summary
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'whatsapp_notifications',
+            status: whatsappLogs.clientSent || whatsappLogs.psychologistSent ? 'success' : 'partial',
+            details: {
+              sessionId: session.id,
+              clientPhone: clientPhone,
+              psychologistPhone: psychologistDetails?.phone,
+              ...whatsappLogs
+            }
+          });
     } catch (whatsappError) {
           console.error('❌ Error sending WhatsApp messages (async):', whatsappError);
+          
+          // Log WhatsApp failure
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'whatsapp_notifications',
+            status: 'failure',
+            details: {
+              sessionId: session.id,
+              clientPhone: clientPhone,
+              psychologistPhone: psychologistDetails?.phone
+            },
+            error: whatsappError
+          });
         }
         
         console.log('✅ Async gmeet link creation and notifications completed');
+        
+        // Log final booking flow completion
+        await userInteractionLogger.logInteraction({
+          userId: clientId,
+          userRole: 'client',
+          action: 'booking_flow_complete',
+          status: 'success',
+          details: {
+            sessionId: session.id,
+            paymentId: paymentRecord.id,
+            meetLinkCreated: !!meetData?.meetLink,
+            receiptGenerated: !!receiptResult?.fileUrl,
+            emailsSent: true, // Will be logged separately if fails
+            whatsappSent: (whatsappLogs && (whatsappLogs.clientSent || whatsappLogs.psychologistSent)) || false,
+            completedAt: new Date().toISOString()
+          }
+        });
       } catch (asyncError) {
         console.error('❌ Error in async background process:', asyncError);
+        console.error('❌ Async error stack:', asyncError.stack);
+        
+        // Log the async error to user interaction logger
+        try {
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'booking_async_process_failed',
+            status: 'failure',
+            details: {
+              sessionId: session.id,
+              paymentId: paymentRecord.id,
+              errorType: asyncError.name || 'Unknown',
+              errorMessage: asyncError.message || String(asyncError)
+            },
+            error: asyncError
+          });
+        } catch (logError) {
+          console.error('❌ Failed to log async error:', logError);
+        }
     }
     })(); // Immediately invoked async function - runs in background
 
