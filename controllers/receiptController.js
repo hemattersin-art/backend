@@ -7,10 +7,26 @@ const getClientReceipts = async (req, res) => {
   try {
     const userId = req.user.id;
     console.log('🔍 Fetching receipts for user:', userId);
+    console.log('🔍 req.user data:', { id: req.user.id, client_id: req.user.client_id, role: req.user.role });
 
-    // req.user.id is already the client ID, no need to lookup
-    const clientId = userId;
-    console.log('🔍 Fetching receipts for client:', clientId);
+    // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+    let clientId = req.user.client_id || userId;
+    
+    // If still not found, try to lookup client by user_id
+    if (!clientId || clientId === userId) {
+      const { data: clientData, error: clientError } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!clientError && clientData) {
+        clientId = clientData.id;
+        console.log('🔍 Found client by user_id:', clientId);
+      }
+    }
+    
+    console.log('🔍 Using client ID for receipts:', clientId);
 
     // 1) Fetch sessions for this client
     const { data: clientSessions, error: sessionsError } = await supabaseAdmin
@@ -80,23 +96,40 @@ const getClientReceipts = async (req, res) => {
     }
     const psychologistMap = new Map(psychologists.map(p => [p.id, p]));
 
-    // 5) Compose and filter only successful payments
+    // 5) Compose and filter only successful/paid payments
     const composed = receipts
       .map(r => {
         const session = sessionMap.get(r.session_id);
+        if (!session) {
+          console.log('⚠️ Receipt has no matching session:', r.id, 'session_id:', r.session_id);
+          return null;
+        }
+        
         const payment = paymentMap.get(r.payment_id);
-        if (!session || !payment) return null;
-        if ((payment.status || '').toLowerCase() !== 'success') return null;
+        if (!payment) {
+          console.log('⚠️ Receipt has no matching payment:', r.id, 'payment_id:', r.payment_id);
+          return null;
+        }
+        
+        // Include receipts for 'success' and 'cash' payment statuses
+        const paymentStatus = (payment.status || '').toLowerCase();
+        if (paymentStatus !== 'success' && paymentStatus !== 'cash') {
+          console.log('⚠️ Receipt payment status is not success/cash:', r.id, 'status:', payment.status);
+          return null;
+        }
+        
         const psych = session.psychologist_id ? psychologistMap.get(session.psychologist_id) : null;
         return {
-          id: session.id,
+          id: r.id, // Use receipt ID instead of session ID for proper download
+          receipt_id: r.id,
+          session_id: session.id,
           receipt_number: r.receipt_number,
           session_date: session.scheduled_date,
           session_time: session.scheduled_time,
           psychologist_name: psych ? `${psych.first_name} ${psych.last_name}` : 'Unknown',
           amount: payment.amount || 0,
           transaction_id: payment.transaction_id || 'N/A',
-          payment_date: payment.completed_at || r.created_at,
+          payment_date: payment.completed_at || payment.created_at || r.created_at,
           status: session.status,
           file_url: r.file_url,
           file_size: r.file_size
@@ -125,6 +158,8 @@ const downloadReceipt = async (req, res) => {
     const { receiptId } = req.params;
     const userId = req.user.id;
 
+    console.log('🔍 Download receipt request - receiptId:', receiptId, 'userId:', userId);
+
     // Get client ID from clients table
     const { data: clientData, error: clientDataError } = await supabaseAdmin
       .from('clients')
@@ -141,15 +176,25 @@ const downloadReceipt = async (req, res) => {
 
     const clientId = clientData.id;
 
-    // Get receipt by session_id
-    const { data: receipt, error: receiptError } = await supabaseAdmin
+    // Try to get receipt by receipt ID first (new approach)
+    let { data: receipt, error: receiptError } = await supabaseAdmin
       .from('receipts')
       .select('id, receipt_number, file_url, file_path, session_id')
-      .eq('session_id', receiptId)
+      .eq('id', receiptId)
       .single();
 
+    // Fallback: if not found by ID, try by session_id (backward compatibility)
     if (receiptError || !receipt) {
-      console.log('❌ Receipt not found for session:', receiptId, receiptError);
+      console.log('⚠️ Receipt not found by ID, trying by session_id:', receiptId);
+      ({ data: receipt, error: receiptError } = await supabaseAdmin
+        .from('receipts')
+        .select('id, receipt_number, file_url, file_path, session_id')
+        .eq('session_id', receiptId)
+        .single());
+    }
+
+    if (receiptError || !receipt) {
+      console.log('❌ Receipt not found:', receiptId, receiptError);
       return res.status(404).json(
         errorResponse('Receipt not found')
       );
@@ -166,6 +211,13 @@ const downloadReceipt = async (req, res) => {
       console.log('❌ Unauthorized receipt access or session not found');
       return res.status(404).json(
         errorResponse('Receipt not found')
+      );
+    }
+
+    if (!receipt.file_url) {
+      console.log('❌ Receipt has no file URL:', receipt.id);
+      return res.status(404).json(
+        errorResponse('Receipt file not available')
       );
     }
 

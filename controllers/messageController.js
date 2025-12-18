@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
 // Get user conversations
@@ -9,8 +10,24 @@ const getConversations = async (req, res) => {
 
     let conversations;
     if (userRole === 'client') {
-      // req.user.id is already the client ID, no need to lookup
-      const clientId = userId;
+      // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+      let clientId = req.user.client_id || userId;
+      
+      // If still not found, try to lookup client by user_id
+      if (!clientId || clientId === userId) {
+        const { data: clientData, error: clientDataError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+        
+        if (!clientDataError && clientData) {
+          clientId = clientData.id;
+          console.log('🔍 Found client by user_id for conversations:', clientId);
+        }
+      }
+      
+      console.log('🔍 Using client ID for conversations:', clientId);
 
       const { data, error } = await supabase
         .from('conversations')
@@ -71,7 +88,27 @@ const getMessages = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      if (conversation.client_id !== userId) {
+      // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+      let clientId = req.user.client_id || userId;
+      
+      // If still not found, try to lookup client by user_id
+      if (!clientId || clientId === userId) {
+        const { data: clientData, error: clientDataError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+        
+        if (!clientDataError && clientData) {
+          clientId = clientData.id;
+          console.log('🔍 Found client by user_id for messages:', clientId);
+        }
+      }
+      
+      console.log('🔍 Checking access - Conversation client_id:', conversation.client_id, 'User client_id:', clientId);
+      
+      if (conversation.client_id !== clientId) {
+        console.log('❌ Access denied: client ID mismatch');
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -121,7 +158,27 @@ const sendMessage = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      if (conversation.client_id !== userId) {
+      // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+      let clientId = req.user.client_id || userId;
+      
+      // If still not found, try to lookup client by user_id
+      if (!clientId || clientId === userId) {
+        const { data: clientData, error: clientDataError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+        
+        if (!clientDataError && clientData) {
+          clientId = clientData.id;
+          console.log('🔍 Found client by user_id for sendMessage:', clientId);
+        }
+      }
+      
+      console.log('🔍 Checking access for sendMessage - Conversation client_id:', conversation.client_id, 'User client_id:', clientId);
+      
+      if (conversation.client_id !== clientId) {
+        console.log('❌ Access denied for sendMessage: client ID mismatch');
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -180,7 +237,27 @@ const markAsRead = async (req, res) => {
 
     // Check if user has access to this conversation
     if (userRole === 'client') {
-      if (conversation.client_id !== userId) {
+      // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+      let clientId = req.user.client_id || userId;
+      
+      // If still not found, try to lookup client by user_id
+      if (!clientId || clientId === userId) {
+        const { data: clientData, error: clientDataError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+        
+        if (!clientDataError && clientData) {
+          clientId = clientData.id;
+          console.log('🔍 Found client by user_id for markAsRead:', clientId);
+        }
+      }
+      
+      console.log('🔍 Checking access for markAsRead - Conversation client_id:', conversation.client_id, 'User client_id:', clientId);
+      
+      if (conversation.client_id !== clientId) {
+        console.log('❌ Access denied for markAsRead: client ID mismatch');
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {
@@ -236,18 +313,28 @@ const createConversation = async (req, res) => {
 
     // Verify user has access to this session
     if (userRole === 'client') {
-      const { data: client, error: clientError } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('id', userId)
-        .single();
-
-      console.log('Client lookup - ID:', client?.id, 'Error:', clientError ? 'Yes' : 'No');
+      // Determine client ID: use client_id if available (new system), otherwise use id (old system)
+      let clientId = req.user.client_id || userId;
+      
+      // If still not found, try to lookup client by user_id
+      if (!clientId || clientId === userId) {
+        const { data: clientData, error: clientDataError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('user_id', userId)
+          .single();
+        
+        if (!clientDataError && clientData) {
+          clientId = clientData.id;
+          console.log('🔍 Found client by user_id:', clientId);
+        }
+      }
+      
+      console.log('Client lookup - Using client ID:', clientId);
       console.log('Session client_id:', session.client_id);
-      console.log('Client id:', client?.id);
 
-      if (!client || session.client_id !== client.id) {
-        console.log('Access denied: client not found or ID mismatch');
+      if (session.client_id !== clientId) {
+        console.log('Access denied: client ID mismatch. Session client_id:', session.client_id, 'User client_id:', clientId);
         return res.status(403).json(errorResponse('Access denied'));
       }
     } else if (userRole === 'psychologist') {

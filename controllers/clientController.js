@@ -172,44 +172,181 @@ const updateProfile = async (req, res) => {
     // Remove user_id from update data if present (shouldn't be updated)
     delete updateData.user_id;
 
+    // Handle optional last_name - allow clearing it
+    if (updateData.last_name !== undefined) {
+      if (updateData.last_name === null || updateData.last_name === '' || updateData.last_name.trim() === '') {
+        // User wants to clear it - set to empty string
+        updateData.last_name = '';
+      } else {
+        // Trim whitespace if provided
+        updateData.last_name = updateData.last_name.trim();
+      }
+    }
+    // If last_name is not in updateData, preserve existing value (don't update it)
+
+    // Handle optional child fields - allow clearing them
+    // If child_name is explicitly set to empty string, try to use empty string (database may allow it)
+    // If database has NOT NULL constraint and doesn't allow empty string, it will error and we can handle it
+    if (updateData.child_name !== undefined) {
+      if (updateData.child_name === null || updateData.child_name === '' || updateData.child_name.trim() === '') {
+        // User wants to clear it - try empty string first, database will reject if NOT NULL doesn't allow it
+        // In that case, we'll get an error and can handle it
+        updateData.child_name = '';
+      } else {
+        // Trim whitespace if provided
+        updateData.child_name = updateData.child_name.trim();
+      }
+    }
+    // If child_name is not in updateData, preserve existing value (don't update it)
+    
+    // Handle optional child_age - allow clearing by setting to null or default
+    if (updateData.child_age !== undefined) {
+      if (updateData.child_age === null || updateData.child_age === '' || updateData.child_age === 0) {
+        // User wants to clear it - try null first, if database rejects it, use default value 1
+        updateData.child_age = null;
+      } else {
+        updateData.child_age = Number(updateData.child_age);
+      }
+    }
+    // If child_age is not in updateData, preserve existing value (don't update it)
+
     // Use supabaseAdmin to bypass RLS
     const { supabaseAdmin } = require('../config/supabase');
 
     let client = null;
     let error = null;
+    let lastErrorDetails = null;
 
     if (userRole === 'client') {
-      // Attempt updates using different identifiers (user_id then id)
+      // Attempt updates using different identifiers
+      // Priority: 1) user_id (new system), 2) client_id (if available), 3) id as fallback for old system
       const updateAttempts = [
-        req.user.user_id ? { column: 'user_id', value: req.user.user_id } : null,
+        // New system: client has user_id that references users table
+        { column: 'user_id', value: userId },
+        // If client_id is available, use it
         req.user.client_id ? { column: 'id', value: req.user.client_id } : null,
+        // Old system fallback: try by id (for backward compatibility with old clients)
         { column: 'id', value: userId }
       ].filter(Boolean);
 
+      console.log('Update attempts:', updateAttempts);
+      console.log('Update data:', updateData);
+
       for (const attempt of updateAttempts) {
         try {
-          const { data: updatedClient, error: updateError } = await supabaseAdmin
+          // First check if client exists
+          const { data: existingClient, error: checkError } = await supabaseAdmin
             .from('clients')
-            .update({
-              ...updateData,
-              updated_at: new Date().toISOString()
-            })
-            .eq(attempt.column, attempt.value)
             .select('*')
+            .eq(attempt.column, attempt.value)
             .single();
 
-          if (!updateError && updatedClient) {
-            client = updatedClient;
-            error = null;
-            break;
+          if (checkError && checkError.code !== 'PGRST116') {
+            console.error(`Error checking client existence (${attempt.column}=${attempt.value}):`, checkError);
+            lastErrorDetails = { attempt, error: checkError };
+            continue;
           }
 
-          // Record the last error but continue trying other identifiers
-          if (updateError) {
-            error = updateError;
+          if (!existingClient) {
+            console.log(`Client not found with ${attempt.column}=${attempt.value}`);
+            lastErrorDetails = { attempt, error: { message: 'Client not found' } };
+            continue;
+          }
+
+          // Prepare update payload - child_name is already handled above if null/empty
+          const updatePayload = {
+            ...updateData,
+            updated_at: new Date().toISOString()
+          };
+
+          // Now attempt the update
+          let updatePayloadToUse = { ...updatePayload };
+          
+          // Handle special cases for child_age and child_name that might need fallback values
+          let needsRetry = false;
+          let retryPayload = null;
+          
+          // Check if we need to handle child_age null -> default fallback
+          if (updatePayloadToUse.child_age === null && updatePayloadToUse.child_age !== undefined) {
+            needsRetry = true;
+            retryPayload = { ...updatePayloadToUse, child_age: 1 }; // Default fallback
+          }
+          
+          // Check if we need to handle child_name empty -> default fallback
+          if (updatePayloadToUse.child_name === '' && updatePayloadToUse.child_name !== undefined) {
+            needsRetry = true;
+            retryPayload = retryPayload || { ...updatePayloadToUse };
+            retryPayload.child_name = 'Pending'; // Default fallback
+          }
+          
+          if (needsRetry) {
+            // Try with original values first
+            let { data: updatedClient, error: updateError } = await supabaseAdmin
+              .from('clients')
+              .update(updatePayloadToUse)
+              .eq(attempt.column, attempt.value)
+              .select('*')
+              .single();
+
+            // If update fails due to NOT NULL constraint, try with default values
+            if (updateError && updateError.code === '23502') {
+              if (updateError.message?.includes('child_age')) {
+                console.log('Null child_age rejected, using default value 1');
+              }
+              if (updateError.message?.includes('child_name')) {
+                console.log('Empty child_name rejected, using default "Pending"');
+              }
+              
+              const retryResult = await supabaseAdmin
+                .from('clients')
+                .update(retryPayload)
+                .eq(attempt.column, attempt.value)
+                .select('*')
+                .single();
+              updatedClient = retryResult.data;
+              updateError = retryResult.error;
+            }
+
+            if (!updateError && updatedClient) {
+              client = updatedClient;
+              error = null;
+              lastErrorDetails = null;
+              break;
+            }
+
+            // Record the last error but continue trying other identifiers
+            if (updateError) {
+              error = updateError;
+              lastErrorDetails = { attempt, error: updateError };
+              console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
+            }
+          } else {
+            // Normal update path (no special handling needed for child fields)
+            const { data: updatedClient, error: updateError } = await supabaseAdmin
+              .from('clients')
+              .update(updatePayloadToUse)
+              .eq(attempt.column, attempt.value)
+              .select('*')
+              .single();
+
+            if (!updateError && updatedClient) {
+              client = updatedClient;
+              error = null;
+              lastErrorDetails = null;
+              break;
+            }
+
+            // Record the last error but continue trying other identifiers
+            if (updateError) {
+              error = updateError;
+              lastErrorDetails = { attempt, error: updateError };
+              console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
+            }
           }
         } catch (attemptError) {
           error = attemptError;
+          lastErrorDetails = { attempt, error: attemptError };
+          console.error(`Exception during update attempt (${attempt.column}=${attempt.value}):`, attemptError);
         }
       }
     } else {
@@ -217,9 +354,31 @@ const updateProfile = async (req, res) => {
     }
 
     if (error || !client) {
-      console.error('Update client profile error:', error);
+      const errorMessage = error?.message || 'Unknown error';
+      const errorCode = error?.code || 'UNKNOWN_ERROR';
+      const errorDetails = lastErrorDetails 
+        ? `Failed with ${lastErrorDetails.attempt?.column}=${lastErrorDetails.attempt?.value}: ${lastErrorDetails.error?.message || errorMessage}`
+        : errorMessage;
+      
+      console.error('Update client profile error:', {
+        error,
+        errorCode,
+        errorMessage,
+        lastErrorDetails,
+        userId,
+        userRole,
+        updateData
+      });
+      
       return res.status(500).json(
-        errorResponse('Failed to update client profile')
+        errorResponse(
+          'Failed to update client profile',
+          {
+            message: errorMessage,
+            code: errorCode,
+            details: errorDetails
+          }
+        )
       );
     }
 
@@ -228,9 +387,15 @@ const updateProfile = async (req, res) => {
     );
 
   } catch (error) {
-    console.error('Update client profile error:', error);
+    console.error('Update client profile exception:', error);
     res.status(500).json(
-      errorResponse('Internal server error while updating profile')
+      errorResponse(
+        'Internal server error while updating profile',
+        {
+          message: error.message,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        }
+      )
     );
   }
 };
