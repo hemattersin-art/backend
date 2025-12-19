@@ -2577,10 +2577,11 @@ const sendRescheduleEmails = async (originalSession, updatedSession, psychologis
 // Get single session with summary (visible to client)
 const getSession = async (req, res) => {
   try {
-    const clientId = req.user.id;
+    // Use client_id if available (new system), otherwise fall back to req.user.id (old system)
+    const clientId = req.user.client_id || req.user.id;
     const { sessionId } = req.params;
 
-    console.log(`📋 Getting session ${sessionId} for client ${clientId}`);
+    console.log(`📋 Getting session ${sessionId} for client ${clientId} (user.id: ${req.user.id}, client_id: ${req.user.client_id})`);
 
     // Get session with psychologist details, but exclude session_notes
     const { data: session, error: sessionError } = await supabase

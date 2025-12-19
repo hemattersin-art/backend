@@ -9,7 +9,7 @@ const {
 } = require('../config/razorpay');
 const meetLinkService = require('../utils/meetLinkService');
 const assessmentSessionService = require('../services/assessmentSessionService');
-const { addMinutesToTime } = require('../utils/helpers');
+const { addMinutesToTime, errorResponse } = require('../utils/helpers');
 const emailService = require('../utils/emailService');
 const userInteractionLogger = require('../utils/userInteractionLogger');
 
@@ -591,11 +591,12 @@ const handlePaymentSuccess = async (req, res) => {
     const isAssessment = paymentRecord.assessment_session_id || paymentRecord.razorpay_params?.notes?.assessmentType === 'assessment';
     const actualAssessmentSessionId = paymentRecord.assessment_session_id || paymentRecord.razorpay_params?.notes?.assessmentSessionId;
 
-    // Check if already processed
+    // Check if already processed (early return for already completed payments)
     if (paymentRecord.status === 'success') {
       console.log('ℹ️ Payment already processed, returning early');
       console.log('   Payment ID:', paymentRecord.id);
       console.log('   Payment status:', paymentRecord.status);
+      console.log('   Session ID:', paymentRecord.session_id);
       
       // Log duplicate request
       await userInteractionLogger.logInteraction({
@@ -607,13 +608,53 @@ const handlePaymentSuccess = async (req, res) => {
           paymentId: paymentRecord.id,
           razorpayOrderId: razorpay_order_id,
           razorpayPaymentId: razorpay_payment_id,
-          reason: 'Payment already processed'
+          reason: 'Payment already processed',
+          sessionId: paymentRecord.session_id
         }
       });
       
       return res.json({
         success: true,
-        message: 'Payment already processed'
+        message: 'Payment already processed',
+        sessionId: paymentRecord.session_id
+      });
+    }
+
+    // Check if session_id is already set (indicates payment is being processed or already processed)
+    // This is a more reliable check than status since session_id is set atomically
+    if (paymentRecord.session_id) {
+      console.log('ℹ️ Payment already has a session, returning early');
+      console.log('   Payment ID:', paymentRecord.id);
+      console.log('   Session ID:', paymentRecord.session_id);
+      console.log('   Payment status:', paymentRecord.status);
+      
+      // Re-fetch payment to get current status
+      const { data: currentPayment } = await supabase
+        .from('payments')
+        .select('status, session_id')
+        .eq('id', paymentRecord.id)
+        .single();
+      
+      // Log duplicate request
+      await userInteractionLogger.logInteraction({
+        userId: clientId,
+        userRole: 'client',
+        action: 'payment_duplicate_request',
+        status: 'skipped',
+        details: {
+          paymentId: paymentRecord.id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          reason: 'Payment already has session_id (being processed or completed)',
+          currentStatus: currentPayment?.status || 'unknown',
+          sessionId: currentPayment?.session_id
+        }
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Payment is being processed or already completed',
+        sessionId: currentPayment?.session_id
       });
     }
 
@@ -911,17 +952,20 @@ const handlePaymentSuccess = async (req, res) => {
 
         // Instead of deleting the payment, preserve it as a usable credit-like record
         // (paid, but no session). We keep status as 'pending' but attach Razorpay details.
+        // Use supabaseAdmin to ensure we can update even if status is 'processing'
         try {
-          await supabase
+          await supabaseAdmin
             .from('payments')
             .update({
               status: 'pending',
               razorpay_payment_id: razorpay_payment_id,
               razorpay_response: params,
               // Keep session_id null so it can be used for a future booking
-              completed_at: new Date().toISOString()
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
             })
             .eq('id', paymentRecord.id);
+          console.log('✅ Payment status reverted to pending after double booking');
         } catch (creditError) {
           console.error('⚠️ Failed to update payment after double booking:', creditError);
         }
@@ -1039,8 +1083,10 @@ const handlePaymentSuccess = async (req, res) => {
       }
     });
 
-    // Update payment status to completed
-    const { error: updateError } = await supabase
+    // Atomically update payment status to completed and set session_id
+    // Only update if status is still 'pending' (prevents race conditions)
+    // This ensures only one request can successfully update the payment
+    const { data: updatedPayment, error: paymentStatusUpdateError } = await supabaseAdmin
       .from('payments')
       .update({
         status: 'success',
@@ -1049,11 +1095,33 @@ const handlePaymentSuccess = async (req, res) => {
         session_id: session.id,
         completed_at: new Date().toISOString()
       })
-      .eq('id', paymentRecord.id);
+      .eq('id', paymentRecord.id)
+      .eq('status', 'pending') // Only update if still pending (atomic check-and-set)
+      .select('*')
+      .single();
 
-    if (updateError) {
-      console.error('❌ Error updating payment:', updateError);
-      // Continue - payment status update failure shouldn't block response
+    if (paymentStatusUpdateError || !updatedPayment) {
+      // If update failed or no rows updated, another request already processed this payment
+      console.log('⚠️ Payment status update failed - may have been processed by another request');
+      console.log('   Update error:', paymentStatusUpdateError?.message || 'No rows updated');
+      console.log('   Session was created:', session.id);
+      
+      // Check current payment status
+      const { data: currentPayment } = await supabase
+        .from('payments')
+        .select('status, session_id')
+        .eq('id', paymentRecord.id)
+        .single();
+      
+      if (currentPayment?.status === 'success' && currentPayment?.session_id) {
+        console.log('✅ Payment was already processed by another request');
+        // Continue with response - payment is successfully processed
+      } else {
+        console.error('❌ Error updating payment status:', paymentStatusUpdateError);
+        // Continue anyway - session was created successfully
+      }
+    } else {
+      console.log('✅ Payment status updated to success');
     }
 
     // Generate and store PDF receipt IMMEDIATELY
@@ -1644,25 +1712,22 @@ const handlePaymentSuccess = async (req, res) => {
     console.error('   Request body:', JSON.stringify(req.body, null, 2));
     console.error('   Request headers:', JSON.stringify(req.headers, null, 2));
     
-    // Log the error with user interaction logger
+    // If payment was partially processed (session created but payment not updated),
+    // we don't need to revert anything since we check session_id before processing
+    // The payment will remain in 'pending' status and can be retried
     try {
       const params = req.body || {};
       const razorpay_order_id = params.razorpay_order_id || 'Unknown';
       
-      // Try to get clientId from payment record if possible
-      let clientId = 'pending';
-      try {
-        const { data: paymentRecord } = await supabase
-          .from('payments')
-          .select('client_id')
-          .eq('razorpay_order_id', razorpay_order_id)
-          .single();
-        if (paymentRecord?.client_id) {
-          clientId = paymentRecord.client_id;
-        }
-      } catch (lookupErr) {
-        console.error('   Could not lookup clientId for error logging:', lookupErr.message);
-      }
+      // Try to get payment record for logging
+      const { data: paymentRecord } = await supabase
+        .from('payments')
+        .select('id, status, client_id, session_id')
+        .eq('razorpay_order_id', razorpay_order_id)
+        .single();
+      
+      // Log the error with user interaction logger
+      const clientId = paymentRecord?.client_id || 'pending';
       
       await userInteractionLogger.logInteraction({
         userId: clientId,
@@ -1751,7 +1816,7 @@ const handlePaymentFailure = async (req, res) => {
     }
 
     // Update payment status to failed
-    const { error: updateError } = await supabase
+    const { error: paymentFailedUpdateError } = await supabase
       .from('payments')
       .update({
         status: 'failed',
@@ -1761,8 +1826,8 @@ const handlePaymentFailure = async (req, res) => {
       })
       .eq('id', paymentRecord.id);
 
-    if (updateError) {
-      console.error('Error updating payment:', updateError);
+    if (paymentFailedUpdateError) {
+      console.error('Error updating payment status to failed:', paymentFailedUpdateError);
     }
 
     // Release session slot if exists
