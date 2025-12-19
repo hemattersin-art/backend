@@ -92,16 +92,24 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
           }
           
           // Verify the receipt was stored by querying it back
+          // Use maybeSingle() to avoid error if receipt doesn't exist yet (race condition)
           const { data: verifyReceipt, error: verifyError } = await supabaseAdmin
             .from('receipts')
             .select('*')
             .eq('session_id', sessionData.id)
-            .single();
+            .maybeSingle(); // Use maybeSingle() instead of single() to handle missing receipts gracefully
             
           if (verifyError) {
-            console.error('❌ Error verifying receipt storage:', verifyError);
-          } else {
+            // Only log if it's not a "not found" error (PGRST116)
+            if (verifyError.code !== 'PGRST116') {
+              console.error('❌ Error verifying receipt storage:', verifyError);
+            } else {
+              console.log('ℹ️ Receipt not found yet (may still be processing):', verifyError.code);
+            }
+          } else if (verifyReceipt) {
             console.log('✅ Receipt verification successful:', verifyReceipt);
+          } else {
+            console.log('ℹ️ Receipt not found in verification query (may still be processing)');
           }
           
           resolve({ 

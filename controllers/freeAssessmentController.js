@@ -1227,6 +1227,12 @@ const bookFreeAssessment = async (req, res) => {
               ? clientDetails.child_name 
               : null;
             
+            // Define clientName for WhatsApp messages (same logic as email)
+            const clientName = clientDetails?.child_name || 
+                              (clientDetails?.first_name && clientDetails?.last_name 
+                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
+                                : clientDetails?.first_name || 'Client');
+            
             // Send WhatsApp to client with the real meet link
             if (clientPhone && finalMeetLink) {
               try {

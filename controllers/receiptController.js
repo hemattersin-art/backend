@@ -205,9 +205,18 @@ const downloadReceipt = async (req, res) => {
       .from('sessions')
       .select('id, client_id')
       .eq('id', receipt.session_id)
-      .single();
+      .maybeSingle(); // Use maybeSingle() to avoid error if session doesn't exist
 
-    if (sessionError || !session || session.client_id !== clientId) {
+    if (sessionError) {
+      // Only log if it's not a "not found" error (PGRST116)
+      if (sessionError.code !== 'PGRST116') {
+        console.error('❌ Error fetching session:', sessionError);
+      } else {
+        console.log('ℹ️ Session not found for receipt:', receipt.session_id);
+      }
+    }
+
+    if (!session || session.client_id !== clientId) {
       console.log('❌ Unauthorized receipt access or session not found');
       return res.status(404).json(
         errorResponse('Receipt not found')
@@ -414,9 +423,16 @@ const getReceiptByOrderId = async (req, res) => {
           )
         `)
         .eq('id', payment.session_id)
-        .single();
+        .maybeSingle(); // Use maybeSingle() to avoid error if session doesn't exist yet
 
-      if (!sessionError && session) {
+      if (sessionError) {
+        // Only log if it's not a "not found" error (PGRST116)
+        if (sessionError.code !== 'PGRST116') {
+          console.error('❌ Error fetching session:', sessionError);
+        } else {
+          console.log('ℹ️ Session not found yet (may still be processing):', payment.session_id);
+        }
+      } else if (session) {
         sessionDetails = {
           scheduled_date: session.scheduled_date,
           scheduled_time: session.scheduled_time,
@@ -427,6 +443,8 @@ const getReceiptByOrderId = async (req, res) => {
           } : null
         };
         console.log('✅ Session details found:', sessionDetails);
+      } else {
+        console.log('ℹ️ Session not found for payment session_id:', payment.session_id);
       }
     }
 
