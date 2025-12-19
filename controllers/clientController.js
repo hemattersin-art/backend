@@ -2476,10 +2476,19 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
     const clientName = clientDetails?.child_name || 
                       `${clientDetails?.first_name || 'Client'} ${clientDetails?.last_name || ''}`.trim();
 
-    // Format dates for notification
-    const originalDate = new Date(originalSession.scheduled_date);
-    const newDate = new Date(updatedSession.scheduled_date);
-    
+    // Get psychologist user_id (required for notifications table)
+    const { data: psychologistUser } = await supabase
+      .from('psychologists')
+      .select('user_id')
+      .eq('id', updatedSession.psychologist_id)
+      .single();
+
+    if (!psychologistUser?.user_id) {
+      console.warn('⚠️ Cannot create psychologist notification: No user_id found for psychologist');
+      return;
+    }
+
+    // Format dates for notification message
     const formatDateForNotification = (date, time) => {
       return new Date(`${date}T${time}+05:30`).toLocaleDateString('en-IN', {
         weekday: 'long',
@@ -2501,14 +2510,15 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
       });
     };
 
-    // Create notification record
+    // Create notification record using correct schema
+    // Schema: user_id (NOT NULL), title, message, type, is_read, related_id, related_type, created_at, updated_at
     const notificationData = {
-      psychologist_id: updatedSession.psychologist_id,
-      type: 'session_rescheduled',
+      user_id: psychologistUser.user_id, // NOT NULL - required
       title: 'Session Rescheduled',
-      message: `${clientName} has rescheduled their session from ${formatDateForNotification(originalSession.scheduled_date, originalSession.scheduled_time)} at ${formatTimeForNotification(originalSession.scheduled_time)} to ${formatDateForNotification(updatedSession.scheduled_date, updatedSession.scheduled_time)} at ${formatTimeForNotification(updatedSession.scheduled_time)}`,
-      session_id: updatedSession.id,
-      client_id: clientId,
+      message: `${clientName} has rescheduled their session from ${originalSession.scheduled_date} at ${originalSession.scheduled_time} to ${updatedSession.scheduled_date} at ${updatedSession.scheduled_time}`,
+      type: 'info', // Must be one of: 'info', 'success', 'warning', 'error' per schema constraint
+      related_id: updatedSession.id,
+      related_type: 'session',
       is_read: false,
       created_at: new Date().toISOString()
     };
@@ -2518,9 +2528,9 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
       .insert([notificationData]);
 
     if (notificationError) {
-      console.error('Error creating notification:', notificationError);
+      console.error('Error creating reschedule notification:', notificationError);
     } else {
-      console.log('✅ Reschedule notification created');
+      console.log('✅ Reschedule notification created for psychologist');
     }
 
   } catch (error) {

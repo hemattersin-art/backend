@@ -1581,6 +1581,82 @@ const completeSession = async (req, res) => {
   }
 };
 
+// Get reschedule requests for psychologist's sessions
+const getRescheduleRequests = async (req, res) => {
+  try {
+    // For psychologists, req.user.id IS the psychologist_id (from psychologists table)
+    // This is set by the auth middleware - no need to look it up
+    const psychologistId = req.user.id;
+    const { status } = req.query; // 'pending', 'approved', or undefined for all
+
+    console.log('📄 Fetching reschedule requests for psychologist:', psychologistId);
+
+    // Get all reschedule request notifications
+    // These are notifications where related_type='session' and message/title contains 'reschedule'
+    let query = supabase
+      .from('notifications')
+      .select('*')
+      .or('type.eq.warning,type.eq.info')
+      .eq('related_type', 'session')
+      .order('created_at', { ascending: false });
+
+    const { data: allNotifications, error: fetchError } = await query;
+
+    if (fetchError) {
+      console.error('Get reschedule requests error:', fetchError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch reschedule requests')
+      );
+    }
+
+    // Filter for reschedule-related notifications
+    let rescheduleNotifications = (allNotifications || []).filter(notif => 
+      (notif.message?.toLowerCase().includes('reschedule') || 
+       notif.title?.toLowerCase().includes('reschedule'))
+    );
+
+    // Get sessions for these notifications and filter by psychologist_id
+    const enrichedRequests = [];
+    
+    for (const notification of rescheduleNotifications) {
+      const sessionId = notification.related_id;
+      
+      // Get session details
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('*, client:clients(*), psychologist:psychologists(*)')
+        .eq('id', sessionId)
+        .eq('psychologist_id', psychologistId) // Only sessions for this psychologist
+        .single();
+
+      // Only include if session belongs to this psychologist
+      if (session) {
+        // Filter by status if provided
+        if (status === 'pending' && notification.is_read) {
+          continue; // Skip if status is pending but notification is read
+        } else if (status === 'approved' && !notification.is_read) {
+          continue; // Skip if status is approved but notification is not read
+        }
+
+        enrichedRequests.push({
+          ...notification,
+          session: session || null,
+          client: session?.client || null,
+          psychologist: session?.psychologist || null
+        });
+      }
+    }
+
+    res.json(successResponse(enrichedRequests || [], 'Reschedule requests fetched successfully'));
+
+  } catch (error) {
+    console.error('Get reschedule requests error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching reschedule requests')
+    );
+  }
+};
+
 module.exports = {
   bookSession,
   getClientSessions,
@@ -1589,5 +1665,6 @@ module.exports = {
   updateSessionStatus,
   deleteSession,
   handleRescheduleRequest,
-  completeSession
+  completeSession,
+  getRescheduleRequests
 };

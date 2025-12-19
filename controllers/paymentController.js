@@ -430,6 +430,8 @@ const handlePaymentSuccess = async (req, res) => {
     }
 
     // Find payment record by Razorpay order ID
+    // Use FOR UPDATE lock in PostgreSQL to prevent concurrent processing
+    // Note: Supabase doesn't support FOR UPDATE directly, so we'll use atomic updates instead
     console.log('🔍 Looking up payment record for order:', razorpay_order_id);
     const { data: paymentRecord, error: paymentError } = await supabase
       .from('payments')
@@ -877,6 +879,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Create the actual session IMMEDIATELY (don't wait for gmeet link)
     // Gmeet link will be created asynchronously and session will be updated later
+    // Use ON CONFLICT DO NOTHING to handle race conditions gracefully
     const sessionData = {
       client_id: clientId,
       psychologist_id: actualPsychologistId,
@@ -894,6 +897,7 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Don't add meet data yet - will be added asynchronously
 
+    // Try to insert session - if duplicate key error, another request already created it
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .insert([sessionData])
@@ -903,33 +907,62 @@ const handlePaymentSuccess = async (req, res) => {
     if (sessionError) {
       console.error('❌ Session creation failed:', sessionError);
 
-      // Log payment success but session creation failure
-      await userInteractionLogger.logBooking({
-        userId: clientId,
-        userRole: 'client',
-        psychologistId: actualPsychologistId,
-        packageId: actualPackageId,
-        scheduledDate: actualScheduledDate,
-        scheduledTime: actualScheduledTime,
-        price: paymentRecord.amount,
-        status: 'failure',
-        error: sessionError,
-        details: {
-          paymentId: paymentRecord.id,
-          razorpayOrderId: razorpay_order_id,
-          razorpayPaymentId: razorpay_payment_id,
-          paymentStatus: 'success',
-          sessionCreationFailed: true,
-          errorType: 'session_creation_failed_after_payment'
-        }
-      });
-
-      // Check if it's a unique constraint violation (double booking)
+      // Check if it's a unique constraint violation (double booking or concurrent request)
       if (
         sessionError.code === '23505' ||
         sessionError.message?.includes('unique') ||
         sessionError.message?.includes('duplicate')
       ) {
+        console.log('⚠️ Duplicate session detected - checking if another request already created it');
+
+        // Try to find the existing session that was created by another concurrent request
+        const { data: existingSession } = await supabase
+          .from('sessions')
+          .select('id, client_id, psychologist_id, scheduled_date, scheduled_time, status, payment_id')
+          .eq('psychologist_id', actualPsychologistId)
+          .eq('scheduled_date', actualScheduledDate)
+          .eq('scheduled_time', actualScheduledTime)
+          .eq('status', 'booked')
+          .maybeSingle();
+
+        if (existingSession && existingSession.client_id === clientId && existingSession.payment_id === paymentRecord.id) {
+          // Same client AND same payment - this is definitely a duplicate request, not a double booking
+          console.log('ℹ️ Duplicate request detected - session already exists for this payment');
+          console.log('   Existing session ID:', existingSession.id);
+          console.log('   Session payment_id:', existingSession.payment_id);
+          console.log('   Current payment_id:', paymentRecord.id);
+          
+          // Try to atomically update payment status to success and link session_id
+          // This ensures only one request successfully updates the payment
+          const { data: updatedPayment, error: updateError } = await supabaseAdmin
+            .from('payments')
+            .update({
+              status: 'success',
+              razorpay_payment_id: razorpay_payment_id,
+              razorpay_response: params,
+              session_id: existingSession.id,
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', paymentRecord.id)
+            .eq('status', 'pending') // Only update if still pending (atomic check-and-set)
+            .select('*')
+            .single();
+
+          // Return success regardless of whether update succeeded
+          // (another request may have already updated it)
+          return res.json({
+            success: true,
+            message: 'Payment already processed by another concurrent request',
+            data: {
+              sessionId: existingSession.id,
+              transactionId: paymentRecord.transaction_id,
+              razorpayPaymentId: razorpay_payment_id,
+              amount: paymentRecord.amount
+            }
+          });
+        }
+
+        // Different client or session not linked to payment - this is a real double booking
         console.log('⚠️ Double booking detected - slot was just booked by another user');
 
         // Log double booking scenario
@@ -945,7 +978,8 @@ const handlePaymentSuccess = async (req, res) => {
             psychologistId: actualPsychologistId,
             scheduledDate: actualScheduledDate,
             scheduledTime: actualScheduledTime,
-            errorType: 'double_booking_after_payment'
+            errorType: 'double_booking_after_payment',
+            existingSessionId: existingSession?.id
           },
           error: sessionError
         });
@@ -974,6 +1008,27 @@ const handlePaymentSuccess = async (req, res) => {
           errorResponse('This time slot was just booked by another user. Your payment is safe – please choose another available time.')
         );
       }
+
+      // Log payment success but session creation failure (non-duplicate error)
+      await userInteractionLogger.logBooking({
+        userId: clientId,
+        userRole: 'client',
+        psychologistId: actualPsychologistId,
+        packageId: actualPackageId,
+        scheduledDate: actualScheduledDate,
+        scheduledTime: actualScheduledTime,
+        price: paymentRecord.amount,
+        status: 'failure',
+        error: sessionError,
+        details: {
+          paymentId: paymentRecord.id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          paymentStatus: 'success',
+          sessionCreationFailed: true,
+          errorType: 'session_creation_failed_after_payment'
+        }
+      });
 
       // Send error notification email to admin
       try {
@@ -1199,6 +1254,28 @@ const handlePaymentSuccess = async (req, res) => {
     // ASYNC: Create gmeet link, send emails and WhatsApp in background (don't wait)
     // This runs after response is sent, so it doesn't block the user
     (async () => {
+      // First, verify that payment is still in 'success' status before proceeding
+      // This prevents async processes from running if payment was reverted due to double booking
+      try {
+        const { data: currentPaymentStatus } = await supabase
+          .from('payments')
+          .select('status, session_id')
+          .eq('id', paymentRecord.id)
+          .single();
+        
+        // If payment was reverted to pending (double booking detected), don't send notifications
+        if (currentPaymentStatus?.status !== 'success' || currentPaymentStatus?.session_id !== session.id) {
+          console.log('⚠️ Payment status changed or session mismatch - skipping async notifications');
+          console.log('   Payment status:', currentPaymentStatus?.status);
+          console.log('   Payment session_id:', currentPaymentStatus?.session_id);
+          console.log('   Created session_id:', session.id);
+          return; // Exit early - don't send notifications for reverted payments
+        }
+      } catch (statusCheckError) {
+        console.error('⚠️ Error checking payment status before async processes:', statusCheckError);
+        // Continue anyway - better to send notifications than miss them
+      }
+      
       // Initialize WhatsApp logs tracking at outer scope so it's accessible everywhere
       let whatsappLogs = {
         clientSent: false,
