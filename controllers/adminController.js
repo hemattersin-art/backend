@@ -3280,20 +3280,20 @@ const handleRescheduleRequest = async (req, res) => {
 
       // Create approval notification for client
       if (client?.user_id) {
-        const clientNotificationData = {
+      const clientNotificationData = {
           user_id: client.user_id,
-          title: 'Reschedule Approved',
+        title: 'Reschedule Approved',
           message: `Your reschedule request has been approved by admin. Session moved to ${newDate} at ${newTime}`,
           type: 'success',
           related_id: session.id,
           related_type: 'session',
-          is_read: false,
-          created_at: new Date().toISOString()
-        };
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
 
-        await supabase
-          .from('notifications')
-          .insert([clientNotificationData]);
+      await supabase
+        .from('notifications')
+        .insert([clientNotificationData]);
       }
 
       // Also notify psychologist that reschedule was approved
@@ -3362,20 +3362,20 @@ const handleRescheduleRequest = async (req, res) => {
           ? `Your reschedule request has been declined. Reason: ${reason}. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`
           : `Your reschedule request has been declined. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`;
 
-        const clientNotificationData = {
+      const clientNotificationData = {
           user_id: client.user_id,
           title: 'Reschedule Request Declined',
           message: rejectionMessage,
           type: 'error',
           related_id: session.id,
           related_type: 'session',
-          is_read: false,
-          created_at: new Date().toISOString()
-        };
+        is_read: false,
+        created_at: new Date().toISOString()
+      };
 
-        await supabase
-          .from('notifications')
-          .insert([clientNotificationData]);
+      await supabase
+        .from('notifications')
+        .insert([clientNotificationData]);
       }
 
       // Mark original request as read

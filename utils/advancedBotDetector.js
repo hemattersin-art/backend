@@ -144,14 +144,14 @@ class AdvancedBotDetector {
     
     // Only check for missing headers if it's not a legitimate device or payment endpoint
     if (!isLegitimateDevice && !isPaymentEndpoint) {
-      const missingHeaders = [];
-      if (!req.headers.accept) missingHeaders.push('Accept');
-      if (!req.headers['accept-language']) missingHeaders.push('Accept-Language');
-      if (!req.headers['accept-encoding']) missingHeaders.push('Accept-Encoding');
-      
-      if (missingHeaders.length > 0) {
-        score.suspicious += missingHeaders.length * 5;
-        score.reasons.push(`Missing headers: ${missingHeaders.join(', ')}`);
+    const missingHeaders = [];
+    if (!req.headers.accept) missingHeaders.push('Accept');
+    if (!req.headers['accept-language']) missingHeaders.push('Accept-Language');
+    if (!req.headers['accept-encoding']) missingHeaders.push('Accept-Encoding');
+    
+    if (missingHeaders.length > 0) {
+      score.suspicious += missingHeaders.length * 5;
+      score.reasons.push(`Missing headers: ${missingHeaders.join(', ')}`);
       }
     }
 

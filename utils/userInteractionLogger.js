@@ -286,18 +286,18 @@ class UserInteractionLogger {
       try {
         // Try to create folder by uploading a placeholder (Supabase creates folders automatically)
         // But we'll just upload the file directly - Supabase will create the folder structure
-        const logContent = JSON.stringify([logEntry], null, 2);
-        const { error: uploadError } = await supabase.storage
-          .from(this.bucketName)
-          .upload(filePath, logContent, {
-            contentType: 'application/json',
-            cacheControl: '3600',
-            upsert: false // Don't overwrite if exists
-          });
+      const logContent = JSON.stringify([logEntry], null, 2);
+      const { error: uploadError } = await supabase.storage
+        .from(this.bucketName)
+        .upload(filePath, logContent, {
+          contentType: 'application/json',
+          cacheControl: '3600',
+          upsert: false // Don't overwrite if exists
+        });
 
-        if (uploadError) {
-          // If file exists, try updating instead
-          if (uploadError.message.includes('already exists') || uploadError.message.includes('duplicate')) {
+      if (uploadError) {
+        // If file exists, try updating instead
+        if (uploadError.message.includes('already exists') || uploadError.message.includes('duplicate')) {
             // File exists, read it, append, and update
             const { data: fileData, error: downloadError } = await supabase.storage
               .from(this.bucketName)
@@ -319,14 +319,14 @@ class UserInteractionLogger {
                 logs.push(logEntry);
                 logs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-                const { error: updateError } = await supabase.storage
-                  .from(this.bucketName)
+          const { error: updateError } = await supabase.storage
+            .from(this.bucketName)
                   .update(filePath, JSON.stringify(logs, null, 2), {
-                    contentType: 'application/json',
-                    upsert: true
-                  });
+              contentType: 'application/json',
+              upsert: true
+            });
 
-                if (updateError) {
+          if (updateError) {
                   console.error('❌ Error updating existing log file:', updateError.message);
                 } else {
                   console.log(`✅ Logged ${action} (${status}) for user: ${userEmail} → ${filePath}`);
@@ -334,13 +334,13 @@ class UserInteractionLogger {
               } catch (parseError) {
                 console.error('❌ Error parsing existing log file:', parseError.message);
               }
-            } else {
-              console.error('❌ Error downloading existing log file:', downloadError?.message);
-            }
           } else {
-            console.error('❌ Error creating log file:', uploadError.message);
+              console.error('❌ Error downloading existing log file:', downloadError?.message);
           }
         } else {
+          console.error('❌ Error creating log file:', uploadError.message);
+        }
+      } else {
           console.log(`✅ Logged ${action} (${status}) for user: ${userEmail} → ${filePath}`);
         }
       } catch (folderError) {

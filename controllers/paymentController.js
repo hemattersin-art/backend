@@ -291,13 +291,69 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
+    // CRITICAL: Hold slot BEFORE creating payment record
+    // This prevents double booking during payment process
+    // If slot_locks table doesn't exist, this will fail gracefully and we'll use legacy mode
+    let slotLockResult = null;
+    try {
+      const { holdSlot } = require('../services/slotLockService');
+      console.log('🔒 Holding slot before payment...');
+      slotLockResult = await holdSlot({
+        psychologistId: psychologistId,
+        clientId: clientId,
+        scheduledDate: scheduledDate,
+        scheduledTime: scheduledTime,
+        orderId: razorpayOrder.id
+      });
+
+      if (!slotLockResult.success) {
+        // Check if it's a table not found error (migration not run)
+        if (slotLockResult.error?.includes('relation') || slotLockResult.error?.includes('does not exist')) {
+          console.warn('⚠️ slot_locks table not found - using legacy mode (run migration)');
+          slotLockResult = null; // Will proceed without slot lock
+        } else if (slotLockResult.conflict) {
+          // Real conflict - slot already booked
+          console.error('❌ Failed to hold slot (conflict):', slotLockResult.error);
+          
+          // Cancel Razorpay order if slot hold failed
+          try {
+            await razorpay.orders.cancel(razorpayOrder.id);
+          } catch (cancelError) {
+            console.warn('⚠️ Failed to cancel Razorpay order:', cancelError);
+          }
+
+          return res.status(409).json({
+            success: false,
+            message: slotLockResult.error || 'This time slot is already booked. Please select another time.',
+            conflict: true
+          });
+        } else {
+          // Other error - log but continue (legacy mode)
+          console.warn('⚠️ Slot lock failed, continuing in legacy mode:', slotLockResult.error);
+          slotLockResult = null;
+        }
+      } else {
+        console.log('✅ Slot held successfully:', {
+          lockId: slotLockResult.data.id,
+          expiresAt: slotLockResult.data.slot_expires_at
+        });
+      }
+    } catch (slotError) {
+      // Table doesn't exist or other error - continue in legacy mode
+      console.warn('⚠️ Slot lock service error, using legacy mode:', slotError.message);
+      slotLockResult = null;
+    }
+
     // Store pending payment record
     console.log('💾 Creating payment record in database...');
-    console.log('🔍 Assessment booking check:', {
-      assessmentSessionId,
-      assessmentType,
-      hasAssessmentSessionId: !!assessmentSessionId
-    });
+    // Only log assessment booking check if it's actually an assessment booking
+    if (assessmentSessionId || assessmentType) {
+      console.log('🔍 Assessment booking check:', {
+        assessmentSessionId: assessmentSessionId || null,
+        assessmentType: assessmentType || null,
+        hasAssessmentSessionId: !!assessmentSessionId
+      });
+    }
     
     const paymentData = {
       transaction_id: txnid,
@@ -356,7 +412,8 @@ const createPaymentOrder = async (req, res) => {
     
     console.log('📤 Sending payment response to frontend...');
     
-    res.json({
+    // Prepare response data
+    const responseData = {
       success: true,
       data: {
         paymentId: paymentRecord.id,
@@ -378,7 +435,22 @@ const createPaymentOrder = async (req, res) => {
           color: '#3b82f6'
         }
       }
-    });
+    };
+    
+    // Send response - ensure it completes
+    try {
+      res.json(responseData);
+      console.log('✅ Payment response sent successfully');
+    } catch (responseError) {
+      console.error('❌ Error sending payment response:', responseError);
+      // Try to send error response if json() failed
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to send payment response'
+        });
+      }
+    }
 
   } catch (error) {
     console.error('Error creating payment order:', error);

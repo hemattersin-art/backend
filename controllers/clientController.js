@@ -1844,12 +1844,12 @@ const rescheduleSession = async (req, res) => {
             
             adminNotifications.push({
               user_id: admin.id, // NOT NULL - required
-              title: 'Reschedule Request (Within 24 Hours)',
+          title: 'Reschedule Request (Within 24 Hours)',
               message: detailedMessage,
               type: 'warning', // Must be one of: 'info', 'success', 'warning', 'error' per schema constraint
               related_id: session.id,
               related_type: 'session',
-              is_read: false,
+          is_read: false,
               created_at: new Date().toISOString()
             });
           });
@@ -1857,12 +1857,12 @@ const rescheduleSession = async (req, res) => {
 
         // Only insert notifications if we have admin users
         if (adminNotifications.length > 0) {
-          const { error: notificationError } = await supabase
-            .from('notifications')
+        const { error: notificationError } = await supabase
+          .from('notifications')
             .insert(adminNotifications);
 
-          if (notificationError) {
-            console.error('Error creating admin notification:', notificationError);
+        if (notificationError) {
+          console.error('Error creating admin notification:', notificationError);
             // Don't fail the reschedule request if notification fails - session status is still updated
             console.warn('⚠️ Failed to create admin notifications, but reschedule request status is updated');
           } else {

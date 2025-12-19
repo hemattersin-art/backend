@@ -979,6 +979,24 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   
   // Start Daily Calendar Conflict Monitor service (checks for conflicts at 1 AM)
   dailyCalendarConflictAlert.start();
+  
+  // Start Recovery Job (recovers failed session creations, runs every 5 minutes)
+  const { startRecoveryScheduler } = require('./jobs/recoveryJob');
+  startRecoveryScheduler(5); // Run every 5 minutes
+  
+  // Start Slot Lock Cleanup Job (releases expired slots, runs every 10 minutes)
+  const { releaseExpiredSlots } = require('./services/slotLockService');
+  setInterval(async () => {
+    try {
+      await releaseExpiredSlots();
+    } catch (error) {
+      console.error('❌ Error in slot lock cleanup:', error);
+    }
+  }, 10 * 60 * 1000); // Every 10 minutes
+  // Run immediately on startup
+  releaseExpiredSlots().catch(err => {
+    console.error('❌ Error in initial slot lock cleanup:', err);
+  });
 });
 
 module.exports = app;
