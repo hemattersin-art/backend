@@ -77,7 +77,30 @@ class MeetLinkService {
       });
 
       // Use getAccessToken() instead of deprecated refreshAccessToken()
-      const { credentials } = await oauth2Client.getAccessToken();
+      const tokenResponse = await oauth2Client.getAccessToken();
+      
+      // Handle different response formats from getAccessToken()
+      // It can return: { token: string } or { credentials: object } or just the token string
+      let credentials;
+      if (tokenResponse && typeof tokenResponse === 'object') {
+        if (tokenResponse.credentials) {
+          credentials = tokenResponse.credentials;
+        } else if (tokenResponse.token) {
+          // If it returns { token: string }, we need to get credentials from the client
+          credentials = oauth2Client.credentials;
+        } else {
+          // Try to use the response as credentials directly
+          credentials = tokenResponse;
+        }
+      } else {
+        // If it returns just a token string, get credentials from the client
+        credentials = oauth2Client.credentials;
+      }
+      
+      // Validate that we have valid credentials with access_token
+      if (!credentials || !credentials.access_token) {
+        throw new Error('Token refresh returned invalid credentials - no access_token found');
+      }
       
       log('✅ OAuth token refreshed successfully');
       return {
@@ -88,6 +111,10 @@ class MeetLinkService {
       };
     } catch (error) {
       logError('❌ Token refresh failed:', error.message);
+      // Log more details for debugging
+      if (error.message && error.message.includes('access_token')) {
+        logError('   This usually means the refresh token is invalid or expired');
+      }
       return {
         success: false,
         error: error.message
