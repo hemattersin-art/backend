@@ -9,6 +9,7 @@
 const cron = require('node-cron');
 const { supabaseAdmin } = require('../config/supabase');
 const googleCalendarService = require('../utils/googleCalendarService');
+const calendarSyncService = require('./calendarSyncService');
 const emailService = require('../utils/emailService');
 const whatsappService = require('../utils/whatsappService');
 const dayjs = require('dayjs');
@@ -60,18 +61,32 @@ class CalendarConflictMonitorService {
   }
 
   /**
-   * Convert 12-hour time to 24-hour format
+   * Convert 12-hour time to 24-hour format (matches availabilityController logic)
    */
-  convertTo24Hour(time12) {
-    if (!time12) return null;
+  convertTo24Hour(timeStr) {
+    if (!timeStr) return null;
     
-    if (!time12.includes('AM') && !time12.includes('PM')) {
-      return time12;
+    const time = typeof timeStr === 'string' ? timeStr.trim() : String(timeStr).trim();
+    
+    // If already in 24-hour format (no AM/PM), extract HH:MM
+    if (!time.includes('AM') && !time.includes('PM')) {
+      // Extract first 5 characters (HH:MM) if longer string
+      const match = time.match(/(\d{1,2}):(\d{2})/);
+      if (match) {
+        const hours = parseInt(match[1]);
+        const minutes = match[2];
+        return `${String(hours).padStart(2, '0')}:${minutes}`;
+      }
+      return time.substring(0, 5);
     }
     
-    const [time, period] = time12.split(' ');
-    const [hours, minutes] = time.split(':');
-    let hour24 = parseInt(hours);
+    // Parse 12-hour format (e.g., "5:00 PM" or "5:00PM")
+    const match = time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return null;
+    
+    let hour24 = parseInt(match[1]);
+    const minutes = match[2];
+    const period = match[3].toUpperCase();
     
     if (period === 'PM' && hour24 !== 12) {
       hour24 += 12;
@@ -79,7 +94,7 @@ class CalendarConflictMonitorService {
       hour24 = 0;
     }
     
-    return `${String(hour24).padStart(2, '0')}:${minutes || '00'}:00`;
+    return `${String(hour24).padStart(2, '0')}:${minutes}`;
   }
 
   /**
@@ -104,12 +119,14 @@ class CalendarConflictMonitorService {
     if (!time24Hour) return false;
     
     const [hours, minutes] = time24Hour.split(':').map(Number);
-    const slotStart = dayjs(`${dateStr} ${hours}:${minutes}:00`).tz('Asia/Kolkata');
+    const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
     const slotEnd = slotStart.add(60, 'minutes');
 
     return calendarEvents.some(event => {
-      const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-      const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+      // event.start and event.end are Date objects from getBusyTimeSlots
+      // They need to be treated as UTC and then converted to IST
+      const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+      const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
       return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
     });
   }
@@ -184,9 +201,10 @@ class CalendarConflictMonitorService {
         // Get availability slots for this date
         const availabilitySlots = await this.getAvailabilitySlots(psychologist.id, dateStr);
         
-        // Get calendar events for this date
+        // Get calendar events for this date (convert to IST first for accurate date comparison)
         const dayEvents = activeEvents.filter(event => {
-          const eventDate = this.formatDate(event.start);
+          const eventStartIST = dayjs(event.start).utc().tz('Asia/Kolkata');
+          const eventDate = eventStartIST.format('YYYY-MM-DD');
           return eventDate === dateStr;
         });
 
@@ -197,18 +215,19 @@ class CalendarConflictMonitorService {
           if (this.isTimeSlotBlocked(slotTime, dayEvents, dateStr)) {
             // Find conflicting events
             const time24Hour = this.convertTo24Hour(slotTime);
-            const [hours, minutes] = time24Hour ? time24Hour.split(':').map(Number) : [0, 0];
-            const slotStart = dayjs(`${dateStr} ${hours}:${minutes}:00`).tz('Asia/Kolkata');
+            if (!time24Hour) continue; // Skip invalid times
+            const [hours, minutes] = time24Hour.split(':').map(Number);
+            const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
             const slotEnd = slotStart.add(60, 'minutes');
             
             const conflictingEvents = dayEvents.filter(event => {
-              const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-              const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+              const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+              const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
               return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
             }).map(e => ({
               title: e.title,
-              start: this.formatTime(e.start),
-              end: this.formatTime(e.end),
+              start: dayjs(e.start).utc().tz('Asia/Kolkata').format('HH:mm'),
+              end: dayjs(e.end).utc().tz('Asia/Kolkata').format('HH:mm'),
               status: e.status || 'confirmed'
             }));
             
@@ -232,10 +251,10 @@ class CalendarConflictMonitorService {
           if (event.status === 'cancelled') continue;
           if (excludedEventTitles.some(excluded => event.title && event.title.includes(excluded))) continue;
           
-          const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-          const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
-          const eventStartTime = this.formatTime(event.start);
-          const eventEndTime = this.formatTime(event.end);
+          const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+          const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
+          const eventStartTime = eventStart.format('HH:mm');
+          const eventEndTime = eventEnd.format('HH:mm');
           
           // Check if this event time overlaps with any available slot
           const overlappingSlots = availabilitySlots.filter(slot => {
@@ -244,7 +263,7 @@ class CalendarConflictMonitorService {
             if (!time24Hour) return false;
             
             const [hours, minutes] = time24Hour.split(':').map(Number);
-            const slotStart = dayjs(`${dateStr} ${hours}:${minutes}:00`).tz('Asia/Kolkata');
+            const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
             const slotEnd = slotStart.add(60, 'minutes');
             
             return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
@@ -280,9 +299,11 @@ class CalendarConflictMonitorService {
   formatConflictsForNotification(psychologist, conflicts) {
     const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`;
     const psychologistEmail = psychologist.email;
+    const psychologistId = psychologist.id;
     
     let message = `🚨 Calendar Sync Conflict Detected\n\n`;
     message += `👤 Psychologist: ${psychologistName}\n`;
+    message += `🆔 Doctor ID: ${psychologistId}\n`;
     message += `📧 Email: ${psychologistEmail}\n`;
     message += `📊 Total Conflicts: ${conflicts.length}\n\n`;
     message += `Conflicts:\n`;
@@ -324,6 +345,7 @@ class CalendarConflictMonitorService {
   formatConflictsForEmail(psychologist, conflicts) {
     const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`;
     const psychologistEmail = psychologist.email;
+    const psychologistId = psychologist.id;
     
     let html = `
       <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
@@ -331,6 +353,7 @@ class CalendarConflictMonitorService {
         
         <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <p><strong>👤 Psychologist:</strong> ${psychologistName}</p>
+          <p><strong>🆔 Doctor ID:</strong> ${psychologistId}</p>
           <p><strong>📧 Email:</strong> ${psychologistEmail}</p>
           <p><strong>📊 Total Conflicts:</strong> ${conflicts.length}</p>
         </div>
@@ -390,7 +413,7 @@ class CalendarConflictMonitorService {
    */
   async sendConflictEmail(psychologist, conflicts) {
     try {
-      const subject = `🚨 Calendar Sync Conflict: ${psychologist.first_name} ${psychologist.last_name} (${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''})`;
+      const subject = `🚨 Calendar Sync Conflict: ${psychologist.first_name} ${psychologist.last_name} (ID: ${psychologist.id}) - ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}`;
       const html = this.formatConflictsForEmail(psychologist, conflicts);
       const text = this.formatConflictsForNotification(psychologist, conflicts);
 
@@ -455,9 +478,27 @@ class CalendarConflictMonitorService {
       let totalConflicts = 0;
       const psychologistsWithConflicts = [];
 
-      // Check each psychologist
+      // Step 1: Sync Google Calendar and block slots for each psychologist BEFORE checking conflicts
+      console.log(`\n🔄 Step 1: Syncing Google Calendar and blocking slots...\n`);
       for (const psychologist of validPsychologists) {
-        console.log(`🔍 Checking: ${psychologist.first_name} ${psychologist.last_name} (${psychologist.email})...`);
+        try {
+          console.log(`🔄 Syncing calendar for: ${psychologist.first_name} ${psychologist.last_name} (ID: ${psychologist.id})...`);
+          
+          // Sync calendar events and block conflicting slots
+          // syncPsychologistCalendar handles date range internally (21 days by default)
+          await calendarSyncService.syncPsychologistCalendar(psychologist);
+          
+          console.log(`   ✅ Calendar synced and slots blocked`);
+        } catch (syncError) {
+          console.error(`   ⚠️  Error syncing calendar for ${psychologist.first_name} ${psychologist.last_name}:`, syncError.message);
+          // Continue with conflict check even if sync fails
+        }
+      }
+
+      // Step 2: Check for conflicts after syncing
+      console.log(`\n🔍 Step 2: Checking for conflicts after sync...\n`);
+      for (const psychologist of validPsychologists) {
+        console.log(`🔍 Checking: ${psychologist.first_name} ${psychologist.last_name} (ID: ${psychologist.id})...`);
         
         const conflicts = await this.checkPsychologistConflicts(psychologist);
         
