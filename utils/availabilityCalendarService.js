@@ -167,6 +167,8 @@ class AvailabilityCalendarService {
    */
   async isTimeSlotAvailable(psychologistId, date, time) {
     try {
+      console.log(`🔍 isTimeSlotAvailable: Checking ${date} at ${time} for psychologist ${psychologistId}`);
+      
       // Use the same data source as the frontend - the availability table
       const { data: availabilityData, error: availabilityError } = await supabase
         .from('availability')
@@ -175,32 +177,80 @@ class AvailabilityCalendarService {
         .eq('date', date)
         .single();
 
-      if (availabilityError || !availabilityData || !availabilityData.is_available) {
+      // If there's a DB error, don't hard‑fail the slot – fall back to treating it as available.
+      if (availabilityError) {
+        console.error('Error fetching availability for isTimeSlotAvailable:', availabilityError);
+        return true;
+      }
+
+      // If there is no explicit availability record for this date, fall back to default behaviour:
+      // the therapist profile calendar still shows default working hours (9–18), so we treat
+      // the slot as potentially available here and let the conflict check on sessions handle collisions.
+      if (!availabilityData) {
+        return true;
+      }
+
+      // If there is an explicit record and the day is marked unavailable, respect that.
+      if (!availabilityData.is_available) {
         return false;
       }
 
-      // Convert 24-hour format to 12-hour format for comparison
+      // Convert time to 12-hour format for comparison (handle both 12-hour and 24-hour input)
       let timeToMatch = time;
-      if (time.includes(':')) {
+      
+      // Check if time is already in 12-hour format (contains AM/PM)
+      const is12Hour = /AM|PM/i.test(time);
+      
+      if (!is12Hour && time.includes(':')) {
+        // Convert 24-hour format to 12-hour format
         const [hour, minute] = time.split(':');
         const hourNum = parseInt(hour);
+        const min = minute || '00';
+        
         if (hourNum === 0) {
-          timeToMatch = `12:${minute} AM`;
+          timeToMatch = `12:${min} AM`;
         } else if (hourNum === 12) {
-          timeToMatch = `12:${minute} PM`;
+          timeToMatch = `12:${min} PM`;
         } else if (hourNum > 12) {
-          timeToMatch = `${hourNum - 12}:${minute} PM`;
+          timeToMatch = `${hourNum - 12}:${min} PM`;
         } else {
-          timeToMatch = `${hourNum}:${minute} AM`;
+          timeToMatch = `${hourNum}:${min} AM`;
         }
+      } else if (is12Hour) {
+        // Already in 12-hour format, normalize spacing
+        timeToMatch = time.trim().replace(/\s+/g, ' ');
       }
 
       // Check if the converted time slot exists in the time_slots array
+      // Also check for format variations (with/without spaces, different casing)
       const timeSlots = availabilityData.time_slots || [];
-      return timeSlots.includes(timeToMatch);
+      
+      // Normalize time slots for comparison (remove extra spaces, normalize case)
+      const normalizedTimeSlots = timeSlots.map(slot => 
+        String(slot).trim().replace(/\s+/g, ' ')
+      );
+      const normalizedTimeToMatch = timeToMatch.trim().replace(/\s+/g, ' ');
+      
+      // Check exact match
+      if (normalizedTimeSlots.includes(normalizedTimeToMatch)) {
+        return true;
+      }
+      
+      // Also check case-insensitive match
+      const lowerTimeSlots = normalizedTimeSlots.map(s => s.toLowerCase());
+      const lowerTimeToMatch = normalizedTimeToMatch.toLowerCase();
+      const isAvailable = lowerTimeSlots.includes(lowerTimeToMatch);
+      
+      console.log(`🔍 isTimeSlotAvailable result: ${isAvailable ? '✅ Available' : '❌ Not available'}`);
+      console.log(`   - Input time: ${time}`);
+      console.log(`   - Converted to: ${timeToMatch}`);
+      console.log(`   - Available slots: ${normalizedTimeSlots.join(', ')}`);
+      
+      return isAvailable;
     } catch (error) {
       console.error('Error checking time slot availability:', error);
-      return false;
+      // On unexpected errors, don't block rescheduling entirely – let later conflict checks handle it.
+      return true;
     }
   }
 

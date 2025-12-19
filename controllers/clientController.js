@@ -1377,10 +1377,10 @@ const requestReschedule = async (req, res) => {
       );
     }
 
-    // Check if session can be rescheduled (only booked sessions)
-    if (session.status !== 'booked') {
+    // Check if session can be rescheduled (allow both booked and rescheduled sessions)
+    if (!['booked', 'rescheduled'].includes(session.status)) {
       return res.status(400).json(
-        errorResponse('Only booked sessions can be rescheduled')
+        errorResponse('Only booked or rescheduled sessions can be rescheduled')
       );
     }
 
@@ -1556,11 +1556,20 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // Check if session can be rescheduled (only booked sessions)
-    // Free assessment sessions can also be rescheduled if they're booked or already rescheduled
-    if (session.status !== 'booked' && session.session_type !== 'free_assessment') {
+    // Validate psychologist_id matches the session
+    if (session.psychologist_id !== psychologist_id) {
       return res.status(400).json(
-        errorResponse('Only booked sessions can be rescheduled')
+        errorResponse('Psychologist ID does not match the session')
+      );
+    }
+
+    // Check if session can be rescheduled
+    // Allow both 'booked' and 'rescheduled' sessions to be rescheduled again
+    // Free assessment sessions can also be rescheduled if they're booked or already rescheduled
+    const allowedStatuses = ['booked', 'rescheduled'];
+    if (!allowedStatuses.includes(session.status) && session.session_type !== 'free_assessment') {
+      return res.status(400).json(
+        errorResponse('Only booked or rescheduled sessions can be rescheduled')
       );
     }
     
@@ -1571,29 +1580,54 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // Check 24-hour rule: if session is within 24 hours (IST), require admin approval
+    // Validate that new date/time is in the future
     const dayjs = require('dayjs');
     const utc = require('dayjs/plugin/utc');
     const timezone = require('dayjs/plugin/timezone');
     dayjs.extend(utc);
     dayjs.extend(timezone);
 
+    const newSessionDateTime = dayjs(
+      `${new_date} ${new_time}`,
+      'YYYY-MM-DD HH:mm:ss'
+    ).tz('Asia/Kolkata');
+    const now = dayjs().tz('Asia/Kolkata');
+
+    if (newSessionDateTime.isBefore(now)) {
+      return res.status(400).json(
+        errorResponse('New session date and time must be in the future')
+      );
+    }
+
+    // Check 24-hour rule: if session is within 24 hours (IST), require admin approval
     const sessionDateTime = dayjs(
       `${session.scheduled_date} ${session.scheduled_time}`,
       'YYYY-MM-DD HH:mm:ss'
     ).tz('Asia/Kolkata');
-    const now = dayjs().tz('Asia/Kolkata');
     const hoursUntilSession = sessionDateTime.diff(now, 'hour', true);
+    const rescheduleCount = session.reschedule_count || 0;
     
     console.log('🕐 24-hour rule check (IST):', {
       sessionDateTime: sessionDateTime.format('YYYY-MM-DD HH:mm:ss'),
       now: now.format('YYYY-MM-DD HH:mm:ss'),
-      hoursUntilSession: hoursUntilSession.toFixed(2)
+      hoursUntilSession: hoursUntilSession.toFixed(2),
+      rescheduleCount
     });
 
-    if (hoursUntilSession <= 24) {
-      // Within 24 hours - create reschedule request for admin approval
-      console.log('⚠️ Session is within 24 hours, creating admin approval request');
+    // Decide if this reschedule needs admin approval:
+    // - Always if within 24 hours
+    // - Always from the second reschedule onwards (reschedule_count >= 1),
+    //   even if it's still beyond 24 hours
+    const requiresApproval = hoursUntilSession <= 24 || rescheduleCount >= 1;
+
+    if (requiresApproval) {
+      console.log('⚠️ Session requires admin approval for reschedule', {
+        reason: hoursUntilSession <= 24 ? 'within_24_hours' : 'multiple_reschedules',
+        hoursUntilSession: hoursUntilSession.toFixed(2),
+        rescheduleCount
+      });
+      
+      // Create reschedule request for admin approval
       
       try {
         // Create reschedule request notification for admin
@@ -1612,34 +1646,88 @@ const rescheduleSession = async (req, res) => {
         const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
         const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
 
-        // Create admin notification for reschedule request
-        const adminNotificationData = {
-          type: 'reschedule_request',
-          title: 'Reschedule Request (Within 24 Hours)',
-          message: `${clientName} has requested to reschedule their session from ${session.scheduled_date} at ${session.scheduled_time} to ${new_date} at ${new_time}. This requires admin approval as it's within 24 hours.`,
-          session_id: session.id,
-          client_id: client.id,
-          psychologist_id: session.psychologist_id,
-          is_read: false,
-          created_at: new Date().toISOString(),
-          metadata: {
-            original_date: session.scheduled_date,
-            original_time: session.scheduled_time,
-            new_date: new_date,
-            new_time: new_time,
-            reason: 'Within 24-hour window - admin approval required'
+        // Get all admin users to send notifications to
+        // user_id is NOT NULL in notifications table, so we must have admin users
+        const { data: adminUsers, error: adminUsersError } = await supabase
+          .from('users')
+          .select('id')
+          .in('role', ['admin', 'superadmin']);
+
+        if (adminUsersError || !adminUsers || adminUsers.length === 0) {
+          console.error('Error fetching admin users or no admin users found:', adminUsersError);
+          // Cannot create notification without user_id (NOT NULL constraint)
+          // Log error but don't fail the reschedule request - session status is still updated
+          console.warn('⚠️ Cannot create admin notification: No admin users found. Reschedule request will be created but admin may not be notified.');
+        }
+
+        // Create admin notifications for reschedule request
+        // Schema: user_id (NOT NULL), title, message, type, is_read, related_id, related_type, created_at, updated_at
+        // Note: user_role and metadata columns don't exist in the schema, so we store extra info in message
+        const adminNotifications = [];
+        
+        if (adminUsers && adminUsers.length > 0) {
+          // Create notification for each admin user
+          adminUsers.forEach(admin => {
+            // Include all relevant info in the message since metadata column doesn't exist
+            const detailedMessage = `${clientName} has requested to reschedule their session from ${session.scheduled_date} at ${session.scheduled_time} to ${new_date} at ${new_time}. This requires admin approval as it's within 24 hours. Session ID: ${session.id}, Client ID: ${client.id}, Psychologist ID: ${session.psychologist_id}`;
+            
+            adminNotifications.push({
+              user_id: admin.id, // NOT NULL - required
+              title: 'Reschedule Request (Within 24 Hours)',
+              message: detailedMessage,
+              type: 'warning', // Must be one of: 'info', 'success', 'warning', 'error' per schema constraint
+              related_id: session.id,
+              related_type: 'session',
+              is_read: false,
+              created_at: new Date().toISOString()
+            });
+          });
+        }
+
+        // Only insert notifications if we have admin users
+        if (adminNotifications.length > 0) {
+          const { error: notificationError } = await supabase
+            .from('notifications')
+            .insert(adminNotifications);
+
+          if (notificationError) {
+            console.error('Error creating admin notification:', notificationError);
+            // Don't fail the reschedule request if notification fails - session status is still updated
+            console.warn('⚠️ Failed to create admin notifications, but reschedule request status is updated');
+          } else {
+            console.log(`✅ Created ${adminNotifications.length} admin notification(s) for reschedule request`);
           }
-        };
+        }
 
-        const { error: notificationError } = await supabase
-          .from('notifications')
-          .insert([adminNotificationData]);
+        // Also create informational notification for psychologist (not for approval - admin approves)
+        // Get psychologist user_id
+        const { data: psychologistUser } = await supabase
+          .from('psychologists')
+          .select('user_id')
+          .eq('id', session.psychologist_id)
+          .single();
 
-        if (notificationError) {
-          console.error('Error creating admin notification:', notificationError);
-          return res.status(500).json(
-            errorResponse('Failed to create reschedule request')
-          );
+        if (psychologistUser?.user_id) {
+          const psychologistNotification = {
+            user_id: psychologistUser.user_id,
+            title: 'Reschedule Request (Within 24 Hours)',
+            message: `${clientName} has requested to reschedule their session from ${session.scheduled_date} at ${session.scheduled_time} to ${new_date} at ${new_time}. This request is pending admin approval as it's within 24 hours. You will be notified once admin makes a decision.`,
+            type: 'info', // Informational only - not for approval
+            related_id: session.id,
+            related_type: 'session',
+            is_read: false,
+            created_at: new Date().toISOString()
+          };
+
+          const { error: psychNotificationError } = await supabase
+            .from('notifications')
+            .insert([psychologistNotification]);
+
+          if (psychNotificationError) {
+            console.error('Error creating psychologist notification:', psychNotificationError);
+          } else {
+            console.log('✅ Created informational notification for psychologist');
+          }
         }
 
         // Update session status to indicate reschedule request
@@ -1665,7 +1753,7 @@ const rescheduleSession = async (req, res) => {
               requiresApproval: true,
               hoursUntilSession: Math.round(hoursUntilSession * 100) / 100
             },
-            'Reschedule request sent to admin for approval (within 24-hour window)'
+            'Reschedule request sent to admin for approval'
           )
         );
 
@@ -1680,14 +1768,29 @@ const rescheduleSession = async (req, res) => {
     // Beyond 24 hours - proceed with direct reschedule
     console.log('✅ Session is beyond 24 hours, proceeding with direct reschedule');
 
-    // Check if session can be rescheduled
+    // Check if session can be rescheduled (redundant check but catches status changes)
     if (session.status === 'completed' || session.status === 'cancelled') {
       return res.status(400).json(
         errorResponse('Cannot reschedule completed or cancelled sessions')
       );
     }
 
-    // Check if new time slot is available
+    // CRITICAL FIX: Check if new time slot is available using availability service
+    console.log('🔍 Checking time slot availability using availability service...');
+    const isAvailable = await availabilityService.isTimeSlotAvailable(
+      psychologist_id, 
+      formatDate(new_date), 
+      formatTime(new_time)
+    );
+
+    if (!isAvailable) {
+      return res.status(400).json(
+        errorResponse('Selected time slot is not available in psychologist schedule')
+      );
+    }
+    console.log('✅ Time slot is available in psychologist schedule');
+
+    // Check if new time slot is already booked by another session
     const { data: conflictingSessions } = await supabase
       .from('sessions')
       .select('id')
@@ -1699,9 +1802,10 @@ const rescheduleSession = async (req, res) => {
 
     if (conflictingSessions && conflictingSessions.length > 0) {
       return res.status(400).json(
-        errorResponse('Selected time slot is already booked')
+        errorResponse('Selected time slot is already booked by another session')
       );
     }
+    console.log('✅ No conflicting sessions found');
 
     // Get client and psychologist details for Meet link and notifications
     const { data: clientDetails } = await supabase
@@ -1849,6 +1953,84 @@ const rescheduleSession = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to reschedule session')
       );
+    }
+
+    // CRITICAL FIX: Update availability table - release old slot and block new slot
+    // Do this for regular sessions (free assessments handled separately below)
+    if (session.session_type !== 'free_assessment') {
+      try {
+        console.log('🔄 Updating availability table for rescheduled session...');
+        
+        // Helper function to convert 24-hour time to 12-hour format
+        const convertTo12Hour = (time24) => {
+          if (!time24) return null;
+          // Handle if already in 12-hour format
+          if (time24.includes('AM') || time24.includes('PM')) {
+            return time24;
+          }
+          const timeOnly = time24.split(' ')[0]; // Remove any timezone suffix
+          const [hours, minutes] = timeOnly.split(':');
+          const hour = parseInt(hours, 10);
+          const minute = minutes || '00';
+          
+          if (hour === 0) {
+            return `12:${minute} AM`;
+          } else if (hour < 12) {
+            return `${hour}:${minute} AM`;
+          } else if (hour === 12) {
+            return `12:${minute} PM`;
+          } else {
+            return `${hour - 12}:${minute} PM`;
+          }
+        };
+
+        // Release old slot - add it back to availability
+        const oldDate = session.scheduled_date;
+        const oldTime = session.scheduled_time;
+        const oldTime12Hour = convertTo12Hour(oldTime);
+        
+        if (oldTime12Hour) {
+          const { data: oldAvail } = await supabase
+            .from('availability')
+            .select('id, time_slots')
+            .eq('psychologist_id', psychologist_id)
+            .eq('date', oldDate)
+            .single();
+
+          if (oldAvail && oldAvail.time_slots) {
+            const oldSlots = Array.isArray(oldAvail.time_slots) ? oldAvail.time_slots : [];
+            // Check if slot is not already in the list (to avoid duplicates)
+            const slotExists = oldSlots.some(slot => {
+              const slotStr = typeof slot === 'string' ? slot.trim() : String(slot).trim();
+              return slotStr.toLowerCase() === oldTime12Hour.toLowerCase();
+            });
+            
+            if (!slotExists) {
+              const updatedSlots = [...oldSlots, oldTime12Hour].sort();
+              await supabase
+                .from('availability')
+                .update({ 
+                  time_slots: updatedSlots,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', oldAvail.id);
+              console.log(`✅ Released old slot ${oldTime12Hour} on ${oldDate}`);
+            }
+          }
+        }
+
+        // Block new slot - remove it from availability using the service
+        await availabilityService.updateAvailabilityOnBooking(
+          psychologist_id,
+          formatDate(new_date),
+          formatTime(new_time)
+        );
+        console.log(`✅ Blocked new slot ${formatTime(new_time)} on ${formatDate(new_date)}`);
+      } catch (availabilityError) {
+        console.error('⚠️ Error updating availability table:', availabilityError);
+        // Don't fail the reschedule if availability update fails, but log it
+        // The session is already updated, so we continue
+      }
     }
 
     // For free assessment sessions, update the timeslot availability

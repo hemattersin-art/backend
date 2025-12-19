@@ -1269,12 +1269,13 @@ const handleRescheduleRequest = async (req, res) => {
     }
 
     // Get the notification and verify it belongs to this psychologist
+    // Note: notifications table uses user_id, not psychologist_id
     const { data: notification, error: notificationError } = await supabase
       .from('notifications')
       .select('*')
       .eq('id', notificationId)
-      .eq('psychologist_id', psychologistId)
-      .eq('type', 'reschedule_request')
+      .eq('user_id', psychologistId) // Use user_id instead of psychologist_id
+      .eq('type', 'warning') // Changed from 'reschedule_request' to 'warning' per schema
       .single();
 
     if (notificationError || !notification) {
@@ -1283,11 +1284,47 @@ const handleRescheduleRequest = async (req, res) => {
       );
     }
 
+    // IMPORTANT: Check if this is a within-24-hours request that requires admin approval
+    // Psychologists cannot approve within-24-hours requests - only admin can
+    if (notification.type === 'warning' && 
+        notification.message?.includes('admin approval') &&
+        notification.message?.includes('within 24 hours')) {
+      return res.status(403).json(
+        errorResponse('This reschedule request requires admin approval. Only administrators can approve requests within 24 hours. Please contact admin for approval.')
+      );
+    }
+
+    // Parse session_id and date/time from notification message or related_id
+    // Message format: "ClientName has requested to reschedule their session from YYYY-MM-DD at HH:MM to YYYY-MM-DD at HH:MM..."
+    const sessionId = notification.related_id;
+    if (!sessionId) {
+      return res.status(400).json(
+        errorResponse('Session ID not found in notification')
+      );
+    }
+
+    // Parse new date/time from message
+    const message = notification.message || '';
+    const newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2})/);
+    const originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2})/);
+    
+    if (!newDateMatch || !originalDateMatch) {
+      return res.status(400).json(
+        errorResponse('Could not parse reschedule date/time from notification message')
+      );
+    }
+
+    const newDate = newDateMatch[1];
+    const newTime = newDateMatch[2] + ':00'; // Add seconds
+    const originalDate = originalDateMatch[1];
+    const originalTime = originalDateMatch[2] + ':00';
+
     // Get the session details
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .select('*')
-      .eq('id', notification.session_id)
+      .eq('id', sessionId)
+      .eq('psychologist_id', psychologistId) // Verify session belongs to psychologist
       .single();
 
     if (sessionError || !session) {
@@ -1302,8 +1339,8 @@ const handleRescheduleRequest = async (req, res) => {
         .from('sessions')
         .select('id')
         .eq('psychologist_id', psychologistId)
-        .eq('scheduled_date', notification.metadata.new_date)
-        .eq('scheduled_time', notification.metadata.new_time)
+        .eq('scheduled_date', newDate)
+        .eq('scheduled_time', newTime)
         .in('status', ['booked', 'rescheduled', 'confirmed'])
         .neq('id', session.id);
 
@@ -1314,11 +1351,12 @@ const handleRescheduleRequest = async (req, res) => {
       }
 
       // Update session with new date/time
+      const { formatDate, formatTime } = require('../utils/helpers');
       const { data: updatedSession, error: updateError } = await supabase
         .from('sessions')
         .update({
-          scheduled_date: notification.metadata.new_date,
-          scheduled_time: notification.metadata.new_time,
+          scheduled_date: formatDate(newDate),
+          scheduled_time: formatTime(newTime),
           status: 'rescheduled',
           reschedule_count: (session.reschedule_count || 0) + 1,
           updated_at: new Date().toISOString()
@@ -1334,21 +1372,30 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
-      // Create approval notification for client
-      const clientNotificationData = {
-        psychologist_id: psychologistId,
-        type: 'reschedule_approved',
-        title: 'Reschedule Approved',
-        message: `Your reschedule request has been approved. Session moved to ${notification.metadata.new_date} at ${notification.metadata.new_time}`,
-        session_id: session.id,
-        client_id: notification.client_id,
-        is_read: false,
-        created_at: new Date().toISOString()
-      };
+      // Get client user_id for notification
+      const { data: client } = await supabase
+        .from('clients')
+        .select('user_id')
+        .eq('id', session.client_id)
+        .single();
 
-      await supabase
-        .from('notifications')
-        .insert([clientNotificationData]);
+      // Create approval notification for client
+      if (client?.user_id) {
+        const clientNotificationData = {
+          user_id: client.user_id,
+          title: 'Reschedule Approved',
+          message: `Your reschedule request has been approved. Session moved to ${newDate} at ${newTime}`,
+          type: 'success',
+          related_id: session.id,
+          related_type: 'session',
+          is_read: false,
+          created_at: new Date().toISOString()
+        };
+
+        await supabase
+          .from('notifications')
+          .insert([clientNotificationData]);
+      }
 
       // Mark original request as read
       await supabase
@@ -1363,20 +1410,33 @@ const handleRescheduleRequest = async (req, res) => {
 
     } else {
       // Reject the request
-      const clientNotificationData = {
-        psychologist_id: psychologistId,
-        type: 'reschedule_rejected',
-        title: 'Reschedule Rejected',
-        message: `Your reschedule request has been rejected.${reason ? ` Reason: ${reason}` : ''}`,
-        session_id: session.id,
-        client_id: notification.client_id,
-        is_read: false,
-        created_at: new Date().toISOString()
-      };
+      // Get client user_id for notification
+      const { data: client } = await supabase
+        .from('clients')
+        .select('user_id')
+        .eq('id', session.client_id)
+        .single();
 
-      await supabase
-        .from('notifications')
-        .insert([clientNotificationData]);
+      if (client?.user_id) {
+        const rejectionMessage = reason 
+          ? `Your reschedule request has been declined. Reason: ${reason}. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`
+          : `Your reschedule request has been declined. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`;
+
+        const clientNotificationData = {
+          user_id: client.user_id,
+          title: 'Reschedule Request Declined',
+          message: rejectionMessage,
+          type: 'error',
+          related_id: session.id,
+          related_type: 'session',
+          is_read: false,
+          created_at: new Date().toISOString()
+        };
+
+        await supabase
+          .from('notifications')
+          .insert([clientNotificationData]);
+      }
 
       // Mark original request as read
       await supabase
