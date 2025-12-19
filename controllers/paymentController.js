@@ -422,30 +422,119 @@ const handlePaymentSuccess = async (req, res) => {
     }
 
     // Find payment record by Razorpay order ID
+    console.log('🔍 Looking up payment record for order:', razorpay_order_id);
     const { data: paymentRecord, error: paymentError } = await supabase
       .from('payments')
       .select('*')
       .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
-    if (paymentError || !paymentRecord) {
-      console.error('Payment record not found for order:', razorpay_order_id);
+    if (paymentError) {
+      console.error('❌ Payment record lookup error:', paymentError);
+      console.error('   Error code:', paymentError.code);
+      console.error('   Error message:', paymentError.message);
+      console.error('   Error details:', paymentError.details);
+      console.error('   Error hint:', paymentError.hint);
+      
+      // Log payment lookup failure
+      await userInteractionLogger.logInteraction({
+        userId: 'pending',
+        userRole: 'client',
+        action: 'payment_record_lookup',
+        status: 'failure',
+        details: {
+          razorpayOrderId: razorpay_order_id,
+          errorCode: paymentError.code,
+          errorMessage: paymentError.message
+        },
+        error: paymentError
+      });
+      
+      return res.status(404).json({
+        success: false,
+        message: 'Payment record not found',
+        error: paymentError.message
+      });
+    }
+
+    if (!paymentRecord) {
+      console.error('❌ Payment record not found for order:', razorpay_order_id);
+      console.error('   No error returned, but paymentRecord is null/undefined');
+      
+      // Log payment record not found
+      await userInteractionLogger.logInteraction({
+        userId: 'pending',
+        userRole: 'client',
+        action: 'payment_record_lookup',
+        status: 'failure',
+        details: {
+          razorpayOrderId: razorpay_order_id,
+          errorMessage: 'Payment record not found (null/undefined)'
+        },
+        error: new Error('Payment record not found')
+      });
+      
       return res.status(404).json({
         success: false,
         message: 'Payment record not found'
       });
     }
 
+    console.log('✅ Payment record found:', {
+      paymentId: paymentRecord.id,
+      clientId: paymentRecord.client_id,
+      psychologistId: paymentRecord.psychologist_id,
+      status: paymentRecord.status,
+      amount: paymentRecord.amount
+    });
+
     // Verify payment signature
-    const isValidSignature = verifyPaymentSignature(
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      razorpayConfig.keySecret
-    );
+    console.log('🔍 Verifying payment signature...');
+    console.log('   Order ID:', razorpay_order_id);
+    console.log('   Payment ID:', razorpay_payment_id);
+    console.log('   Has signature:', !!razorpay_signature);
+    console.log('   Has key secret:', !!razorpayConfig.keySecret);
+    
+    let isValidSignature = false;
+    try {
+      isValidSignature = verifyPaymentSignature(
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+        razorpayConfig.keySecret
+      );
+      console.log('   Signature verification result:', isValidSignature);
+    } catch (sigError) {
+      console.error('❌ Error during signature verification:', sigError);
+      console.error('   Error message:', sigError.message);
+      console.error('   Error stack:', sigError.stack);
+      
+      // Log signature verification error
+      await userInteractionLogger.logInteraction({
+        userId: paymentRecord.client_id || 'pending',
+        userRole: 'client',
+        action: 'payment_signature_verification',
+        status: 'failure',
+        details: {
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          paymentId: paymentRecord.id,
+          errorType: 'signature_verification_exception',
+          errorMessage: sigError.message
+        },
+        error: sigError
+      });
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Error verifying payment signature',
+        error: sigError.message
+      });
+    }
     
     // Use clientId from payment record for logging
     const clientId = paymentRecord.client_id;
+    console.log('✅ Client ID from payment record:', clientId);
     
     // Log signature verification
     await userInteractionLogger.logInteraction({
@@ -496,6 +585,24 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Check if already processed
     if (paymentRecord.status === 'success') {
+      console.log('ℹ️ Payment already processed, returning early');
+      console.log('   Payment ID:', paymentRecord.id);
+      console.log('   Payment status:', paymentRecord.status);
+      
+      // Log duplicate request
+      await userInteractionLogger.logInteraction({
+        userId: clientId,
+        userRole: 'client',
+        action: 'payment_duplicate_request',
+        status: 'skipped',
+        details: {
+          paymentId: paymentRecord.id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          reason: 'Payment already processed'
+        }
+      });
+      
       return res.json({
         success: true,
         message: 'Payment already processed'
@@ -503,6 +610,11 @@ const handlePaymentSuccess = async (req, res) => {
     }
 
     console.log('✅ Payment validated, creating session...');
+    console.log('   Payment status before processing:', paymentRecord.status);
+    console.log('   Client ID:', clientId);
+    console.log('   Psychologist ID:', actualPsychologistId);
+    console.log('   Scheduled Date:', actualScheduledDate);
+    console.log('   Scheduled Time:', actualScheduledTime);
 
     // Check if this is an assessment booking
     if (isAssessment && actualAssessmentSessionId) {
@@ -1147,9 +1259,14 @@ const handlePaymentSuccess = async (req, res) => {
             }
           });
     } catch (emailError) {
-          console.error('❌ Error sending confirmation emails (async):', emailError);
+          const failureReason = emailError?.message || 
+                               emailError?.response?.data?.message || 
+                               emailError?.code || 
+                               'Unknown email service error';
+          console.error('❌ Error sending confirmation emails (async):', failureReason);
+          console.error('   Full error:', emailError);
           
-          // Log email sending failure
+          // Log email sending failure with detailed reason
           await userInteractionLogger.logInteraction({
             userId: clientId,
             userRole: 'client',
@@ -1158,7 +1275,12 @@ const handlePaymentSuccess = async (req, res) => {
             details: {
               sessionId: session.id,
               clientEmail: clientDetails?.user?.email || clientDetails?.email,
-              psychologistEmail: psychologistDetails?.email
+              psychologistEmail: psychologistDetails?.email,
+              failureReason: failureReason,
+              errorCode: emailError?.code,
+              errorResponse: emailError?.response?.data,
+              smtpError: emailError?.smtpError,
+              fullError: emailError
             },
             error: emailError
           });
@@ -1206,13 +1328,75 @@ const handlePaymentSuccess = async (req, res) => {
                 whatsappLogs.receiptSent = true;
                 whatsappLogs.receiptMessageId = clientWaResult.receiptMsgId;
               }
+              
+              // Log WhatsApp success
+              await userInteractionLogger.logInteraction({
+                userId: clientId,
+                userRole: 'client',
+                action: 'whatsapp_client_booking',
+                status: 'success',
+                details: {
+                  sessionId: session.id,
+                  clientPhone: clientPhone,
+                  messageId: clientWaResult.data?.msgId,
+                  receiptMessageId: clientWaResult.receiptMsgId,
+                  hasReceipt: !!clientWaResult.receiptMsgId
+                }
+              });
         } else if (clientWaResult?.skipped) {
           console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+          
+          // Log WhatsApp skip with reason
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'whatsapp_client_booking',
+            status: 'skipped',
+            details: {
+              sessionId: session.id,
+              clientPhone: clientPhone,
+              skipReason: clientWaResult.reason || 'Unknown reason'
+            }
+          });
         } else {
-          console.warn('⚠️ Client WhatsApp send failed:', clientWaResult?.error || clientWaResult);
+          const failureReason = clientWaResult?.error?.message || 
+                               clientWaResult?.error || 
+                               clientWaResult?.reason || 
+                               'Unknown WhatsApp API error';
+          console.warn('⚠️ Client WhatsApp send failed:', failureReason);
+          
+          // Log WhatsApp failure with detailed reason
+          await userInteractionLogger.logInteraction({
+            userId: clientId,
+            userRole: 'client',
+            action: 'whatsapp_client_booking',
+            status: 'failure',
+            details: {
+              sessionId: session.id,
+              clientPhone: clientPhone,
+              failureReason: failureReason,
+              errorDetails: clientWaResult?.error || clientWaResult
+            },
+            error: clientWaResult?.error || new Error(failureReason)
+          });
         }
       } else {
+        const skipReason = !clientPhone ? 'No client phone number' : 'No Google Meet link available';
         console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+        
+        // Log WhatsApp skip with reason
+        await userInteractionLogger.logInteraction({
+          userId: clientId,
+          userRole: 'client',
+          action: 'whatsapp_client_booking',
+          status: 'skipped',
+          details: {
+            sessionId: session.id,
+            clientPhone: clientPhone,
+            hasMeetLink: !!meetData?.meetLink,
+            skipReason: skipReason
+          }
+        });
       }
 
       // Send WhatsApp to psychologist (single detailed message)
@@ -1237,13 +1421,78 @@ const handlePaymentSuccess = async (req, res) => {
               if (psychologistWaResult.data?.msgId) {
                 whatsappLogs.psychologistMessageIds.push(psychologistWaResult.data.msgId);
               }
+              
+              // Log WhatsApp success
+              await userInteractionLogger.logInteraction({
+                userId: clientId,
+                userRole: 'client',
+                action: 'whatsapp_psychologist_booking',
+                status: 'success',
+                details: {
+                  sessionId: session.id,
+                  psychologistPhone: psychologistPhone,
+                  psychologistId: session.psychologist_id,
+                  messageId: psychologistWaResult.data?.msgId
+                }
+              });
           } else if (psychologistWaResult?.skipped) {
-            console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+            const skipReason = psychologistWaResult.reason || 'Unknown reason';
+            console.log('ℹ️ Psychologist WhatsApp skipped:', skipReason);
+            
+            // Log WhatsApp skip with reason
+            await userInteractionLogger.logInteraction({
+              userId: clientId,
+              userRole: 'client',
+              action: 'whatsapp_psychologist_booking',
+              status: 'skipped',
+              details: {
+                sessionId: session.id,
+                psychologistPhone: psychologistPhone,
+                psychologistId: session.psychologist_id,
+                skipReason: skipReason
+              }
+            });
           } else {
-            console.warn('⚠️ Psychologist WhatsApp send failed:', psychologistWaResult?.error || psychologistWaResult);
+            const failureReason = psychologistWaResult?.error?.message || 
+                                 psychologistWaResult?.error || 
+                                 psychologistWaResult?.reason || 
+                                 'Unknown WhatsApp API error';
+            console.warn('⚠️ Psychologist WhatsApp send failed:', failureReason);
+            
+            // Log WhatsApp failure with detailed reason
+            await userInteractionLogger.logInteraction({
+              userId: clientId,
+              userRole: 'client',
+              action: 'whatsapp_psychologist_booking',
+              status: 'failure',
+              details: {
+                sessionId: session.id,
+                psychologistPhone: psychologistPhone,
+                psychologistId: session.psychologist_id,
+                failureReason: failureReason,
+                errorDetails: psychologistWaResult?.error || psychologistWaResult
+              },
+              error: psychologistWaResult?.error || new Error(failureReason)
+            });
           }
       } else {
+        const skipReason = !psychologistPhone ? 'No psychologist phone number' : 'No Google Meet link available';
         console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+        
+        // Log WhatsApp skip with reason
+        await userInteractionLogger.logInteraction({
+          userId: clientId,
+          userRole: 'client',
+          action: 'whatsapp_psychologist_booking',
+          status: 'skipped',
+          details: {
+            sessionId: session.id,
+            psychologistPhone: psychologistPhone,
+            psychologistId: session.psychologist_id,
+            hasMeetLink: !!meetData?.meetLink,
+            skipReason: skipReason
+          }
+        });
       }
       
           console.log('✅ WhatsApp messages sent successfully via UltraMsg (async)');
@@ -1262,9 +1511,14 @@ const handlePaymentSuccess = async (req, res) => {
             }
           });
     } catch (whatsappError) {
-          console.error('❌ Error sending WhatsApp messages (async):', whatsappError);
+          const failureReason = whatsappError?.message || 
+                               whatsappError?.response?.data?.message || 
+                               whatsappError?.code || 
+                               'Unknown WhatsApp service error';
+          console.error('❌ Error sending WhatsApp messages (async):', failureReason);
+          console.error('   Full error:', whatsappError);
           
-          // Log WhatsApp failure
+          // Log WhatsApp failure with detailed reason
           await userInteractionLogger.logInteraction({
             userId: clientId,
             userRole: 'client',
@@ -1273,7 +1527,12 @@ const handlePaymentSuccess = async (req, res) => {
             details: {
               sessionId: session.id,
               clientPhone: clientPhone,
-              psychologistPhone: psychologistDetails?.phone
+              psychologistPhone: psychologistDetails?.phone,
+              failureReason: failureReason,
+              errorCode: whatsappError?.code,
+              errorResponse: whatsappError?.response?.data,
+              apiError: whatsappError?.apiError,
+              fullError: whatsappError
             },
             error: whatsappError
           });
@@ -1371,6 +1630,50 @@ const handlePaymentSuccess = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error handling payment success:', error);
+    console.error('   Error name:', error.name);
+    console.error('   Error message:', error.message);
+    console.error('   Error stack:', error.stack);
+    console.error('   Request body:', JSON.stringify(req.body, null, 2));
+    console.error('   Request headers:', JSON.stringify(req.headers, null, 2));
+    
+    // Log the error with user interaction logger
+    try {
+      const params = req.body || {};
+      const razorpay_order_id = params.razorpay_order_id || 'Unknown';
+      
+      // Try to get clientId from payment record if possible
+      let clientId = 'pending';
+      try {
+        const { data: paymentRecord } = await supabase
+          .from('payments')
+          .select('client_id')
+          .eq('razorpay_order_id', razorpay_order_id)
+          .single();
+        if (paymentRecord?.client_id) {
+          clientId = paymentRecord.client_id;
+        }
+      } catch (lookupErr) {
+        console.error('   Could not lookup clientId for error logging:', lookupErr.message);
+      }
+      
+      await userInteractionLogger.logInteraction({
+        userId: clientId,
+        userRole: 'client',
+        action: 'payment_success_handler_error',
+        status: 'failure',
+        details: {
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: params.razorpay_payment_id || 'Unknown',
+          errorName: error.name,
+          errorMessage: error.message,
+          errorStack: error.stack,
+          requestBody: req.body
+        },
+        error: error
+      });
+    } catch (logErr) {
+      console.error('❌ Failed to log error to user interaction logger:', logErr);
+    }
     
     // Send error notification email to admin
     try {
@@ -1384,10 +1687,13 @@ const handlePaymentSuccess = async (req, res) => {
         html: `
           <h2>Booking Failed After Payment</h2>
           <p><strong>Error:</strong> ${error.message || 'Unknown error occurred'}</p>
+          <p><strong>Error Name:</strong> ${error.name || 'N/A'}</p>
           <p><strong>Payment Order ID:</strong> ${razorpay_order_id}</p>
           <p><strong>Payment ID:</strong> ${razorpay_payment_id}</p>
           <p><strong>Error Stack:</strong></p>
           <pre>${error.stack || JSON.stringify(error, null, 2)}</pre>
+          <p><strong>Request Body:</strong></p>
+          <pre>${JSON.stringify(req.body, null, 2)}</pre>
           <p><em>Please investigate and manually create the session if needed.</em></p>
         `
       });
@@ -1398,7 +1704,8 @@ const handlePaymentSuccess = async (req, res) => {
     
     res.status(500).json({
       success: false,
-      message: 'Failed to process payment. Our team has been notified and will resolve this shortly.'
+      message: 'Failed to process payment. Our team has been notified and will resolve this shortly.',
+      error: error.message
     });
   }
 };

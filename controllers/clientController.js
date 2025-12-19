@@ -1050,13 +1050,74 @@ const bookSession = async (req, res) => {
           const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
           if (clientWaResult?.success) {
             console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
+            
+            // Log WhatsApp success
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_client_booking',
+              status: 'success',
+              details: {
+                sessionId: session.id,
+                clientPhone: clientPhone,
+                messageId: clientWaResult.data?.msgId
+              }
+            });
           } else if (clientWaResult?.skipped) {
-            console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+            const skipReason = clientWaResult.reason || 'Unknown reason';
+            console.log('ℹ️ Client WhatsApp skipped:', skipReason);
+            
+            // Log WhatsApp skip with reason
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_client_booking',
+              status: 'skipped',
+              details: {
+                sessionId: session.id,
+                clientPhone: clientPhone,
+                skipReason: skipReason
+              }
+            });
           } else {
-            console.warn('⚠️ Client WhatsApp send failed');
+            const failureReason = clientWaResult?.error?.message || 
+                                 clientWaResult?.error || 
+                                 clientWaResult?.reason || 
+                                 'Unknown WhatsApp API error';
+            console.warn('⚠️ Client WhatsApp send failed:', failureReason);
+            
+            // Log WhatsApp failure with detailed reason
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_client_booking',
+              status: 'failure',
+              details: {
+                sessionId: session.id,
+                clientPhone: clientPhone,
+                failureReason: failureReason,
+                errorDetails: clientWaResult?.error || clientWaResult
+              },
+              error: clientWaResult?.error || new Error(failureReason)
+            });
           }
         } else {
+          const skipReason = !clientPhone ? 'No client phone number' : 'No Google Meet link available';
           console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+          
+          // Log WhatsApp skip with reason
+          await userInteractionLogger.logInteraction({
+            userId,
+            userRole,
+            action: 'whatsapp_client_booking',
+            status: 'skipped',
+            details: {
+              sessionId: session.id,
+              clientPhone: clientPhone,
+              hasMeetLink: !!meetData?.meetLink,
+              skipReason: skipReason
+            }
+          });
         }
 
         // Send WhatsApp to psychologist (single detailed message)
@@ -1077,19 +1138,129 @@ const bookSession = async (req, res) => {
           const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
           if (psychologistWaResult?.success) {
             console.log('✅ WhatsApp notification sent to psychologist via WhatsApp API');
+            
+            // Log WhatsApp success
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_psychologist_booking',
+              status: 'success',
+              details: {
+                sessionId: session.id,
+                psychologistPhone: psychologistPhone,
+                psychologistId: psychologist_id,
+                messageId: psychologistWaResult.data?.msgId
+              }
+            });
           } else if (psychologistWaResult?.skipped) {
-            console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+            const skipReason = psychologistWaResult.reason || 'Unknown reason';
+            console.log('ℹ️ Psychologist WhatsApp skipped:', skipReason);
+            
+            // Log WhatsApp skip with reason
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_psychologist_booking',
+              status: 'skipped',
+              details: {
+                sessionId: session.id,
+                psychologistPhone: psychologistPhone,
+                psychologistId: psychologist_id,
+                skipReason: skipReason
+              }
+            });
           } else {
-            console.warn('⚠️ Psychologist WhatsApp send failed');
+            const failureReason = psychologistWaResult?.error?.message || 
+                                 psychologistWaResult?.error || 
+                                 psychologistWaResult?.reason || 
+                                 'Unknown WhatsApp API error';
+            console.warn('⚠️ Psychologist WhatsApp send failed:', failureReason);
+            
+            // Log WhatsApp failure with detailed reason
+            await userInteractionLogger.logInteraction({
+              userId,
+              userRole,
+              action: 'whatsapp_psychologist_booking',
+              status: 'failure',
+              details: {
+                sessionId: session.id,
+                psychologistPhone: psychologistPhone,
+                psychologistId: psychologist_id,
+                failureReason: failureReason,
+                errorDetails: psychologistWaResult?.error || psychologistWaResult
+              },
+              error: psychologistWaResult?.error || new Error(failureReason)
+            });
           }
         } else {
+          const skipReason = !psychologistPhone ? 'No psychologist phone number' : 'No Google Meet link available';
           console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+          
+          // Log WhatsApp skip with reason
+          await userInteractionLogger.logInteraction({
+            userId,
+            userRole,
+            action: 'whatsapp_psychologist_booking',
+            status: 'skipped',
+            details: {
+              sessionId: session.id,
+              psychologistPhone: psychologistPhone,
+              psychologistId: psychologist_id,
+              hasMeetLink: !!meetData?.meetLink,
+              skipReason: skipReason
+            }
+          });
         }
       } catch (waError) {
-        console.error('❌ WhatsApp notification error:', waError);
+        const failureReason = waError?.message || 
+                             waError?.response?.data?.message || 
+                             waError?.code || 
+                             'Unknown WhatsApp service error';
+        console.error('❌ WhatsApp notification error:', failureReason);
+        console.error('   Full error:', waError);
+        
+        // Log WhatsApp failure with detailed reason
+        await userInteractionLogger.logInteraction({
+          userId,
+          userRole,
+          action: 'whatsapp_notifications',
+          status: 'failure',
+          details: {
+            sessionId: session.id,
+            failureReason: failureReason,
+            errorCode: waError?.code,
+            errorResponse: waError?.response?.data,
+            fullError: waError
+          },
+          error: waError
+        });
       }
     } catch (emailError) {
-      console.error('❌ Error sending email notifications:', emailError);
+      const failureReason = emailError?.message || 
+                           emailError?.response?.data?.message || 
+                           emailError?.code || 
+                           'Unknown email service error';
+      console.error('❌ Error sending email notifications:', failureReason);
+      console.error('   Full error:', emailError);
+      
+      // Log email sending failure with detailed reason
+      await userInteractionLogger.logInteraction({
+        userId,
+        userRole,
+        action: 'email_confirmation',
+        status: 'failure',
+        details: {
+          sessionId: session.id,
+          clientEmail: clientDetails?.user?.email || clientDetails?.email,
+          psychologistEmail: psychologistDetails?.email,
+          failureReason: failureReason,
+          errorCode: emailError?.code,
+          errorResponse: emailError?.response?.data,
+          smtpError: emailError?.smtpError,
+          fullError: emailError
+        },
+        error: emailError
+      });
       // Continue even if email fails
     }
 
