@@ -36,6 +36,27 @@ class AdvancedBotDetector {
       reasons: []
     };
 
+    // Whitelist legitimate Apple/iOS/Safari user agents (iPhone, iPad, Safari, etc.)
+    const legitimateApplePatterns = [
+      /iPhone/i,
+      /iPad/i,
+      /iPod/i,
+      /Macintosh/i,
+      /Mac OS X/i,
+      /Safari/i,
+      /Mobile.*Safari/i,
+      /AppleWebKit/i,
+      /Version.*Safari/i
+    ];
+
+    // Check if it's a legitimate Apple device - if so, reduce suspicious score significantly
+    const isLegitimateApple = legitimateApplePatterns.some(pattern => pattern.test(userAgent));
+    if (isLegitimateApple) {
+      // Legitimate Apple device - reduce any suspicious scores
+      score.suspicious = Math.max(0, score.suspicious - 50);
+      return score; // Early return for legitimate Apple devices
+    }
+
     // Check for bot patterns
     this.botPatterns.forEach(pattern => {
       if (pattern.test(userAgent)) {
@@ -51,7 +72,9 @@ class AdvancedBotDetector {
     }
 
     // Check for suspicious user agent characteristics
-    if (userAgent.includes('Mozilla') && userAgent.length < 50) {
+    // BUT: Don't flag if it's a legitimate browser (Safari, Chrome, Firefox, Edge)
+    const legitimateBrowsers = /Safari|Chrome|Firefox|Edge|Opera|SamsungBrowser/i;
+    if (userAgent.includes('Mozilla') && userAgent.length < 50 && !legitimateBrowsers.test(userAgent)) {
       score.suspicious += 15;
       score.reasons.push('Suspicious Mozilla user agent');
     }
@@ -114,14 +137,22 @@ class AdvancedBotDetector {
     }
 
     // Check for missing headers
-    const missingHeaders = [];
-    if (!req.headers.accept) missingHeaders.push('Accept');
-    if (!req.headers['accept-language']) missingHeaders.push('Accept-Language');
-    if (!req.headers['accept-encoding']) missingHeaders.push('Accept-Encoding');
+    // BUT: Be lenient for payment endpoints and legitimate devices
+    const userAgent = req.headers['user-agent'] || '';
+    const isLegitimateDevice = /iPhone|iPad|iPod|Safari|Chrome|Firefox|Edge|Mobile/i.test(userAgent);
+    const isPaymentEndpoint = req.url?.includes('/payment/') || req.path?.includes('/payment/');
     
-    if (missingHeaders.length > 0) {
-      score.suspicious += missingHeaders.length * 5;
-      score.reasons.push(`Missing headers: ${missingHeaders.join(', ')}`);
+    // Only check for missing headers if it's not a legitimate device or payment endpoint
+    if (!isLegitimateDevice && !isPaymentEndpoint) {
+      const missingHeaders = [];
+      if (!req.headers.accept) missingHeaders.push('Accept');
+      if (!req.headers['accept-language']) missingHeaders.push('Accept-Language');
+      if (!req.headers['accept-encoding']) missingHeaders.push('Accept-Encoding');
+      
+      if (missingHeaders.length > 0) {
+        score.suspicious += missingHeaders.length * 5;
+        score.reasons.push(`Missing headers: ${missingHeaders.join(', ')}`);
+      }
     }
 
     return score;
@@ -274,8 +305,27 @@ class AdvancedBotDetector {
       actions: []
     };
 
+    // ALWAYS whitelist payment endpoints - never flag them as bots
+    const url = req.url || req.path || '';
+    if (url.includes('/payment/') || 
+        url.includes('/payment/success') || 
+        url.includes('/payment/failure') ||
+        url.includes('/payment/verify') ||
+        url.includes('/payment/status')) {
+      // Payment endpoints are critical - return zero confidence (not a bot)
+      return detectionResults;
+    }
+
+    // ALWAYS whitelist legitimate Apple devices
+    const userAgent = req.headers['user-agent'] || '';
+    const isLegitimateApple = /iPhone|iPad|iPod|Macintosh|Safari|AppleWebKit/i.test(userAgent);
+    if (isLegitimateApple) {
+      // Legitimate Apple device - return zero confidence (not a bot)
+      return detectionResults;
+    }
+
     // Run all detection methods
-    const userAgentScore = this.analyzeUserAgent(req.headers['user-agent'] || '');
+    const userAgentScore = this.analyzeUserAgent(userAgent);
     const patternScore = this.analyzeRequestPattern(req);
     const behaviorScore = this.analyzeBehavior(req);
     const ipScore = this.analyzeIPReputation(req);

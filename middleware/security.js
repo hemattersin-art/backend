@@ -6,10 +6,10 @@ const securityNotifications = require('../utils/securityNotifications');
 
 // Advanced Rate Limiting Strategies
 const createRateLimiters = () => {
-  // 1. General API Rate Limiter (Stricter)
+  // 1. General API Rate Limiter (More lenient for legitimate devices)
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: process.env.NODE_ENV === 'production' ? 50 : 500, // Reduced from 100
+    max: process.env.NODE_ENV === 'production' ? 100 : 500, // Increased from 50 to 100
     message: {
       error: 'Too many requests',
       message: 'Rate limit exceeded. Please try again later.',
@@ -22,8 +22,33 @@ const createRateLimiters = () => {
     // Skip failed requests (to avoid penalizing legitimate users)
     skipFailedRequests: false,
     // Custom key generator for better tracking
+    // Use IP only for payment endpoints to avoid blocking legitimate duplicate requests
     keyGenerator: (req) => {
+      const url = req.url || req.path || '';
+      if (url.includes('/payment/')) {
+        // For payment endpoints, use IP only (Razorpay may send multiple requests with same IP)
+        return req.ip || 'unknown';
+      }
+      // For other endpoints, use IP + User-Agent
       return `${req.ip}-${req.headers['user-agent']?.slice(0, 50) || 'unknown'}`;
+    },
+    // Skip rate limiting for payment success endpoints (Razorpay may send duplicates)
+    // Also skip for payment-related endpoints to prevent blocking legitimate payment flows
+    skip: (req) => {
+      const url = req.url || req.path || '';
+      // Allow payment success callbacks to bypass rate limiting
+      // Razorpay may send multiple callbacks for the same payment
+      if (url.includes('/payment/success') || 
+          url.includes('/payment/failure') ||
+          url.includes('/payment/verify') ||
+          url.includes('/payment/status')) {
+        return true;
+      }
+      // Allow health check and status endpoints
+      if (url.includes('/health') || url.includes('/status')) {
+        return true;
+      }
+      return false;
     },
     // Track blocked requests using the new handler approach
     handler: (req, res, next, options) => {
@@ -191,6 +216,25 @@ const memoryMonitor = (req, res, next) => {
 // Advanced Bot Detection Middleware
 const advancedBotDetection = (req, res, next) => {
   try {
+    // ALWAYS allow payment endpoints to pass through - never block payment flows
+    const url = req.url || req.path || '';
+    if (url.includes('/payment/') || 
+        url.includes('/payment/success') || 
+        url.includes('/payment/failure') ||
+        url.includes('/payment/verify') ||
+        url.includes('/payment/status')) {
+      // Payment endpoints are critical - never block them
+      return next();
+    }
+
+    // Check if it's a legitimate Apple device - always allow
+    const userAgent = req.headers['user-agent'] || '';
+    const isLegitimateApple = /iPhone|iPad|iPod|Macintosh|Safari|AppleWebKit/i.test(userAgent);
+    if (isLegitimateApple) {
+      // Legitimate Apple device - always allow
+      return next();
+    }
+
     const detectionResult = advancedBotDetector.detectBot(req);
     
     // Log detection result
