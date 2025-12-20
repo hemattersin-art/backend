@@ -625,7 +625,8 @@ const getSessionById = async (req, res) => {
           id,
           package_type,
           price,
-          description
+          description,
+          session_count
         )
       `)
       .eq('id', sessionId)
@@ -637,6 +638,95 @@ const getSessionById = async (req, res) => {
         errorResponse('Session not found')
       );
     }
+
+    // Debug: Log session data
+    console.log('📋 GetSessionById - Session data:', {
+      sessionId: session.id,
+      package_id: session.package_id,
+      hasPackage: !!session.package,
+      package: session.package
+    });
+
+    // If session has a package_id, calculate package progress
+    if (session.package_id) {
+      try {
+        // If package object doesn't exist, fetch it
+        if (!session.package) {
+          console.log('⚠️ Package object missing, fetching from packages table...');
+          const { data: packageData, error: packageError } = await supabase
+            .from('packages')
+            .select('id, package_type, price, description, session_count')
+            .eq('id', session.package_id)
+            .single();
+          
+          if (!packageError && packageData) {
+            session.package = packageData;
+            console.log('✅ Fetched package data:', packageData);
+          } else {
+            console.error('❌ Error fetching package:', packageError);
+          }
+        } else {
+          console.log('✅ Package object exists in response:', session.package);
+        }
+        
+        // Count completed sessions for this package
+        const { data: packageSessions, error: sessionsError } = await supabase
+          .from('sessions')
+          .select('id, status')
+          .eq('package_id', session.package_id)
+          .eq('client_id', session.client_id);
+        
+        if (!sessionsError && packageSessions && session.package) {
+          const totalSessions = session.package.session_count || 0;
+          const completedSessions = packageSessions.filter(
+            s => s.status === 'completed'
+          ).length;
+          
+          // Ensure we have a valid totalSessions (should be > 0 for a valid package)
+          if (totalSessions > 0) {
+            session.package.completed_sessions = completedSessions;
+            session.package.total_sessions = totalSessions;
+            session.package.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+            
+            console.log('✅ Package progress calculated:', {
+              package_id: session.package_id,
+              total_sessions: totalSessions,
+              completed_sessions: completedSessions,
+              remaining_sessions: session.package.remaining_sessions
+            });
+          } else {
+            console.warn('⚠️ Package session_count is 0 or missing:', {
+              package_id: session.package_id,
+              session_count: session.package.session_count,
+              package: session.package
+            });
+          }
+        } else {
+          console.warn('⚠️ Could not calculate package progress:', {
+            sessionsError: sessionsError,
+            hasPackageSessions: !!packageSessions,
+            hasPackage: !!session.package,
+            package_id: session.package_id
+          });
+        }
+      } catch (packageErr) {
+        console.log('Error calculating package progress:', packageErr);
+        // Continue without package progress - not critical
+      }
+    }
+
+    // Debug: Log what we're returning
+    console.log('📤 Returning session response:', {
+      sessionId: session.id,
+      package_id: session.package_id,
+      hasPackage: !!session.package,
+      package: session.package ? {
+        id: session.package.id,
+        session_count: session.package.session_count,
+        total_sessions: session.package.total_sessions,
+        completed_sessions: session.package.completed_sessions
+      } : null
+    });
 
     res.json(
       successResponse(session)
@@ -1588,8 +1678,6 @@ const getRescheduleRequests = async (req, res) => {
     // This is set by the auth middleware - no need to look it up
     const psychologistId = req.user.id;
     const { status } = req.query; // 'pending', 'approved', or undefined for all
-
-    console.log('📄 Fetching reschedule requests for psychologist:', psychologistId);
 
     // Get all reschedule request notifications
     // These are notifications where related_type='session' and message/title contains 'reschedule'

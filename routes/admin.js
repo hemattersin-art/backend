@@ -47,6 +47,9 @@ router.post('/psychologists/:psychologistId/packages', adminController.createPsy
 router.get('/packages/check-missing', adminController.checkMissingPackages);
 router.delete('/packages/:packageId', adminController.deletePackage);
 
+// Debug endpoints
+router.get('/debug/stuck-slot-locks', adminController.getStuckSlotLocks);
+
 // User management
 router.post('/users', adminController.createUser);
 router.put('/users/:userId', adminController.updateUser);

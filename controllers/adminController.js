@@ -4575,6 +4575,23 @@ const deletePackage = async (req, res) => {
   }
 };
 
+// Get stuck slot locks (for debugging)
+const getStuckSlotLocks = async (req, res) => {
+  try {
+    const { checkStuckSlotLocks } = require('../scripts/checkStuckSlotLocks');
+    const result = await checkStuckSlotLocks();
+    
+    res.json(
+      successResponse(result, 'Stuck slot locks retrieved successfully')
+    );
+  } catch (error) {
+    console.error('Error fetching stuck slot locks:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching stuck slot locks')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -4604,5 +4621,6 @@ module.exports = {
   approveAssessmentRescheduleRequest,
   getRescheduleRequests,
   checkMissingPackages,
-  deletePackage
+  deletePackage,
+  getStuckSlotLocks
 };

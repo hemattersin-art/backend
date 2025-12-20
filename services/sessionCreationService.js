@@ -107,6 +107,15 @@ const createSessionFromSlotLock = async (slotLock) => {
       sessionData.package_id = paymentRecord.package_id;
     }
 
+    // Set session_type from payment record, or determine from package_id
+    if (paymentRecord.session_type) {
+      sessionData.session_type = paymentRecord.session_type;
+    } else if (paymentRecord.package_id && paymentRecord.package_id !== 'null' && paymentRecord.package_id !== 'undefined' && paymentRecord.package_id !== 'individual') {
+      sessionData.session_type = 'Package Session';
+    } else {
+      sessionData.session_type = 'Individual Session';
+    }
+
     // Try to create session
     const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
@@ -225,6 +234,44 @@ const createSessionFromSlotLock = async (slotLock) => {
           return;
         }
 
+        // Fetch package details if this is a package session
+        let packageInfo = null;
+        if (paymentRecord.package_id && paymentRecord.package_id !== 'null' && paymentRecord.package_id !== 'undefined' && paymentRecord.package_id !== 'individual') {
+          try {
+            const { data: packageData, error: packageError } = await supabaseAdmin
+              .from('packages')
+              .select('id, package_type, session_count')
+              .eq('id', paymentRecord.package_id)
+              .single();
+            
+            if (!packageError && packageData) {
+              // Calculate package progress: count completed sessions for this package
+              const { data: packageSessions, error: sessionsError } = await supabaseAdmin
+                .from('sessions')
+                .select('id, status')
+                .eq('package_id', paymentRecord.package_id)
+                .eq('client_id', slotLock.client_id);
+              
+              if (!sessionsError && packageSessions) {
+                const totalSessions = packageData.session_count || 0;
+                const completedSessions = packageSessions.filter(s => s.status === 'completed').length;
+                const remainingSessions = Math.max(totalSessions - completedSessions, 0);
+                
+                packageInfo = {
+                  totalSessions: totalSessions,
+                  completedSessions: completedSessions,
+                  remainingSessions: remainingSessions,
+                  packageType: packageData.package_type || 'Package'
+                };
+                
+                console.log('📦 Package info:', packageInfo);
+              }
+            }
+          } catch (packageErr) {
+            console.warn('⚠️ Error fetching package details:', packageErr);
+          }
+        }
+
         // Calculate end time (50 minutes for therapy session)
         const { addMinutesToTime } = require('../utils/helpers');
         const endTime = addMinutesToTime(slotLock.scheduled_time, 50);
@@ -332,7 +379,8 @@ const createSessionFromSlotLock = async (slotLock) => {
             amount: paymentRecord.amount,
             status: session.status || 'booked',
             psychologistId: slotLock.psychologist_id,
-            clientId: slotLock.client_id
+            clientId: slotLock.client_id,
+            packageInfo: packageInfo // Include package details
           });
           
           if (emailResult) {
@@ -366,6 +414,7 @@ const createSessionFromSlotLock = async (slotLock) => {
               time: slotLock.scheduled_time,
               meetLink: meetResult.meetLink,
               psychologistName: psychologistName,
+              packageInfo: packageInfo // Include package details
             };
             
             const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
@@ -383,7 +432,14 @@ const createSessionFromSlotLock = async (slotLock) => {
           // Send WhatsApp to psychologist
           const psychologistPhone = psychologistDetails.phone || null;
           if (psychologistPhone && meetResult.meetLink) {
-            const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${slotLock.scheduled_date}\nTime: ${slotLock.scheduled_time}\n\nJoin via Google Meet: ${meetResult.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+            let psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${slotLock.scheduled_date}\nTime: ${slotLock.scheduled_time}\n\n`;
+            
+            // Add package info if it's a package session
+            if (packageInfo && packageInfo.totalSessions) {
+              psychologistMessage += `📦 Package Session: ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} completed, ${packageInfo.remainingSessions || 0} remaining\n\n`;
+            }
+            
+            psychologistMessage += `Join via Google Meet: ${meetResult.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
             
             const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
             if (psychologistWaResult?.success) {

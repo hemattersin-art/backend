@@ -2654,19 +2654,11 @@ const getSession = async (req, res) => {
     console.log(`📋 Getting session ${sessionId} for client ${clientId} (user.id: ${req.user.id}, client_id: ${req.user.client_id})`);
 
     // Get session with psychologist details, but exclude session_notes
+    // Note: Can't join packages directly due to no FK relationship, so we'll fetch it separately
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
       .select(`
-        id,
-        scheduled_date,
-        scheduled_time,
-        status,
-        summary,
-        report,
-        feedback,
-        price,
-        created_at,
-        updated_at,
+        *,
         psychologist:psychologists(
           id,
           first_name,
@@ -2685,7 +2677,86 @@ const getSession = async (req, res) => {
       );
     }
 
-    console.log(`✅ Session ${sessionId} retrieved successfully for client ${clientId}`);
+    // If session has a package_id, fetch package and calculate progress
+    // Note: Can't join packages table directly, so fetch separately
+    if (session.package_id) {
+      try {
+        console.log('📦 Fetching package for session:', session.package_id);
+        // Fetch package data
+        const { data: packageData, error: packageError } = await supabase
+          .from('packages')
+          .select('id, package_type, price, description, session_count')
+          .eq('id', session.package_id)
+          .single();
+        
+        if (!packageError && packageData) {
+          session.package = packageData;
+          console.log('✅ Package data fetched:', {
+            id: packageData.id,
+            session_count: packageData.session_count
+          });
+          
+          // Count completed sessions for this package
+          const { data: packageSessions, error: sessionsError } = await supabase
+            .from('sessions')
+            .select('id, status')
+            .eq('package_id', session.package_id)
+            .eq('client_id', clientId);
+          
+          if (!sessionsError && packageSessions) {
+            const totalSessions = packageData.session_count || 0;
+            const completedSessions = packageSessions.filter(
+              s => s.status === 'completed'
+            ).length;
+            
+            // Always set total_sessions from session_count, even if 0 (shouldn't happen but handle it)
+            session.package.completed_sessions = completedSessions;
+            session.package.total_sessions = totalSessions;
+            session.package.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+            
+            if (totalSessions > 0) {
+              console.log('✅ Package progress calculated in getSession:', {
+                package_id: session.package_id,
+                total_sessions: totalSessions,
+                completed_sessions: completedSessions,
+                remaining_sessions: session.package.remaining_sessions
+              });
+            } else {
+              console.warn('⚠️ Package session_count is 0 or missing:', {
+                package_id: session.package_id,
+                session_count: packageData.session_count,
+                total_sessions_set: session.package.total_sessions
+              });
+            }
+          } else {
+            // Even if we can't fetch package sessions, set total_sessions from session_count
+            const totalSessions = packageData.session_count || 0;
+            session.package.total_sessions = totalSessions;
+            session.package.completed_sessions = 0;
+            session.package.remaining_sessions = totalSessions;
+            
+            console.error('❌ Error fetching package sessions, but set total_sessions from session_count:', {
+              sessionsError: sessionsError,
+              total_sessions: totalSessions
+            });
+          }
+        } else {
+          console.error('❌ Error fetching package:', packageError);
+        }
+      } catch (packageErr) {
+        console.error('❌ Exception in package fetch/calculation:', packageErr);
+      }
+    }
+
+    console.log(`✅ Session ${sessionId} retrieved successfully for client ${clientId}`, {
+      hasPackage: !!session.package,
+      package_id: session.package_id,
+      package: session.package ? {
+        total_sessions: session.package.total_sessions,
+        completed_sessions: session.package.completed_sessions
+      } : null
+    });
+    
     res.json(
       successResponse(session)
     );

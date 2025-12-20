@@ -66,7 +66,7 @@ const getBookingStatusByOrderId = async (req, res) => {
       if (paymentRecord.session_id) {
         const { data: sessionData } = await supabaseAdmin
           .from('sessions')
-          .select('id, status, scheduled_date, scheduled_time, google_meet_link')
+          .select('id, status, scheduled_date, scheduled_time, google_meet_link, session_type, package_id')
           .eq('id', paymentRecord.session_id)
           .maybeSingle();
         
@@ -110,7 +110,9 @@ const getBookingStatusByOrderId = async (req, res) => {
             status: session.status,
             scheduledDate: session.scheduled_date,
             scheduledTime: session.scheduled_time,
-            meetLink: session.google_meet_link || null
+            meetLink: session.google_meet_link || null,
+            session_type: session.session_type || null,
+            package_id: session.package_id || null
           } : null,
           slotDetails: paymentRecord.razorpay_params?.notes ? {
             psychologistId: paymentRecord.psychologist_id,
@@ -132,7 +134,7 @@ const getBookingStatusByOrderId = async (req, res) => {
     if (paymentRecord?.session_id) {
       const { data: sessionData, error: sessionError } = await supabaseAdmin
         .from('sessions')
-        .select('id, status, scheduled_date, scheduled_time, google_meet_link')
+        .select('id, status, scheduled_date, scheduled_time, google_meet_link, session_type, package_id')
         .eq('id', paymentRecord.session_id)
         .maybeSingle();
       
@@ -148,7 +150,7 @@ const getBookingStatusByOrderId = async (req, res) => {
       console.log('🔍 Session not in payment record, searching by slot details...');
       const { data: sessionData, error: sessionError } = await supabaseAdmin
         .from('sessions')
-        .select('id, status, scheduled_date, scheduled_time, google_meet_link')
+        .select('id, status, scheduled_date, scheduled_time, google_meet_link, session_type, package_id')
         .eq('psychologist_id', slotLock.psychologist_id)
         .eq('client_id', slotLock.client_id)
         .eq('scheduled_date', slotLock.scheduled_date)
@@ -270,14 +272,18 @@ const getBookingStatusByOrderId = async (req, res) => {
       status: session.status,
       scheduledDate: session.scheduled_date,
       scheduledTime: session.scheduled_time,
-      meetLink: session.google_meet_link || null
+      meetLink: session.google_meet_link || null,
+      session_type: session.session_type || null,
+      package_id: session.package_id || null
     } : (overallStatus === 'COMPLETED' ? {
       // Fallback: use slot details if session not found but status is COMPLETED
       id: null,
       status: 'booked',
       scheduledDate: slotLock.scheduled_date,
       scheduledTime: slotLock.scheduled_time,
-      meetLink: null
+      meetLink: null,
+      session_type: null,
+      package_id: null
     } : null);
 
     return res.status(200).json({
