@@ -44,6 +44,10 @@ const betterParentingRoutes = require('./routes/betterParenting');
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+// Trust Cloudflare proxy (if using Cloudflare)
+// This allows Express to get the real client IP from Cloudflare headers
+app.set('trust proxy', true);
+
 // Initialize advanced security middleware
 const {
   generalLimiter,
@@ -85,10 +89,34 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
 }));
 
+// Get real IP from Cloudflare (if using Cloudflare)
+app.use((req, res, next) => {
+  // Cloudflare sets CF-Connecting-IP header with real client IP
+  const cfConnectingIp = req.headers['cf-connecting-ip'];
+  if (cfConnectingIp) {
+    req.realIp = cfConnectingIp;
+    // Also update req.ip for rate limiting to use real IP
+    req.ip = cfConnectingIp;
+  }
+  next();
+});
+
 // Keep-alive headers for better connection reuse (especially for international users)
+// Cloudflare-compatible: Cloudflare manages connections but these headers help with origin connections
 app.use((req, res, next) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Keep-Alive', 'timeout=5, max=1000');
+  
+  // Cloudflare-specific headers for better caching and performance
+  // CF-Cache-Status will be set by Cloudflare automatically
+  // Add cache-control hints for Cloudflare
+  const url = req.url || req.path || '';
+  
+  // Public endpoints that can be cached by Cloudflare
+  if (url.includes('/api/public/') || url.includes('/health')) {
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+  }
+  
   next();
 });
 
