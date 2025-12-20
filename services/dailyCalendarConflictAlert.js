@@ -124,9 +124,13 @@ class CalendarConflictMonitorService {
 
     return calendarEvents.some(event => {
       // event.start and event.end are Date objects from getBusyTimeSlots
-      // They need to be treated as UTC and then converted to IST
-      const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
-      const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
+      // Date objects are stored internally as UTC milliseconds
+      // dayjs will automatically parse them correctly, then we convert to IST
+      // Don't use .utc() first - let dayjs handle the Date object directly
+      const eventStart = dayjs(event.start).tz('Asia/Kolkata');
+      const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+      
+      // Check for actual overlap
       return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
     });
   }
@@ -203,7 +207,8 @@ class CalendarConflictMonitorService {
         
         // Get calendar events for this date (convert to IST first for accurate date comparison)
         const dayEvents = activeEvents.filter(event => {
-          const eventStartIST = dayjs(event.start).utc().tz('Asia/Kolkata');
+          // Date objects are already in correct format, just convert to IST for date comparison
+          const eventStartIST = dayjs(event.start).tz('Asia/Kolkata');
           const eventDate = eventStartIST.format('YYYY-MM-DD');
           return eventDate === dateStr;
         });
@@ -221,13 +226,13 @@ class CalendarConflictMonitorService {
             const slotEnd = slotStart.add(60, 'minutes');
             
             const conflictingEvents = dayEvents.filter(event => {
-              const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
-              const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
+              const eventStart = dayjs(event.start).tz('Asia/Kolkata');
+              const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
               return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
             }).map(e => ({
               title: e.title,
-              start: dayjs(e.start).utc().tz('Asia/Kolkata').format('HH:mm'),
-              end: dayjs(e.end).utc().tz('Asia/Kolkata').format('HH:mm'),
+              start: dayjs(e.start).tz('Asia/Kolkata').format('HH:mm'),
+              end: dayjs(e.end).tz('Asia/Kolkata').format('HH:mm'),
               status: e.status || 'confirmed'
             }));
             
@@ -251,8 +256,8 @@ class CalendarConflictMonitorService {
           if (event.status === 'cancelled') continue;
           if (excludedEventTitles.some(excluded => event.title && event.title.includes(excluded))) continue;
           
-          const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
-          const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
+          const eventStart = dayjs(event.start).tz('Asia/Kolkata');
+          const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
           const eventStartTime = eventStart.format('HH:mm');
           const eventEndTime = eventEnd.format('HH:mm');
           

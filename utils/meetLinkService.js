@@ -293,7 +293,14 @@ class MeetLinkService {
             }
           } catch (refreshError) {
             logError('❌ Auto-refresh failed:', refreshError.message);
+            logError('   Refresh error details:', {
+              message: refreshError.message,
+              code: refreshError.code,
+              response: refreshError.response?.data || 'No response data'
+            });
             // Continue with original token - might still work if just expired
+            // But log that we're proceeding with potentially expired token
+            log('⚠️ Proceeding with original token (may be expired)');
           }
         }
       } else {
@@ -398,6 +405,50 @@ class MeetLinkService {
 
     } catch (error) {
       logError('❌ OAuth Meet creation failed:', error.message);
+      
+      // Extract detailed error information
+      const errorDetails = {
+        message: error.message,
+        code: error.code,
+        status: error.response?.status || 'No status',
+        hasRefreshToken: !!userAuth?.refresh_token,
+        tokenExpired: userAuth?.expiry_date ? (new Date(userAuth.expiry_date).getTime() < Date.now()) : 'unknown'
+      };
+      
+      // Log Google API error details if available
+      if (error.response?.data?.error) {
+        const googleError = error.response.data.error;
+        errorDetails.googleError = {
+          code: googleError.code,
+          message: googleError.message,
+          errors: googleError.errors || []
+        };
+        
+        // Log each error in the errors array
+        if (googleError.errors && Array.isArray(googleError.errors)) {
+          googleError.errors.forEach((err, index) => {
+            logError(`   Error ${index + 1}:`, {
+              domain: err.domain,
+              reason: err.reason,
+              message: err.message,
+              locationType: err.locationType,
+              location: err.location
+            });
+          });
+        }
+      }
+      
+      logError('   OAuth error details:', errorDetails);
+      
+      // Log the event data that was sent (for debugging)
+      logError('   Event data that was sent:', {
+        summary: sessionData.summary,
+        startDate: sessionData.startDate,
+        startTime: sessionData.startTime,
+        endTime: sessionData.endTime,
+        attendees: sessionData.attendees || []
+      });
+      
       return this.createResult(false, null, 'oauth_calendar', null, null, error.message);
     }
   }

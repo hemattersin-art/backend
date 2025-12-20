@@ -3175,7 +3175,7 @@ const checkCalendarSyncStatus = async (req, res) => {
 const handleRescheduleRequest = async (req, res) => {
   try {
     const { notificationId } = req.params;
-    const { action } = req.body; // 'approve' or 'reject'
+    const { action, reason } = req.body; // 'approve' or 'reject', and optional reason
 
     if (!action || !['approve', 'reject'].includes(action)) {
       return res.status(400).json(
@@ -3185,18 +3185,46 @@ const handleRescheduleRequest = async (req, res) => {
 
     // Get the notification - admin can approve reschedule requests
     // Note: notifications table uses user_id, not psychologist_id
-    const { data: notification, error: notificationError } = await supabase
+    // Use supabaseAdmin to bypass RLS for admin operations
+    const { supabaseAdmin } = require('../config/supabase');
+    // Get notification - don't filter by type initially to see what we have
+    const { data: notification, error: notificationError } = await supabaseAdmin
       .from('notifications')
       .select('*')
       .eq('id', notificationId)
-      .eq('type', 'warning') // Changed to 'warning' per schema
       .single();
+    
+    // If found, verify it's a reschedule-related notification
+    if (notification && !notification.title?.includes('Reschedule') && !notification.message?.includes('reschedule')) {
+      console.warn('⚠️ Notification found but not a reschedule request:', {
+        id: notification.id,
+        title: notification.title,
+        type: notification.type
+      });
+      return res.status(400).json(
+        errorResponse('This notification is not a reschedule request')
+      );
+    }
 
     if (notificationError || !notification) {
+      console.error('❌ Notification lookup failed:', {
+        notificationId,
+        error: notificationError,
+        found: !!notification,
+        errorCode: notificationError?.code,
+        errorMessage: notificationError?.message
+      });
       return res.status(404).json(
         errorResponse('Reschedule request not found')
       );
     }
+    
+    console.log('✅ Found notification:', {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      related_id: notification.related_id
+    });
 
     // Parse session_id from related_id (not session_id column which doesn't exist)
     const sessionId = notification.related_id;
@@ -3207,21 +3235,87 @@ const handleRescheduleRequest = async (req, res) => {
     }
 
     // Parse new date/time from message
+    // Message format: "...from YYYY-MM-DD at HH:MM:SS to YYYY-MM-DD at HH:MM or H:MM AM/PM..."
     const message = notification.message || '';
-    const newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2})/);
-    const originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{2}:\d{2})/);
+    console.log('📝 Parsing notification message:', message);
+    
+    // Helper function to parse time string (handles multiple formats)
+    const parseTimeString = (timeStr) => {
+      if (!timeStr) return '00:00:00';
+      
+      // Check if 12-hour format (contains AM/PM)
+      if (timeStr.includes('AM') || timeStr.includes('PM')) {
+        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (match) {
+          let hour24 = parseInt(match[1]);
+          const minutes = match[2];
+          const period = match[3].toUpperCase();
+          
+          if (period === 'PM' && hour24 !== 12) {
+            hour24 += 12;
+          } else if (period === 'AM' && hour24 === 12) {
+            hour24 = 0;
+          }
+          
+          return `${String(hour24).padStart(2, '0')}:${minutes}:00`;
+        }
+      }
+      
+      // 24-hour format: handle with or without seconds
+      const parts = timeStr.split(':');
+      if (parts.length === 2) {
+        return `${parts[0].padStart(2, '0')}:${parts[1]}:00`;
+      } else if (parts.length === 3) {
+        return `${parts[0].padStart(2, '0')}:${parts[1]}:${parts[2]}`;
+      }
+      
+      return '00:00:00';
+    };
+    
+    // Try multiple regex patterns to match different time formats
+    // Pattern 1: 24-hour with seconds "09:00:00"
+    let newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}:\d{2})/);
+    let originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}:\d{2})/);
+    
+    // Pattern 2: 24-hour without seconds "09:00"
+    if (!newDateMatch) {
+      newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})(?!\d)/);
+    }
+    if (!originalDateMatch) {
+      originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})(?!\d)/);
+    }
+    
+    // Pattern 3: 12-hour format "9:00 AM" or "09:00 PM"
+    if (!newDateMatch) {
+      newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+    }
+    if (!originalDateMatch) {
+      originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+    }
     
     if (!newDateMatch || !originalDateMatch) {
+      console.error('❌ Failed to parse date/time from message:', {
+        message,
+        newDateMatch: newDateMatch ? newDateMatch[0] : null,
+        originalDateMatch: originalDateMatch ? originalDateMatch[0] : null
+      });
       return res.status(400).json(
         errorResponse('Could not parse reschedule date/time from notification message')
       );
     }
 
     const newDate = newDateMatch[1];
-    const newTime = newDateMatch[2] + ':00'; // Add seconds
+    const newTime = parseTimeString(newDateMatch[2]);
+    
+    console.log('✅ Parsed reschedule info:', {
+      newDate,
+      newTime,
+      originalDate: originalDateMatch[1],
+      originalTime: parseTimeString(originalDateMatch[2])
+    });
 
-    // Get the session
-    const { data: session, error: sessionError } = await supabase
+    // Get the session - use supabaseAdmin to bypass RLS
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -3234,8 +3328,8 @@ const handleRescheduleRequest = async (req, res) => {
     }
 
     if (action === 'approve') {
-      // Check if new time slot is still available
-      const { data: conflictingSessions } = await supabase
+      // Check if new time slot is still available - use supabaseAdmin
+      const { data: conflictingSessions } = await supabaseAdmin
         .from('sessions')
         .select('id')
         .eq('psychologist_id', session.psychologist_id)
@@ -3250,8 +3344,8 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
-      // Update session with new date/time
-      const { data: updatedSession, error: updateError } = await supabase
+      // Update session with new date/time - use supabaseAdmin
+      const { data: updatedSession, error: updateError } = await supabaseAdmin
         .from('sessions')
         .update({
           scheduled_date: formatDate(newDate),
@@ -3271,14 +3365,14 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
-      // Get client user_id for notification
-      const { data: client } = await supabase
+      // Get client user_id for notification - use supabaseAdmin
+      const { data: client } = await supabaseAdmin
         .from('clients')
         .select('user_id')
         .eq('id', session.client_id)
         .single();
 
-      // Create approval notification for client
+      // Create approval notification for client - use supabaseAdmin
       if (client?.user_id) {
       const clientNotificationData = {
           user_id: client.user_id,
@@ -3291,13 +3385,13 @@ const handleRescheduleRequest = async (req, res) => {
         created_at: new Date().toISOString()
       };
 
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .insert([clientNotificationData]);
       }
 
-      // Also notify psychologist that reschedule was approved
-      const { data: psychologistUser } = await supabase
+      // Also notify psychologist that reschedule was approved - use supabaseAdmin
+      const { data: psychologistUser } = await supabaseAdmin
         .from('psychologists')
         .select('user_id')
         .eq('id', session.psychologist_id)
@@ -3307,7 +3401,7 @@ const handleRescheduleRequest = async (req, res) => {
         const psychologistNotification = {
           user_id: psychologistUser.user_id,
           title: 'Reschedule Approved by Admin',
-          message: `Admin has approved the reschedule request. Session with ${session.client?.first_name || 'client'} moved to ${newDate} at ${newTime}`,
+          message: `Admin has approved the reschedule request. Session moved to ${newDate} at ${newTime}`,
           type: 'success',
           related_id: session.id,
           related_type: 'session',
@@ -3315,24 +3409,150 @@ const handleRescheduleRequest = async (req, res) => {
           created_at: new Date().toISOString()
         };
 
-        await supabase
+        await supabaseAdmin
           .from('notifications')
           .insert([psychologistNotification]);
       }
 
-      // Mark original request as read
-      await supabase
+      // Mark original request as read - use supabaseAdmin
+      await supabaseAdmin
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
+
+      // Send email and WhatsApp notifications to client and psychologist
+      // Run in background to not block the response
+      (async () => {
+        try {
+          // Get client and psychologist details with email and phone for notifications
+          const { data: clientDetails } = await supabaseAdmin
+            .from('clients')
+            .select(`
+              id,
+              first_name,
+              last_name,
+              child_name,
+              phone_number,
+              user:users(email)
+            `)
+            .eq('id', session.client_id)
+            .single();
+
+          const { data: psychologistDetails } = await supabaseAdmin
+            .from('psychologists')
+            .select('id, first_name, last_name, email, phone')
+            .eq('id', session.psychologist_id)
+            .single();
+
+          if (!clientDetails || !psychologistDetails) {
+            console.warn('⚠️ Could not fetch client or psychologist details for notifications');
+            return;
+          }
+
+          const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+          const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+          const clientEmail = clientDetails?.user?.email || clientDetails?.email;
+          const psychologistEmail = psychologistDetails?.email;
+
+          // Get Meet link from updated session
+          const meetLink = updatedSession.google_meet_link || null;
+
+          // Send email notifications
+          try {
+            const emailService = require('../utils/emailService');
+            await emailService.sendRescheduleNotification(
+              {
+                clientName,
+                psychologistName,
+                clientEmail,
+                psychologistEmail,
+                scheduledDate: updatedSession.scheduled_date,
+                scheduledTime: updatedSession.scheduled_time,
+                sessionId: updatedSession.id,
+                meetLink,
+                isFreeAssessment: session.session_type === 'free_assessment'
+              },
+              session.scheduled_date,
+              session.scheduled_time
+            );
+            console.log('✅ Reschedule approval emails sent successfully');
+          } catch (emailError) {
+            console.error('❌ Error sending reschedule approval emails:', emailError);
+          }
+
+          // Send WhatsApp notifications
+          try {
+            const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+            
+            const originalDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
+              timeZone: 'Asia/Kolkata',
+              dateStyle: 'long',
+              timeStyle: 'short'
+            });
+            const newDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
+              timeZone: 'Asia/Kolkata',
+              dateStyle: 'long',
+              timeStyle: 'short'
+            });
+
+            const isFreeAssessment = session.session_type === 'free_assessment';
+            const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
+
+            // Send WhatsApp to client
+            if (clientDetails?.phone_number) {
+              const clientMessage = `✅ Your reschedule request has been approved!\n\n` +
+                `❌ Old: ${originalDateTime}\n` +
+                `✅ New: ${newDateTime}\n\n` +
+                (meetLink 
+                  ? `🔗 Google Meet Link: ${meetLink}\n\n`
+                  : '') +
+                `Your ${sessionType} has been successfully rescheduled. We look forward to seeing you at the new time!`;
+
+              const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
+              if (clientResult?.success) {
+                console.log(`✅ Reschedule approval WhatsApp sent to client (${sessionType})`);
+              } else {
+                console.warn('⚠️ Failed to send reschedule approval WhatsApp to client');
+              }
+            }
+
+            // Send WhatsApp to psychologist
+            if (psychologistDetails?.phone) {
+              const psychologistMessage = `✅ Reschedule request approved by admin.\n\n` +
+                `👤 Client: ${clientName}\n` +
+                `❌ Old: ${originalDateTime}\n` +
+                `✅ New: ${newDateTime}\n\n` +
+                (meetLink 
+                  ? `🔗 Google Meet Link: ${meetLink}\n\n`
+                  : '\n') +
+                `Session ID: ${session.id}`;
+
+              const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
+              if (psychologistResult?.success) {
+                console.log(`✅ Reschedule approval WhatsApp sent to psychologist (${sessionType})`);
+              } else {
+                console.warn('⚠️ Failed to send reschedule approval WhatsApp to psychologist');
+              }
+            }
+            
+            console.log('✅ WhatsApp notifications sent for reschedule approval');
+          } catch (waError) {
+            console.error('❌ Error sending reschedule approval WhatsApp:', waError);
+          }
+        } catch (notificationError) {
+          console.error('❌ Error in background notification tasks:', notificationError);
+          // Don't throw - notifications are not critical for the approval response
+        }
+      })();
 
       res.json(
         successResponse(updatedSession, 'Reschedule request approved successfully')
       );
 
     } else if (action === 'reject') {
-      // Revert session status back to booked
-      const { data: updatedSession, error: updateError } = await supabase
+      
+      // Revert session status back to booked - use supabaseAdmin
+      const { data: updatedSession, error: updateError } = await supabaseAdmin
         .from('sessions')
         .update({
           status: 'booked',
@@ -3349,40 +3569,151 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
-      // Get client user_id for notification
-      const { data: client } = await supabase
+      // Get client details for notifications - use supabaseAdmin
+      const { data: clientDetails } = await supabaseAdmin
         .from('clients')
-        .select('user_id')
+        .select(`
+          id,
+          first_name,
+          last_name,
+          child_name,
+          phone_number,
+          user_id,
+          user:users(email)
+        `)
         .eq('id', session.client_id)
         .single();
 
-      // Create rejection notification for client with operations contact info
-      if (client?.user_id) {
+      // Create rejection notification for client with operations contact info - use supabaseAdmin
+      if (clientDetails?.user_id) {
         const rejectionMessage = reason 
           ? `Your reschedule request has been declined. Reason: ${reason}. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`
           : `Your reschedule request has been declined. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`;
 
-      const clientNotificationData = {
-          user_id: client.user_id,
+        const clientNotificationData = {
+          user_id: clientDetails.user_id,
           title: 'Reschedule Request Declined',
           message: rejectionMessage,
           type: 'error',
           related_id: session.id,
           related_type: 'session',
-        is_read: false,
-        created_at: new Date().toISOString()
-      };
+          is_read: false,
+          created_at: new Date().toISOString()
+        };
 
-      await supabase
-        .from('notifications')
-        .insert([clientNotificationData]);
+        await supabaseAdmin
+          .from('notifications')
+          .insert([clientNotificationData]);
       }
 
-      // Mark original request as read
-      await supabase
+      // Mark original request as read - use supabaseAdmin
+      await supabaseAdmin
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
+
+      // Send email and WhatsApp notifications to client
+      // Run in background to not block the response
+      (async () => {
+        try {
+          if (!clientDetails) {
+            console.warn('⚠️ Could not fetch client details for decline notifications');
+            return;
+          }
+
+          const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+          const clientEmail = clientDetails?.user?.email || clientDetails?.email;
+          const clientPhone = clientDetails?.phone_number;
+
+          // Format session date/time
+          const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
+            timeZone: 'Asia/Kolkata',
+            dateStyle: 'long',
+            timeStyle: 'short'
+          });
+
+          // Send email notification
+          try {
+            const emailService = require('../utils/emailService');
+            const formattedDate = new Date(`${session.scheduled_date}T00:00:00`).toLocaleDateString('en-IN', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+            
+            // Format time
+            const formatTimeFromString = (timeStr) => {
+              if (!timeStr) return '';
+              const [hours, minutes] = timeStr.split(':');
+              const hour = parseInt(hours, 10);
+              const ampm = hour >= 12 ? 'PM' : 'AM';
+              const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+              return `${displayHour}:${minutes} ${ampm}`;
+            };
+            
+            const formattedTime = formatTimeFromString(session.scheduled_time);
+
+            // Send custom decline email
+            const declineEmailSubject = 'Reschedule Request Declined';
+            const declineEmailHtml = `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #dc2626;">Reschedule Request Declined</h2>
+                <p>Dear ${clientName},</p>
+                <p>We regret to inform you that your reschedule request has been declined.</p>
+                ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+                <p><strong>Your original session is still scheduled:</strong></p>
+                <ul>
+                  <li><strong>Date:</strong> ${formattedDate}</li>
+                  <li><strong>Time:</strong> ${formattedTime}</li>
+                </ul>
+                <p>Your session remains available at the originally scheduled time. If you need to discuss this further or have any concerns, please contact our operations team via WhatsApp or call.</p>
+                <p>Thank you for your understanding.</p>
+                <p>Best regards,<br>Kuttikal Team</p>
+              </div>
+            `;
+
+            if (clientEmail) {
+              await emailService.transporter.sendMail({
+                from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+                to: clientEmail,
+                subject: declineEmailSubject,
+                html: declineEmailHtml
+              });
+              console.log('✅ Reschedule decline email sent to client');
+            }
+          } catch (emailError) {
+            console.error('❌ Error sending reschedule decline email:', emailError);
+          }
+
+          // Send WhatsApp notification
+          try {
+            const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+            
+            if (clientPhone) {
+              const whatsappMessage = `❌ Your reschedule request has been declined.\n\n` +
+                `${reason ? `Reason: ${reason}\n\n` : ''}` +
+                `✅ Your original session is still scheduled:\n` +
+                `📅 Date: ${sessionDateTime}\n\n` +
+                `Your session remains available at the originally scheduled time. If you need to discuss this further or have any concerns, please contact our operations team via WhatsApp or call.\n\n` +
+                `Thank you for your understanding.`;
+
+              const whatsappResult = await sendWhatsAppTextWithRetry(clientPhone, whatsappMessage);
+              if (whatsappResult?.success) {
+                console.log('✅ Reschedule decline WhatsApp sent to client');
+              } else {
+                console.warn('⚠️ Failed to send reschedule decline WhatsApp to client');
+              }
+            }
+          } catch (waError) {
+            console.error('❌ Error sending reschedule decline WhatsApp:', waError);
+          }
+        } catch (notificationError) {
+          console.error('❌ Error in background decline notification tasks:', notificationError);
+          // Don't throw - notifications are not critical for the decline response
+        }
+      })();
 
       res.json(
         successResponse(updatedSession, 'Reschedule request rejected')
@@ -4034,10 +4365,17 @@ const getRescheduleRequests = async (req, res) => {
       rescheduleRequests.map(async (request) => {
         const sessionId = request.related_id;
         
-        // Get session details
+        // Get session details with client user email
         const { data: session } = await supabaseAdmin
           .from('sessions')
-          .select('*, client:clients(*), psychologist:psychologists(*)')
+          .select(`
+            *,
+            client:clients(
+              *,
+              user:users(email)
+            ),
+            psychologist:psychologists(*)
+          `)
           .eq('id', sessionId)
           .single();
 

@@ -170,17 +170,25 @@ class AvailabilityCalendarService {
       console.log(`🔍 isTimeSlotAvailable: Checking ${date} at ${time} for psychologist ${psychologistId}`);
       
       // Use the same data source as the frontend - the availability table
-      const { data: availabilityData, error: availabilityError } = await supabase
+      // Use limit(1) instead of single() to handle cases where multiple records exist
+      const { data: availabilityRecords, error: availabilityError } = await supabase
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId)
         .eq('date', date)
-        .single();
+        .limit(1);
 
       // If there's a DB error, don't hard‑fail the slot – fall back to treating it as available.
       if (availabilityError) {
         console.error('Error fetching availability for isTimeSlotAvailable:', availabilityError);
         return true;
+      }
+
+      // Get first record if multiple exist (shouldn't happen, but handle gracefully)
+      const availabilityData = availabilityRecords && availabilityRecords.length > 0 ? availabilityRecords[0] : null;
+      
+      if (availabilityRecords && availabilityRecords.length > 1) {
+        console.warn(`⚠️ Multiple availability records found for psychologist ${psychologistId} on ${date}, using first one`);
       }
 
       // If there is no explicit availability record for this date, fall back to default behaviour:
@@ -548,15 +556,30 @@ class AvailabilityCalendarService {
       console.log(`🔄 Updating availability for psychologist ${psychologistId} on ${date} at ${time}`);
       
       // Convert 24-hour format to 12-hour format for comparison
-      // Handle both "08:00:00" and "08:00" formats
+      // Handle both "08:00:00" (24-hour) and "6:00 PM" (12-hour) formats
       let timeToMatch = time;
       let timeToMatchAlt = null; // Alternative format (e.g., "8:00 AM" vs "08:00 AM")
       
-      if (time.includes(':')) {
+      // Check if time is already in 12-hour format (contains AM/PM)
+      const is12Hour = /AM|PM/i.test(time);
+      
+      if (is12Hour) {
+        // Already in 12-hour format, normalize spacing and create alternative format
+        timeToMatch = time.trim().replace(/\s+/g, ' ');
+        // Create alternative format with padded hour (e.g., "6:00 PM" -> "06:00 PM")
+        const timeMatch = timeToMatch.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (timeMatch) {
+          const hour = parseInt(timeMatch[1]);
+          const minute = timeMatch[2];
+          const period = timeMatch[3].toUpperCase();
+          timeToMatchAlt = `${String(hour).padStart(2, '0')}:${minute} ${period}`;
+        }
+      } else if (time.includes(':')) {
+        // Convert 24-hour format to 12-hour format
         const timeParts = time.split(':');
         const hour = parseInt(timeParts[0]);
         const minute = timeParts[1] || '00';
-        const minuteOnly = minute.split(' ')[0]; // Remove AM/PM if present
+        const minuteOnly = minute.split(' ')[0]; // Remove any suffix
         
         const hourNum = parseInt(hour);
         
@@ -579,16 +602,24 @@ class AvailabilityCalendarService {
       console.log(`🔄 Converting ${time} to ${timeToMatch} (alt: ${timeToMatchAlt}) for availability update`);
       
       // Get current availability for this date
-      const { data: availabilityData, error: availabilityError } = await supabase
+      // Use limit(1) instead of single() to handle cases where multiple records exist
+      const { data: availabilityRecords, error: availabilityError } = await supabase
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId)
         .eq('date', date)
-        .single();
+        .limit(1);
       
       if (availabilityError) {
         console.error('Error fetching availability for update:', availabilityError);
         return false;
+      }
+      
+      // Get first record if multiple exist (shouldn't happen, but handle gracefully)
+      const availabilityData = availabilityRecords && availabilityRecords.length > 0 ? availabilityRecords[0] : null;
+      
+      if (availabilityRecords && availabilityRecords.length > 1) {
+        console.warn(`⚠️ Multiple availability records found for psychologist ${psychologistId} on ${date}, using first one`);
       }
       
       if (!availabilityData) {

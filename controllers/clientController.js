@@ -1987,114 +1987,11 @@ const rescheduleSession = async (req, res) => {
 
     const { data: psychologistDetails } = await supabase
       .from('psychologists')
-      .select('first_name, last_name, phone, email')
+      .select('first_name, last_name, phone, email, google_calendar_credentials')
       .eq('id', psychologist_id)
       .single();
 
-    // Create new Google Meet link for rescheduled session
-    let meetData = null;
-    const meetLinkService = require('../utils/meetLinkService');
-    try {
-      console.log('🔄 Creating new Google Meet link for rescheduled session...');
-      
-      // Check if this is a free assessment session
-      const isFreeAssessment = session.session_type === 'free_assessment';
-      
-      const sessionDataForMeet = {
-        summary: isFreeAssessment 
-          ? `Free Assessment - ${clientDetails?.child_name || clientDetails?.first_name}`
-          : `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
-        description: isFreeAssessment
-          ? `Rescheduled free 20-minute assessment session`
-          : `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
-        startDate: new_date,
-        startTime: new_time,
-        endTime: isFreeAssessment 
-          ? addMinutesToTime(formatTime(new_time), 20)
-          : addMinutesToTime(formatTime(new_time), 60),
-        clientEmail: clientDetails?.email,
-        psychologistEmail: psychologistDetails?.email,
-        attendees: []
-      };
-
-      // Add attendees
-      if (clientDetails?.email) {
-        sessionDataForMeet.attendees.push(clientDetails.email);
-      }
-      if (psychologistDetails?.email) {
-        sessionDataForMeet.attendees.push(psychologistDetails.email);
-      }
-
-      // For free assessments, use assessment psychologist's OAuth credentials
-      let userAuth = null;
-      if (isFreeAssessment) {
-        // Get assessment psychologist's OAuth credentials
-        const { ensureAssessmentPsychologist } = require('./freeAssessmentController');
-        const defaultPsychologist = await ensureAssessmentPsychologist();
-        
-        if (defaultPsychologist?.id) {
-          const { data: assessmentPsychologist } = await supabase
-            .from('psychologists')
-            .select('id, email, google_calendar_credentials')
-            .eq('id', defaultPsychologist.id)
-            .single();
-          
-          if (assessmentPsychologist?.google_calendar_credentials) {
-            const credentials = assessmentPsychologist.google_calendar_credentials;
-            const now = Date.now();
-            const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
-            
-            if (credentials.access_token) {
-              const expiryDate = credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : null;
-              if (!expiryDate || expiryDate > (now + bufferTime)) {
-                userAuth = {
-                  access_token: credentials.access_token,
-                  refresh_token: credentials.refresh_token,
-                  expiry_date: credentials.expiry_date
-                };
-                console.log('✅ Using assessment psychologist OAuth credentials for Meet link');
-              } else if (credentials.refresh_token) {
-                userAuth = {
-                  access_token: credentials.access_token,
-                  refresh_token: credentials.refresh_token,
-                  expiry_date: credentials.expiry_date
-                };
-                console.log('⚠️ Assessment psychologist OAuth token expired, but refresh token available');
-              }
-            }
-          }
-        }
-      }
-
-      const meetResult = await meetLinkService.generateSessionMeetLink(sessionDataForMeet, userAuth);
-      
-      if (meetResult.success) {
-        meetData = {
-          meetLink: meetResult.meetLink,
-          eventId: meetResult.eventId,
-          calendarLink: meetResult.eventLink || null,
-        };
-        console.log('✅ New Google Meet link created for rescheduled session');
-      } else {
-        // Use existing meet link if new one fails
-        meetData = {
-          meetLink: session.google_meet_link || null,
-          eventId: session.google_calendar_event_id || null,
-          calendarLink: null,
-        };
-        console.log('⚠️ Using existing Meet link as fallback');
-      }
-    } catch (meetError) {
-      console.error('❌ Meet link creation failed:', meetError);
-      // Use existing meet link as fallback
-      meetData = {
-        meetLink: session.google_meet_link || null,
-        eventId: session.google_calendar_event_id || null,
-        calendarLink: null,
-      };
-    }
-
-    // Update session with new date/time and new Meet link
+    // Update session with new date/time (Meet link will be added later in background)
     const updateData = {
       scheduled_date: formatDate(new_date),
       scheduled_time: formatTime(new_time),
@@ -2102,15 +1999,6 @@ const rescheduleSession = async (req, res) => {
       reschedule_count: (session.reschedule_count || 0) + 1,
       updated_at: new Date().toISOString()
     };
-
-    // Add new Meet link data if available
-    if (meetData?.meetLink) {
-      updateData.google_meet_link = meetData.meetLink;
-      updateData.google_calendar_event_id = meetData.eventId;
-      if (meetData.calendarLink) {
-        updateData.google_calendar_link = meetData.calendarLink;
-      }
-    }
 
     const { data: updatedSession, error: updateError } = await supabase
       .from('sessions')
@@ -2126,9 +2014,173 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
-    // CRITICAL FIX: Update availability table - release old slot and block new slot
-    // Do this for regular sessions (free assessments handled separately below)
-    if (session.session_type !== 'free_assessment') {
+    // CRITICAL: Return response IMMEDIATELY after session update
+    // All heavy operations (Meet link, emails, WhatsApp, availability) will run async
+    res.json(
+      successResponse(updatedSession, 'Session rescheduled successfully')
+    );
+
+    // Continue with background tasks (don't await - let them run async)
+    (async () => {
+      try {
+        // Create new Google Meet link for rescheduled session (async)
+        // NOTE: We create a NEW Meet link (not reuse old one) because:
+        // 1. The old Meet link is tied to the old calendar event with old date/time
+        // 2. Google Calendar events are immutable - can't change date/time of existing event
+        // 3. New Meet link ensures calendar event matches the new rescheduled date/time
+        // If creation fails, we fall back to the old link (which will still work)
+        let meetData = null;
+        const meetLinkService = require('../utils/meetLinkService');
+        try {
+          console.log('🔄 Creating new Google Meet link for rescheduled session...');
+          
+          // Check if this is a free assessment session
+          const isFreeAssessment = session.session_type === 'free_assessment';
+          
+          const sessionDataForMeet = {
+            summary: isFreeAssessment 
+              ? `Free Assessment - ${clientDetails?.child_name || clientDetails?.first_name}`
+              : `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
+            description: isFreeAssessment
+              ? `Rescheduled free 20-minute assessment session`
+              : `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
+            startDate: new_date,
+            startTime: new_time,
+            endTime: isFreeAssessment 
+              ? addMinutesToTime(formatTime(new_time), 20)
+              : addMinutesToTime(formatTime(new_time), 60),
+            clientEmail: clientDetails?.email,
+            psychologistEmail: psychologistDetails?.email,
+            attendees: []
+          };
+
+          // Add attendees
+          if (clientDetails?.email) {
+            sessionDataForMeet.attendees.push(clientDetails.email);
+          }
+          if (psychologistDetails?.email) {
+            sessionDataForMeet.attendees.push(psychologistDetails.email);
+          }
+
+          // Get OAuth credentials for Meet link creation
+          let userAuth = null;
+          if (isFreeAssessment) {
+            // For free assessments, use assessment psychologist's OAuth credentials
+            const { ensureAssessmentPsychologist } = require('./freeAssessmentController');
+            const defaultPsychologist = await ensureAssessmentPsychologist();
+            
+            if (defaultPsychologist?.id) {
+              const { data: assessmentPsychologist } = await supabase
+                .from('psychologists')
+                .select('id, email, google_calendar_credentials')
+                .eq('id', defaultPsychologist.id)
+                .single();
+              
+              if (assessmentPsychologist?.google_calendar_credentials) {
+                const credentials = assessmentPsychologist.google_calendar_credentials;
+                const now = Date.now();
+                const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+                
+                if (credentials.access_token) {
+                  const expiryDate = credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : null;
+                  if (!expiryDate || expiryDate > (now + bufferTime)) {
+                    userAuth = {
+                      access_token: credentials.access_token,
+                      refresh_token: credentials.refresh_token,
+                      expiry_date: credentials.expiry_date
+                    };
+                    console.log('✅ Using assessment psychologist OAuth credentials for Meet link');
+                  } else if (credentials.refresh_token) {
+                    userAuth = {
+                      access_token: credentials.access_token,
+                      refresh_token: credentials.refresh_token,
+                      expiry_date: credentials.expiry_date
+                    };
+                    console.log('⚠️ Assessment psychologist OAuth token expired, but refresh token available');
+                  }
+                }
+              }
+            }
+          } else {
+            // For regular therapy sessions, use the session's psychologist OAuth credentials
+            if (psychologistDetails?.google_calendar_credentials) {
+              try {
+                const credentials = psychologistDetails.google_calendar_credentials;
+                const now = Date.now();
+                const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+                
+                if (credentials.access_token) {
+                  const expiryDate = credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : null;
+                  if (!expiryDate || expiryDate > (now + bufferTime)) {
+                    // Token is valid
+                    userAuth = {
+                      access_token: credentials.access_token,
+                      refresh_token: credentials.refresh_token,
+                      expiry_date: credentials.expiry_date
+                    };
+                    console.log('✅ Using psychologist OAuth credentials for Meet link creation (token valid)');
+                  } else if (credentials.refresh_token) {
+                    // Token expired but we have refresh token - pass both to service for auto-refresh
+                    userAuth = {
+                      access_token: credentials.access_token, // May be expired, service will refresh
+                      refresh_token: credentials.refresh_token,
+                      expiry_date: credentials.expiry_date
+                    };
+                    console.log('⚠️ Psychologist OAuth token expired, but refresh token available - service will attempt refresh');
+                  } else {
+                    console.log('⚠️ Psychologist OAuth credentials expired and no refresh token - will use fallback method');
+                  }
+                }
+              } catch (credError) {
+                console.warn('⚠️ Error parsing psychologist OAuth credentials:', credError.message);
+              }
+            } else {
+              console.log('ℹ️ Psychologist does not have Google Calendar connected - will use service account method (may not create real Meet link)');
+            }
+          }
+
+          const meetResult = await meetLinkService.generateSessionMeetLink(sessionDataForMeet, userAuth);
+          
+          if (meetResult.success && meetResult.meetLink) {
+            meetData = {
+              meetLink: meetResult.meetLink,
+              eventId: meetResult.eventId,
+              calendarLink: meetResult.eventLink || null,
+            };
+            console.log('✅ New Google Meet link created for rescheduled session');
+            
+            // Update session with new Meet link
+            await supabase
+              .from('sessions')
+              .update({
+                google_meet_link: meetResult.meetLink,
+                google_calendar_event_id: meetResult.eventId || null,
+                google_meet_join_url: meetResult.meetLink,
+                google_meet_start_url: meetResult.meetLink,
+                ...(meetResult.eventLink && { google_calendar_link: meetResult.eventLink })
+              })
+              .eq('id', sessionId);
+          } else {
+            console.log('⚠️ Using existing Meet link as fallback');
+            meetData = {
+              meetLink: session.google_meet_link || null,
+              eventId: session.google_calendar_event_id || null,
+              calendarLink: null,
+            };
+          }
+        } catch (meetError) {
+          console.error('❌ Meet link creation failed:', meetError);
+          // Use existing meet link as fallback
+          meetData = {
+            meetLink: session.google_meet_link || null,
+            eventId: session.google_calendar_event_id || null,
+            calendarLink: null,
+          };
+        }
+
+        // CRITICAL FIX: Update availability table - release old slot and block new slot
+        // Do this for regular sessions (free assessments handled separately below)
+        if (session.session_type !== 'free_assessment') {
       try {
         console.log('🔄 Updating availability table for rescheduled session...');
         
@@ -2161,12 +2213,19 @@ const rescheduleSession = async (req, res) => {
         const oldTime12Hour = convertTo12Hour(oldTime);
         
         if (oldTime12Hour) {
-          const { data: oldAvail } = await supabase
+          // Use limit(1) instead of single() to handle cases where multiple records exist
+          const { data: oldAvailRecords } = await supabase
             .from('availability')
             .select('id, time_slots')
             .eq('psychologist_id', psychologist_id)
             .eq('date', oldDate)
-            .single();
+            .limit(1);
+          
+          const oldAvail = oldAvailRecords && oldAvailRecords.length > 0 ? oldAvailRecords[0] : null;
+          
+          if (oldAvailRecords && oldAvailRecords.length > 1) {
+            console.warn(`⚠️ Multiple availability records found for psychologist ${psychologist_id} on ${oldDate}, using first one`);
+          }
 
           if (oldAvail && oldAvail.time_slots) {
             const oldSlots = Array.isArray(oldAvail.time_slots) ? oldAvail.time_slots : [];
@@ -2196,16 +2255,16 @@ const rescheduleSession = async (req, res) => {
           formatDate(new_date),
           formatTime(new_time)
         );
-        console.log(`✅ Blocked new slot ${formatTime(new_time)} on ${formatDate(new_date)}`);
-      } catch (availabilityError) {
-        console.error('⚠️ Error updating availability table:', availabilityError);
-        // Don't fail the reschedule if availability update fails, but log it
-        // The session is already updated, so we continue
-      }
-    }
+          console.log(`✅ Blocked new slot ${formatTime(new_time)} on ${formatDate(new_date)}`);
+        } catch (availabilityError) {
+          console.error('⚠️ Error updating availability table:', availabilityError);
+          // Don't fail the reschedule if availability update fails, but log it
+          // The session is already updated, so we continue
+        }
+        }
 
-    // For free assessment sessions, update the timeslot availability
-    if (session.session_type === 'free_assessment') {
+        // For free assessment sessions, update the timeslot availability
+        if (session.session_type === 'free_assessment') {
       try {
         const oldDate = session.scheduled_date;
         const oldTime = session.scheduled_time;
@@ -2251,19 +2310,19 @@ const rescheduleSession = async (req, res) => {
             console.log(`✅ Removed booked slot ${newTime} from free assessment config on ${newDate}`);
           }
         }
-      } catch (slotError) {
-        console.error('⚠️ Error updating free assessment timeslots:', slotError);
-        // Don't fail the reschedule if timeslot update fails
-      }
-    }
+        } catch (slotError) {
+          console.error('⚠️ Error updating free assessment timeslots:', slotError);
+          // Don't fail the reschedule if timeslot update fails
+        }
+        }
 
-    // Create notification for psychologist
-    await createRescheduleNotification(session, updatedSession, client.id);
+        // Create notification for psychologist
+        await createRescheduleNotification(session, updatedSession, client.id);
 
-    // Send email notifications
-    try {
-      const emailService = require('../utils/emailService');
-      await emailService.sendRescheduleNotification(
+        // Send email notifications
+        try {
+          const emailService = require('../utils/emailService');
+          await emailService.sendRescheduleNotification(
         {
           clientName: clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim(),
           psychologistName: `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim(),
@@ -2278,15 +2337,15 @@ const rescheduleSession = async (req, res) => {
         session.scheduled_date,
         session.scheduled_time
       );
-      console.log('✅ Reschedule emails sent successfully');
-    } catch (emailError) {
-      console.error('Error sending reschedule emails:', emailError);
-      // Continue even if email fails
-    }
+          console.log('✅ Reschedule emails sent successfully');
+        } catch (emailError) {
+          console.error('Error sending reschedule emails:', emailError);
+          // Continue even if email fails
+        }
 
-    // Send WhatsApp notifications for reschedule
-    try {
-      console.log('📱 Sending WhatsApp notifications for reschedule...');
+        // Send WhatsApp notifications for reschedule
+        try {
+          console.log('📱 Sending WhatsApp notifications for reschedule...');
       const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
@@ -2344,43 +2403,44 @@ const rescheduleSession = async (req, res) => {
         }
       }
       
-      console.log('✅ WhatsApp notifications sent for reschedule');
-    } catch (waError) {
-      console.error('❌ Error sending reschedule WhatsApp:', waError);
-      // Continue even if WhatsApp fails
-    }
+          console.log('✅ WhatsApp notifications sent for reschedule');
+        } catch (waError) {
+          console.error('❌ Error sending reschedule WhatsApp:', waError);
+          // Continue even if WhatsApp fails
+        }
 
-    console.log('✅ Session rescheduled successfully');
-    
-    // PRIORITY: Check and send reminder immediately if rescheduled session is 2 hours away
-    // This gives rescheduled bookings priority over batch reminder processing
-    try {
-      const sessionReminderService = require('../services/sessionReminderService');
-      // Run asynchronously to not block the response
-      sessionReminderService.checkAndSendReminderForSessionId(updatedSession.id).catch(err => {
-        console.error('❌ Error in priority reminder check:', err);
-        // Don't block response - reminder will be sent in next hourly check
-      });
-    } catch (reminderError) {
-      console.error('❌ Error initiating priority reminder check:', reminderError);
-      // Don't block response
-    }
-    
-    // Log successful reschedule
-    await userInteractionLogger.logReschedule({
-      userId,
-      userRole: req.user.role,
-      sessionId,
-      oldDate: session.scheduled_date,
-      oldTime: session.scheduled_time,
-      newDate: formatDate(new_date),
-      newTime: formatTime(new_time),
-      status: 'success'
-    });
-    
-    res.json(
-      successResponse(updatedSession, 'Session rescheduled successfully')
-    );
+        console.log('✅ Session rescheduled successfully');
+        
+        // PRIORITY: Check and send reminder immediately if rescheduled session is 2 hours away
+        // This gives rescheduled bookings priority over batch reminder processing
+        try {
+          const sessionReminderService = require('../services/sessionReminderService');
+          // Run asynchronously to not block the response
+          sessionReminderService.checkAndSendReminderForSessionId(updatedSession.id).catch(err => {
+            console.error('❌ Error in priority reminder check:', err);
+            // Don't block response - reminder will be sent in next hourly check
+          });
+        } catch (reminderError) {
+          console.error('❌ Error initiating priority reminder check:', reminderError);
+          // Don't block response
+        }
+        
+        // Log successful reschedule
+        await userInteractionLogger.logReschedule({
+          userId,
+          userRole: req.user.role,
+          sessionId,
+          oldDate: session.scheduled_date,
+          oldTime: session.scheduled_time,
+          newDate: formatDate(new_date),
+          newTime: formatTime(new_time),
+          status: 'success'
+        });
+      } catch (backgroundError) {
+        console.error('❌ Error in background reschedule tasks:', backgroundError);
+        // Don't throw - background tasks shouldn't affect the response
+      }
+    })();
 
   } catch (error) {
     console.error('Reschedule session error:', error);
