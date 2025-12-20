@@ -1671,6 +1671,202 @@ const completeSession = async (req, res) => {
   }
 };
 
+// Mark session as no-show (psychologist or admin)
+const markSessionAsNoShow = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { reason } = req.body; // Optional reason for no-show
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Check if session exists
+    const { data: session, error: sessionError } = await supabase
+      .from('sessions')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          child_age,
+          user_id,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          phone
+        )
+      `)
+      .eq('id', sessionId)
+      .single();
+
+    if (sessionError || !session) {
+      return res.status(404).json(
+        errorResponse('Session not found')
+      );
+    }
+
+    // Check permissions
+    if (userRole === 'psychologist') {
+      // Psychologist can only mark their own sessions
+      if (session.psychologist_id !== userId) {
+        return res.status(403).json(
+          errorResponse('You do not have permission to mark this session as no-show')
+        );
+      }
+    } else if (userRole !== 'admin') {
+      return res.status(403).json(
+        errorResponse('Only psychologists and admins can mark sessions as no-show')
+      );
+    }
+
+    // Check if session is already completed or no-show
+    if (session.status === 'completed') {
+      return res.status(400).json(
+        errorResponse('Cannot mark a completed session as no-show')
+      );
+    }
+    if (session.status === 'no_show' || session.status === 'noshow') {
+      return res.status(400).json(
+        errorResponse('Session is already marked as no-show')
+      );
+    }
+
+    // Update session status
+    const { data: updatedSession, error: updateError } = await supabase
+      .from('sessions')
+      .update({
+        status: 'no_show',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', sessionId)
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          child_age,
+          user_id,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          phone
+        )
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('Error updating session:', updateError);
+      return res.status(500).json(
+        errorResponse('Failed to mark session as no-show')
+      );
+    }
+
+    // Send no-show notification to client
+    try {
+      const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      const emailService = require('../utils/emailService');
+
+      // Create notification
+      if (session.client?.user_id) {
+        const notificationData = {
+          user_id: session.client.user_id,
+          title: 'Session No-Show',
+          message: `Your session scheduled for ${session.scheduled_date} at ${session.scheduled_time} has been marked as no-show.${reason ? ` Reason: ${reason}` : ''}`,
+          type: 'warning',
+          related_id: sessionId,
+          related_type: 'session'
+        };
+
+        await supabase
+          .from('notifications')
+          .insert([notificationData]);
+      }
+
+      // Send WhatsApp notification
+      if (session.client?.phone_number) {
+        const clientPhone = session.client.phone_number;
+        const clientName = session.client.child_name || 
+                          `${session.client.first_name} ${session.client.last_name}`.trim() || 
+                          'Client';
+        const psychologistName = `${session.psychologist?.first_name || ''} ${session.psychologist?.last_name || ''}`.trim() || 'Psychologist';
+        
+        const noShowMessage = `⚠️ No-Show Notice\n\n` +
+          `Dear ${clientName},\n\n` +
+          `Your session scheduled for ${session.scheduled_date} at ${session.scheduled_time} with ${psychologistName} has been marked as no-show.\n\n` +
+          `${reason ? `Reason: ${reason}\n\n` : ''}` +
+          `If you believe this is an error or would like to reschedule, please contact us.\n\n` +
+          `Thank you.`;
+
+        try {
+          await sendWhatsAppTextWithRetry(clientPhone, noShowMessage);
+          console.log('✅ No-show WhatsApp sent to client');
+        } catch (waError) {
+          console.warn('⚠️ Failed to send no-show WhatsApp to client:', waError);
+        }
+      }
+
+      // Send email notification
+      if (session.client?.user?.email) {
+        try {
+          await emailService.transporter.sendMail({
+            from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+            to: session.client.user.email,
+            subject: 'No-Show Notice - Session Missed',
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h1 style="margin: 0; font-size: 28px;">⚠️ No-Show Notice</h1>
+                <p style="font-size: 16px; color: #555; margin-top: 20px;">
+                  Dear ${session.client.child_name || `${session.client.first_name} ${session.client.last_name}`.trim() || 'Client'},
+                </p>
+                <p style="font-size: 16px; color: #555;">
+                  Your session scheduled for <strong>${session.scheduled_date}</strong> at <strong>${session.scheduled_time}</strong> with <strong>${session.psychologist?.first_name || ''} ${session.psychologist?.last_name || ''}</strong> has been marked as no-show.
+                </p>
+                ${reason ? `<p style="font-size: 16px; color: #555;"><strong>Reason:</strong> ${reason}</p>` : ''}
+                <p style="font-size: 16px; color: #555;">
+                  If you believe this is an error or would like to reschedule, please contact us.
+                </p>
+                <p style="font-size: 16px; color: #555; margin-top: 30px;">
+                  Thank you,<br>
+                  Kuttikal Team
+                </p>
+              </div>
+            `
+          });
+          console.log('✅ No-show email sent to client');
+        } catch (emailError) {
+          console.error('❌ Error sending no-show email:', emailError);
+        }
+      }
+    } catch (notificationError) {
+      console.error('Error sending no-show notification:', notificationError);
+      // Don't fail the request if notification fails
+    }
+
+    console.log(`✅ Session ${sessionId} marked as no-show by ${userRole} ${userId}`);
+    
+    res.json(
+      successResponse(updatedSession, 'Session marked as no-show successfully')
+    );
+
+  } catch (error) {
+    console.error('Error marking session as no-show:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while marking session as no-show')
+    );
+  }
+};
+
 // Get reschedule requests for psychologist's sessions
 const getRescheduleRequests = async (req, res) => {
   try {
@@ -1754,5 +1950,6 @@ module.exports = {
   deleteSession,
   handleRescheduleRequest,
   completeSession,
+  markSessionAsNoShow,
   getRescheduleRequests
 };

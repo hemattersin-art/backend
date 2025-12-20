@@ -102,8 +102,8 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
           if (verifyError) {
             // Only log if it's not a "not found" error (PGRST116)
             if (verifyError.code !== 'PGRST116') {
-              console.error('❌ Error verifying receipt storage:', verifyError);
-            } else {
+            console.error('❌ Error verifying receipt storage:', verifyError);
+          } else {
               console.log('ℹ️ Receipt not found yet (may still be processing):', verifyError.code);
             }
           } else if (verifyReceipt) {
@@ -358,11 +358,11 @@ const createPaymentOrder = async (req, res) => {
     console.log('💾 Creating payment record in database...');
     // Only log assessment booking check if it's actually an assessment booking
     if (assessmentSessionId || assessmentType) {
-      console.log('🔍 Assessment booking check:', {
+    console.log('🔍 Assessment booking check:', {
         assessmentSessionId: assessmentSessionId || null,
         assessmentType: assessmentType || null,
-        hasAssessmentSessionId: !!assessmentSessionId
-      });
+      hasAssessmentSessionId: !!assessmentSessionId
+    });
     }
     
     const paymentData = {
@@ -614,11 +614,11 @@ const handlePaymentSuccess = async (req, res) => {
     let isValidSignature = false;
     try {
       isValidSignature = verifyPaymentSignature(
-        razorpay_order_id,
-        razorpay_payment_id,
-        razorpay_signature,
-        razorpayConfig.keySecret
-      );
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      razorpayConfig.keySecret
+    );
       console.log('   Signature verification result:', isValidSignature);
     } catch (sigError) {
       console.error('❌ Error during signature verification:', sigError);

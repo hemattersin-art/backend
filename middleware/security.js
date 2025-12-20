@@ -6,10 +6,10 @@ const securityNotifications = require('../utils/securityNotifications');
 
 // Advanced Rate Limiting Strategies
 const createRateLimiters = () => {
-  // 1. General API Rate Limiter (More lenient for legitimate devices)
+  // 1. General API Rate Limiter (More lenient for legitimate devices and international users)
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: process.env.NODE_ENV === 'production' ? 100 : 500, // Increased from 50 to 100
+    max: process.env.NODE_ENV === 'production' ? 150 : 500, // Increased from 100 to 150 for international users
     message: {
       error: 'Too many requests',
       message: 'Rate limit exceeded. Please try again later.',
@@ -47,6 +47,15 @@ const createRateLimiters = () => {
       // Allow health check and status endpoints
       if (url.includes('/health') || url.includes('/status')) {
         return true;
+      }
+      // Allow more requests for international users (detect via Accept-Language header)
+      const acceptLanguage = req.headers['accept-language'] || '';
+      const userAgent = req.headers['user-agent'] || '';
+      const isInternational = /ar|fr|de|es|zh|ja|ko/i.test(acceptLanguage);
+      const isMobile = /Mobile|Android|iPhone|iPad/i.test(userAgent);
+      // Give international mobile users more leniency
+      if (isInternational && isMobile) {
+        return false; // Don't skip, but they get higher limit (150 instead of 100)
       }
       return false;
     },
@@ -227,8 +236,30 @@ const advancedBotDetection = (req, res, next) => {
       return next();
     }
 
-    // Check if it's a legitimate Apple device - always allow
+    // Check if it's a legitimate mobile browser - always allow (especially important for international users)
     const userAgent = req.headers['user-agent'] || '';
+    
+    // Whitelist legitimate mobile browsers (especially popular in Middle East)
+    const legitimateMobileBrowsers = [
+      /iPhone|iPad|iPod/i,
+      /Android.*Chrome/i,
+      /SamsungBrowser/i,
+      /Opera.*Mobile/i,
+      /UCBrowser/i, // Popular in Middle East
+      /Safari.*Mobile/i,
+      /Firefox.*Mobile/i,
+      /Edge.*Mobile/i,
+      /Chrome.*Mobile/i,
+      /Samsung.*Browser/i
+    ];
+    
+    const isLegitimateMobile = legitimateMobileBrowsers.some(pattern => pattern.test(userAgent));
+    if (isLegitimateMobile) {
+      // Legitimate mobile browser - always allow
+      return next();
+    }
+    
+    // Check if it's a legitimate Apple device - always allow
     const isLegitimateApple = /iPhone|iPad|iPod|Macintosh|Safari|AppleWebKit/i.test(userAgent);
     if (isLegitimateApple) {
       // Legitimate Apple device - always allow

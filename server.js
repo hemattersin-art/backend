@@ -73,11 +73,42 @@ app.use(helmet({
 
 // CORS configuration (MUST be before security middleware)
 app.use(cors({
-  origin: ['https://kutikkal-one.vercel.app', 'https://www.little.care', 'http://localhost:3000', 'http://localhost:3001'],
+  origin: [
+    'https://kutikkal-one.vercel.app',
+    'https://www.little.care',
+    'https://little.care', // Added: without www
+    'http://localhost:3000',
+    'http://localhost:3001'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
 }));
+
+// Keep-alive headers for better connection reuse (especially for international users)
+app.use((req, res, next) => {
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Keep-Alive', 'timeout=5, max=1000');
+  next();
+});
+
+// Health check endpoints (before other middleware for fast response)
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: Date.now(),
+    region: process.env.REGION || 'unknown',
+    uptime: process.uptime()
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: Date.now(),
+    service: 'api'
+  });
+});
 
 // IP filtering only (bot detection removed)
 app.use(ipFilter);
@@ -93,6 +124,11 @@ app.use(memoryMonitor);
 
 // General rate limiting
 app.use(generalLimiter);
+
+// Compression middleware (reduces transfer time, especially for international users)
+// Note: Requires 'npm install compression' - uncomment after installing
+// const compression = require('compression');
+// app.use(compression({ level: 6, threshold: 1024 })); // Compress responses > 1KB
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));

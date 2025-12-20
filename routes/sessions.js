@@ -16,6 +16,7 @@ router.get('/psychologist/:psychologistId', authenticateToken, sessionController
 router.get('/admin/all', authenticateToken, sessionController.getAllSessions);
 router.put('/:sessionId/status', authenticateToken, sessionController.updateSessionStatus);
 router.put('/:sessionId/complete', authenticateToken, sessionController.completeSession); // Complete session with summary, report, and notes
+router.put('/:sessionId/no-show', authenticateToken, sessionController.markSessionAsNoShow); // Mark session as no-show (psychologist or admin)
 router.delete('/:sessionId', authenticateToken, sessionController.deleteSession);
 
 module.exports = router;
