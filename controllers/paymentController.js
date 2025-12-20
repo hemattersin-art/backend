@@ -328,6 +328,16 @@ const createPaymentOrder = async (req, res) => {
             conflict: true
           });
         } else {
+          // Other error - release any partial lock if created, then continue in legacy mode
+          if (slotLockResult.data?.id) {
+            try {
+              const { releaseSlotLock } = require('../services/slotLockService');
+              await releaseSlotLock(razorpayOrder.id);
+              console.log('🔓 Released partial slot lock due to error');
+            } catch (releaseError) {
+              console.warn('⚠️ Failed to release partial slot lock:', releaseError);
+            }
+          }
           // Other error - log but continue (legacy mode)
           console.warn('⚠️ Slot lock failed, continuing in legacy mode:', slotLockResult.error);
           slotLockResult = null;
@@ -401,6 +411,18 @@ const createPaymentOrder = async (req, res) => {
         details: paymentError.details,
         hint: paymentError.hint
       });
+      
+      // Release slot lock if payment record creation failed
+      if (slotLockResult?.success && slotLockResult?.data) {
+        try {
+          const { releaseSlotLock } = require('../services/slotLockService');
+          await releaseSlotLock(razorpayOrder.id);
+          console.log('🔓 Released slot lock due to payment record creation failure');
+        } catch (releaseError) {
+          console.error('⚠️ Failed to release slot lock:', releaseError);
+        }
+      }
+      
       return res.status(500).json({
         success: false,
         message: 'Failed to create payment record',
@@ -454,6 +476,18 @@ const createPaymentOrder = async (req, res) => {
 
   } catch (error) {
     console.error('Error creating payment order:', error);
+    
+    // Release slot lock if it was created but payment order creation failed
+    if (slotLockResult?.success && slotLockResult?.data && razorpayOrder?.id) {
+      try {
+        const { releaseSlotLock } = require('../services/slotLockService');
+        await releaseSlotLock(razorpayOrder.id);
+        console.log('🔓 Released slot lock due to payment order creation failure');
+      } catch (releaseError) {
+        console.error('⚠️ Failed to release slot lock:', releaseError);
+      }
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create payment order'
@@ -1977,6 +2011,19 @@ const handlePaymentFailure = async (req, res) => {
 
     if (paymentFailedUpdateError) {
       console.error('Error updating payment status to failed:', paymentFailedUpdateError);
+    }
+
+    // Release slot lock if it exists
+    try {
+      const { releaseSlotLock } = require('../services/slotLockService');
+      const releaseResult = await releaseSlotLock(razorpay_order_id);
+      if (releaseResult.success && releaseResult.released) {
+        console.log('✅ Slot lock released due to payment failure');
+      } else if (releaseResult.notFound) {
+        console.log('ℹ️ Slot lock not found (may have been already released)');
+      }
+    } catch (releaseError) {
+      console.error('⚠️ Failed to release slot lock:', releaseError);
     }
 
     // Release session slot if exists

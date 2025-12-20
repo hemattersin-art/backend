@@ -15,7 +15,7 @@
 
 const { supabaseAdmin } = require('../config/supabase');
 const { getRazorpayConfig, verifyWebhookSignature } = require('../config/razorpay');
-const { getSlotLockByOrderId, updateSlotLockStatus } = require('../services/slotLockService');
+const { getSlotLockByOrderId, updateSlotLockStatus, releaseSlotLock } = require('../services/slotLockService');
 const { createSessionFromSlotLock } = require('../services/sessionCreationService');
 const userInteractionLogger = require('../utils/userInteractionLogger');
 
@@ -363,10 +363,13 @@ const handlePaymentFailed = async (payload, eventId, res) => {
     });
 
     if (orderId) {
-      // Update slot lock to FAILED
-      await updateSlotLockStatus(orderId, 'FAILED', {
-        reason: payment?.error_description || 'Payment failed'
-      });
+      // Release slot lock immediately (mark as FAILED)
+      const releaseResult = await releaseSlotLock(orderId);
+      if (releaseResult.success && releaseResult.released) {
+        console.log('✅ Slot lock released due to payment failure');
+      } else if (releaseResult.notFound) {
+        console.log('ℹ️ Slot lock not found (may have been already released)');
+      }
 
       // Update payment record
       await supabaseAdmin
@@ -380,7 +383,7 @@ const handlePaymentFailed = async (payload, eventId, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Payment failure recorded'
+      message: 'Payment failure recorded and slot released'
     });
   } catch (error) {
     console.error('❌ Exception in handlePaymentFailed:', error);

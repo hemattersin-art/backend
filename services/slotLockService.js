@@ -13,7 +13,7 @@
 const { supabaseAdmin } = require('../config/supabase');
 const { errorResponse } = require('../utils/helpers');
 
-const SLOT_HOLD_DURATION_MINUTES = 10; // 10 minutes to complete payment
+const SLOT_HOLD_DURATION_MINUTES = 5; // 5 minutes to complete payment
 
 /**
  * Hold a slot for booking (called before payment initiation)
@@ -35,11 +35,12 @@ const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime
       orderId: orderId?.substring(0, 10) + '...'
     });
 
-    // Calculate expiry time (10 minutes from now)
+    // Calculate expiry time (5 minutes from now)
     const slotExpiresAt = new Date();
     slotExpiresAt.setMinutes(slotExpiresAt.getMinutes() + SLOT_HOLD_DURATION_MINUTES);
 
     // Check if slot is already locked by another active booking
+    // Only check active statuses - exclude FAILED and EXPIRED locks
     const { data: existingLocks, error: checkError } = await supabaseAdmin
       .from('slot_locks')
       .select('id, status, order_id, slot_expires_at, client_id')
@@ -56,9 +57,14 @@ const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime
       };
     }
 
-    // Filter out expired locks (they should be cleaned up, but check anyway)
+    // Filter out expired locks and failed locks (they should be cleaned up, but check anyway)
     const now = new Date();
     const activeLocks = (existingLocks || []).filter(lock => {
+      // Exclude FAILED and EXPIRED locks
+      if (lock.status === 'FAILED' || lock.status === 'EXPIRED') {
+        return false;
+      }
+      // Check expiry time
       const expiresAt = new Date(lock.slot_expires_at);
       return expiresAt > now;
     });
@@ -251,7 +257,90 @@ const getSlotLockByOrderId = async (orderId) => {
 };
 
 /**
+ * Release a slot lock by order ID (for failed/cancelled bookings)
+ * 
+ * @param {string} orderId - Razorpay order_id
+ * @returns {Promise<Object>} { success: boolean, released: boolean, error?: string }
+ */
+const releaseSlotLock = async (orderId) => {
+  try {
+    if (!orderId) {
+      return {
+        success: false,
+        error: 'Order ID is required'
+      };
+    }
+
+    console.log('🔓 Releasing slot lock for order:', orderId?.substring(0, 10) + '...');
+
+    // Check if lock exists and is in a releasable state
+    const { data: slotLock, error: fetchError } = await supabaseAdmin
+      .from('slot_locks')
+      .select('id, status')
+      .eq('order_id', orderId)
+      .single();
+
+    if (fetchError) {
+      if (fetchError.code === 'PGRST116') {
+        // Not found - already released or never existed
+        console.log('ℹ️ Slot lock not found (may already be released)');
+        return {
+          success: true,
+          released: false,
+          notFound: true
+        };
+      }
+      console.error('❌ Error fetching slot lock:', fetchError);
+      return {
+        success: false,
+        error: 'Failed to fetch slot lock'
+      };
+    }
+
+    // Only release if not already in final states
+    if (['SESSION_CREATED', 'EXPIRED', 'FAILED'].includes(slotLock.status)) {
+      console.log(`ℹ️ Slot lock already in final state: ${slotLock.status}`);
+      return {
+        success: true,
+        released: false,
+        alreadyFinal: true
+      };
+    }
+
+    // Release the lock
+    const { error: updateError } = await supabaseAdmin
+      .from('slot_locks')
+      .update({
+        status: 'FAILED',
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_id', orderId);
+
+    if (updateError) {
+      console.error('❌ Error releasing slot lock:', updateError);
+      return {
+        success: false,
+        error: 'Failed to release slot lock'
+      };
+    }
+
+    console.log('✅ Slot lock released successfully');
+    return {
+      success: true,
+      released: true
+    };
+  } catch (error) {
+    console.error('❌ Exception in releaseSlotLock:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to release slot lock'
+    };
+  }
+};
+
+/**
  * Release expired slot locks (called by cleanup job)
+ * Also releases failed payments that haven't been cleaned up
  * 
  * @returns {Promise<Object>} { success: boolean, released: number, error?: string }
  */
@@ -274,21 +363,74 @@ const releaseExpiredSlots = async () => {
       };
     }
 
-    if (!expiredLocks || expiredLocks.length === 0) {
+    // Also find slot locks with failed payments (status = 'pending' in payments table but lock still active)
+    // Check for locks older than 15 minutes with no successful payment
+    const fifteenMinutesAgo = new Date();
+    fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
+    
+    // Find old locks that might have failed payments
+    const { data: oldLocks, error: oldLocksError } = await supabaseAdmin
+      .from('slot_locks')
+      .select('id, order_id, status, created_at')
+      .in('status', ['SLOT_HELD', 'PAYMENT_PENDING'])
+      .lt('created_at', fifteenMinutesAgo.toISOString());
+    
+    // Check which of these old locks have failed payments
+    const failedPaymentLocks = [];
+    if (oldLocks && !oldLocksError) {
+      for (const lock of oldLocks) {
+        if (lock.order_id) {
+          const { data: payment } = await supabaseAdmin
+            .from('payments')
+            .select('status')
+            .eq('razorpay_order_id', lock.order_id)
+            .maybeSingle();
+          
+          // If payment is failed or doesn't exist, mark lock for release
+          if (!payment || payment.status === 'failed') {
+            failedPaymentLocks.push(lock);
+          }
+        }
+      }
+    }
+
+    // Combine both sets of locks to release
+    const locksToRelease = [];
+    const lockIds = new Set();
+    
+    if (expiredLocks) {
+      expiredLocks.forEach(lock => {
+        if (!lockIds.has(lock.id)) {
+          lockIds.add(lock.id);
+          locksToRelease.push(lock);
+        }
+      });
+    }
+
+    if (failedPaymentLocks) {
+      failedPaymentLocks.forEach(lock => {
+        if (!lockIds.has(lock.id)) {
+          lockIds.add(lock.id);
+          locksToRelease.push(lock);
+        }
+      });
+    }
+
+    if (locksToRelease.length === 0) {
       return {
         success: true,
         released: 0
       };
     }
 
-    // Update expired slots to EXPIRED status
+    // Update expired/failed slots to EXPIRED or FAILED status
     const { error: updateError } = await supabaseAdmin
       .from('slot_locks')
       .update({
         status: 'EXPIRED',
         updated_at: now
       })
-      .in('id', expiredLocks.map(lock => lock.id));
+      .in('id', locksToRelease.map(lock => lock.id));
 
     if (updateError) {
       console.error('❌ Error releasing expired slots:', updateError);
@@ -298,10 +440,10 @@ const releaseExpiredSlots = async () => {
       };
     }
 
-    console.log(`✅ Released ${expiredLocks.length} expired slot locks`);
+    console.log(`✅ Released ${locksToRelease.length} expired/failed slot locks`);
     return {
       success: true,
-      released: expiredLocks.length
+      released: locksToRelease.length
     };
   } catch (error) {
     console.error('❌ Exception in releaseExpiredSlots:', error);
@@ -316,6 +458,7 @@ module.exports = {
   holdSlot,
   updateSlotLockStatus,
   getSlotLockByOrderId,
+  releaseSlotLock,
   releaseExpiredSlots,
   SLOT_HOLD_DURATION_MINUTES
 };
