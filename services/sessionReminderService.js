@@ -280,10 +280,10 @@ class SessionReminderService {
   async checkForNewSessionsDuringProcessing(originalCheckTime) {
     try {
       const now = dayjs().tz('Asia/Kolkata');
-      const targetTime = now.add(12, 'hours');
+      const targetTime = now.add(2, 'hours');
       const targetDate = targetTime.format('YYYY-MM-DD');
       
-      // Query for sessions that are still in the 12-hour window
+      // Query for sessions that are still in the 2-hour window
       // Check for both newly created sessions AND recently rescheduled sessions
       const checkTimeMinus1Min = originalCheckTime.subtract(1, 'minute').toISOString();
       
@@ -338,14 +338,14 @@ class SessionReminderService {
         return; // No new sessions found
       }
 
-      // Filter for sessions that are 11.5-12.5 hours away
+      // Filter for sessions that are 1.5-2.5 hours away (same window as main function)
       const newReminderSessions = newSessions.filter(session => {
         if (!session.scheduled_time) return false;
         
         const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
         const timeDiff = sessionTime.diff(now, 'hour', true);
         
-        return timeDiff >= 11.5 && timeDiff <= 12.5;
+        return timeDiff >= 1.5 && timeDiff <= 2.5;
       });
 
       if (newReminderSessions.length > 0) {

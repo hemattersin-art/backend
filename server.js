@@ -1032,7 +1032,7 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   // Start Google Calendar sync service
   calendarSyncService.start();
   
-  // Start Session Reminder service (12-hour WhatsApp reminders)
+  // Start Session Reminder service (2-hour WhatsApp reminders)
   sessionReminderService.start();
   
   // Start Daily Availability service (adds next day at 12 AM)
