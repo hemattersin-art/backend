@@ -3,7 +3,9 @@
  * Runs every day at 1:00 AM to check for conflicts between Google Calendar events
  * and availability slots for all psychologists with synced calendars
  * 
- * Sends email and WhatsApp notifications only when conflicts are detected
+ * Sends email and WhatsApp notifications for all psychologists:
+ * - Conflict notifications when conflicts are detected
+ * - No conflict notifications when everything is working correctly
  */
 
 const cron = require('node-cron');
@@ -33,7 +35,7 @@ class CalendarConflictMonitorService {
   start() {
     console.log('🔍 Starting Daily Calendar Conflict Monitor Service...');
     console.log('   Schedule: Every day at 1:00 AM');
-    console.log('   Notifications: Only when conflicts detected');
+    console.log('   Notifications: Always sent (conflicts and no conflicts)');
     console.log(`   Email: ${this.adminEmail}`);
     console.log(`   WhatsApp: ${this.adminWhatsApp}\n`);
 
@@ -451,6 +453,84 @@ class CalendarConflictMonitorService {
   }
 
   /**
+   * Format no conflicts message for email/WhatsApp
+   */
+  formatNoConflictsForNotification(psychologist) {
+    const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`;
+    const psychologistEmail = psychologist.email;
+    const psychologistId = psychologist.id;
+    
+    let message = `✅ Calendar Sync Status: No Conflicts\n\n`;
+    message += `👤 Psychologist: ${psychologistName}\n`;
+    message += `🆔 Doctor ID: ${psychologistId}\n`;
+    message += `📧 Email: ${psychologistEmail}\n`;
+    message += `✅ Status: Calendar sync is working correctly - no conflicts detected.\n`;
+
+    return message;
+  }
+
+  /**
+   * Format no conflicts message for HTML email
+   */
+  formatNoConflictsForEmail(psychologist) {
+    const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`;
+    const psychologistEmail = psychologist.email;
+    const psychologistId = psychologist.id;
+    
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
+        <h2 style="color: #2e7d32;">✅ Calendar Sync Status: No Conflicts</h2>
+        
+        <div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2e7d32;">
+          <p><strong>👤 Psychologist:</strong> ${psychologistName}</p>
+          <p><strong>🆔 Doctor ID:</strong> ${psychologistId}</p>
+          <p><strong>📧 Email:</strong> ${psychologistEmail}</p>
+          <p style="margin-top: 15px; color: #2e7d32;"><strong>✅ Status:</strong> Calendar sync is working correctly - no conflicts detected.</p>
+        </div>
+      </div>
+    `;
+
+    return html;
+  }
+
+  /**
+   * Send no conflicts email
+   */
+  async sendNoConflictsEmail(psychologist) {
+    try {
+      const subject = `✅ Calendar Sync Status: ${psychologist.first_name} ${psychologist.last_name} (ID: ${psychologist.id}) - No Conflicts`;
+      const html = this.formatNoConflictsForEmail(psychologist);
+      const text = this.formatNoConflictsForNotification(psychologist);
+
+      await emailService.sendEmail({
+        to: this.adminEmail,
+        subject: subject,
+        html: html,
+        text: text
+      });
+
+      console.log(`   ✅ No conflicts email sent to ${this.adminEmail}`);
+    } catch (error) {
+      console.error(`   ❌ Error sending no conflicts email:`, error);
+    }
+  }
+
+  /**
+   * Send no conflicts WhatsApp
+   */
+  async sendNoConflictsWhatsApp(psychologist) {
+    try {
+      const message = this.formatNoConflictsForNotification(psychologist);
+      
+      await whatsappService.sendWhatsAppTextWithRetry(this.adminWhatsApp, message);
+      
+      console.log(`   ✅ No conflicts WhatsApp sent to ${this.adminWhatsApp}`);
+    } catch (error) {
+      console.error(`   ❌ Error sending no conflicts WhatsApp:`, error);
+    }
+  }
+
+  /**
    * Main function to check for conflicts
    */
   async checkForConflicts() {
@@ -519,12 +599,12 @@ class CalendarConflictMonitorService {
         }
       }
 
-      // Send notifications only if conflicts found
-      if (psychologistsWithConflicts.length > 0) {
-        console.log(`\n🚨 Found conflicts for ${psychologistsWithConflicts.length} psychologist(s)`);
-        console.log(`📧 Sending notifications...\n`);
+      // Send notifications for all psychologists (conflicts or no conflicts)
+      console.log(`\n📧 Sending notifications...\n`);
 
-        // Send notification for each psychologist with conflicts
+      // Send notifications for psychologists with conflicts
+      if (psychologistsWithConflicts.length > 0) {
+        console.log(`🚨 Found conflicts for ${psychologistsWithConflicts.length} psychologist(s)`);
         for (const { psychologist, conflicts } of psychologistsWithConflicts) {
           await this.sendConflictEmail(psychologist, conflicts);
           await this.sendConflictWhatsApp(psychologist, conflicts);
@@ -532,11 +612,24 @@ class CalendarConflictMonitorService {
           // Small delay between notifications
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
+        console.log(`✅ Conflict notifications sent for ${psychologistsWithConflicts.length} psychologist(s)`);
+      }
 
-        console.log(`\n✅ Notifications sent for ${psychologistsWithConflicts.length} psychologist(s) with conflicts`);
-      } else {
-        console.log(`\n✅ No conflicts detected - all calendar syncs are working correctly!`);
-        console.log(`   (No notifications sent)`);
+      // Send notifications for psychologists without conflicts
+      const psychologistsWithoutConflicts = validPsychologists.filter(p => {
+        return !psychologistsWithConflicts.some(pwc => pwc.psychologist.id === p.id);
+      });
+
+      if (psychologistsWithoutConflicts.length > 0) {
+        console.log(`\n✅ No conflicts detected for ${psychologistsWithoutConflicts.length} psychologist(s)`);
+        for (const psychologist of psychologistsWithoutConflicts) {
+          await this.sendNoConflictsEmail(psychologist);
+          await this.sendNoConflictsWhatsApp(psychologist);
+          
+          // Small delay between notifications
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        console.log(`✅ No conflicts notifications sent for ${psychologistsWithoutConflicts.length} psychologist(s)`);
       }
 
       // Summary
