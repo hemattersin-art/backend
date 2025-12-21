@@ -291,6 +291,29 @@ const getAllSessions = async (req, res) => {
 
     const { page = 1, limit = 10, status, psychologist_id, client_id, date, sort = 'created_at', order = 'desc' } = req.query;
 
+    // First, get the total count of sessions (without pagination)
+    let countQuery = supabase
+      .from('sessions')
+      .select('*', { count: 'exact', head: true });
+
+    // Apply same filters for count
+    if (status) {
+      countQuery = countQuery.eq('status', status);
+    }
+    if (psychologist_id) {
+      countQuery = countQuery.eq('psychologist_id', psychologist_id);
+    }
+    if (client_id) {
+      countQuery = countQuery.eq('client_id', client_id);
+    }
+    if (date) {
+      countQuery = countQuery.eq('scheduled_date', date);
+    }
+
+    const { count: sessionsCount, error: countError } = await countQuery;
+    console.log('Total sessions count:', sessionsCount);
+
+    // Now fetch the paginated sessions
     let query = supabase
       .from('sessions')
       .select(`
@@ -336,13 +359,10 @@ const getAllSessions = async (req, res) => {
       query = query.order(sort, { ascending: order === 'asc' });
     }
 
-    // Add pagination
-    const offset = (page - 1) * limit;
-    query = query.range(offset, offset + limit - 1);
-
-    console.log('Executing query with filters and pagination...');
-    const { data: sessions, error, count } = await query;
-    console.log('Query result:', { sessionsCount: sessions?.length, error, count });
+    // Don't paginate yet - we need to combine with assessment sessions first
+    console.log('Executing query for all sessions (no pagination yet)...');
+    const { data: sessions, error } = await query;
+    console.log('Query result:', { sessionsCount: sessions?.length, error });
 
     if (error) {
       console.error('Get all sessions error:', error);
@@ -353,8 +373,34 @@ const getAllSessions = async (req, res) => {
 
     // Also fetch assessment sessions for admin dashboard
     let assessmentSessions = [];
+    let assessmentSessionsCount = 0;
     try {
       const { supabaseAdmin } = require('../config/supabase');
+      
+      // First get total count of assessment sessions
+      let assessCountQuery = supabaseAdmin
+        .from('assessment_sessions')
+        .select('*', { count: 'exact', head: true });
+
+      // Apply same filters for count
+      if (status) {
+        assessCountQuery = assessCountQuery.eq('status', status);
+      }
+      if (psychologist_id) {
+        assessCountQuery = assessCountQuery.eq('psychologist_id', psychologist_id);
+      }
+      if (client_id) {
+        assessCountQuery = assessCountQuery.eq('client_id', client_id);
+      }
+      if (date) {
+        assessCountQuery = assessCountQuery.eq('scheduled_date', date);
+      }
+
+      const { count: assessCount, error: assessCountError } = await assessCountQuery;
+      assessmentSessionsCount = assessCount || 0;
+      console.log('Total assessment sessions count:', assessmentSessionsCount);
+
+      // Now fetch all assessment sessions (we'll combine and paginate in memory)
       let assessQuery = supabaseAdmin
         .from('assessment_sessions')
         .select(`
@@ -448,10 +494,24 @@ const getAllSessions = async (req, res) => {
       });
 
     // Apply pagination to combined results
-    const totalSessions = allSessions.length;
-    const startIndex = (page - 1) * limit;
+    // Note: Since we're combining two different tables, we need to paginate in memory
+    // The total is the sum of both counts
+    const totalSessions = (sessionsCount || 0) + (assessmentSessionsCount || 0);
+    const startIndex = (page - 1) * parseInt(limit);
     const endIndex = startIndex + parseInt(limit);
     const paginatedSessions = allSessions.slice(startIndex, endIndex);
+
+    console.log('Pagination summary:', {
+      sessionsCount: sessionsCount || 0,
+      assessmentSessionsCount: assessmentSessionsCount || 0,
+      totalSessions,
+      allSessionsLength: allSessions.length,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      startIndex,
+      endIndex,
+      paginatedCount: paginatedSessions.length
+    });
 
     res.json(
       successResponse({

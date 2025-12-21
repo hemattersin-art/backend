@@ -1,4 +1,5 @@
 const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
@@ -68,9 +69,9 @@ const deleteUser = async (req, res) => {
     const { userId } = req.params;
 
     // Check if user exists
-    const { data: user } = await supabase
+    const { data: user } = await supabaseAdmin
       .from('users')
-      .select('role')
+      .select('id, role')
       .eq('id', userId)
       .single();
 
@@ -87,8 +88,101 @@ const deleteUser = async (req, res) => {
       );
     }
 
-    // Delete user (this will cascade to related tables due to foreign key constraints)
-    const { error } = await supabase
+    // If client, delete all related data first
+    if (user.role === 'client') {
+      // Find client record (for new system, client.id != user.id)
+      const { data: clientRecord } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const clientId = clientRecord?.id || userId; // Fallback to userId for old system
+
+      console.log(`🗑️  Deleting all related data for client_id: ${clientId}`);
+
+      // 1. Delete messages (via conversations)
+      const { data: conversations } = await supabaseAdmin
+        .from('conversations')
+        .select('id')
+        .eq('client_id', clientId);
+
+      if (conversations && conversations.length > 0) {
+        const conversationIds = conversations.map(c => c.id);
+        await supabaseAdmin
+          .from('messages')
+          .delete()
+          .in('conversation_id', conversationIds);
+        console.log(`   ✅ Deleted messages from ${conversations.length} conversation(s)`);
+      }
+
+      // 2. Delete conversations
+      await supabaseAdmin
+        .from('conversations')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted conversations`);
+
+      // 3. Delete receipts (via sessions)
+      const { data: sessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('client_id', clientId);
+
+      if (sessions && sessions.length > 0) {
+        const sessionIds = sessions.map(s => s.id);
+        await supabaseAdmin
+          .from('receipts')
+          .delete()
+          .in('session_id', sessionIds);
+        console.log(`   ✅ Deleted receipts for ${sessions.length} session(s)`);
+      }
+
+      // 4. Delete payments
+      await supabaseAdmin
+        .from('payments')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted payments`);
+
+      // 5. Delete sessions
+      await supabaseAdmin
+        .from('sessions')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted sessions`);
+
+      // 6. Delete assessment sessions
+      await supabaseAdmin
+        .from('assessment_sessions')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted assessment sessions`);
+
+      // 7. Delete free assessments
+      await supabaseAdmin
+        .from('free_assessments')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted free assessments`);
+
+      // 8. Delete client packages
+      await supabaseAdmin
+        .from('client_packages')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted client packages`);
+
+      // 9. Delete client profile
+      await supabaseAdmin
+        .from('clients')
+        .delete()
+        .or(`id.eq.${clientId},user_id.eq.${userId}`); // Delete by either id or user_id
+      console.log(`   ✅ Deleted client profile`);
+    }
+
+    // Delete user account
+    const { error } = await supabaseAdmin
       .from('users')
       .delete()
       .eq('id', userId);
@@ -100,8 +194,10 @@ const deleteUser = async (req, res) => {
       );
     }
 
+    console.log(`   ✅ Deleted user account`);
+
     res.json(
-      successResponse(null, 'User deleted successfully')
+      successResponse(null, 'User and all related data deleted successfully')
     );
 
   } catch (error) {

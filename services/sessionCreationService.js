@@ -361,10 +361,47 @@ const createSessionFromSlotLock = async (slotLock) => {
           });
         }
 
-        // Send confirmation emails
+        // Generate receipt before sending emails
+        let receiptResult = null;
         try {
+          const { generateAndStoreReceipt } = require('../controllers/paymentController');
+          
+          // Fetch full payment record with transaction_id
+          const { data: fullPaymentRecord } = await supabaseAdmin
+            .from('payments')
+            .select('id, amount, transaction_id, completed_at, razorpay_payment_id')
+            .eq('id', paymentRecord.id)
+            .single();
+          
+          receiptResult = await generateAndStoreReceipt(
+            session,
+            { 
+              ...fullPaymentRecord, 
+              completed_at: fullPaymentRecord?.completed_at || new Date().toISOString() 
+            },
+            clientDetails,
+            psychologistDetails
+          );
+          
+          if (receiptResult && receiptResult.receiptNumber) {
+            console.log('✅ Receipt generated successfully:', {
+              receiptNumber: receiptResult.receiptNumber,
+              pdfGenerated: !!receiptResult.pdfBuffer,
+              pdfSize: receiptResult.pdfBuffer?.length || 0
+            });
+          }
+        } catch (receiptError) {
+          console.error('❌ Error generating receipt:', receiptError);
+          // Continue even if receipt generation fails
+        }
+
+        // Send confirmation emails with receipt
+        try {
+          // Use client_name from receiptDetails if available (first_name + last_name), otherwise use computed clientName
+          const emailClientName = receiptResult?.receiptDetails?.client_name || clientName;
+          
           const emailResult = await emailService.sendSessionConfirmation({
-            clientName: clientName,
+            clientName: emailClientName,
             psychologistName: psychologistName,
             clientEmail: clientDetails.user?.email,
             psychologistEmail: psychologistDetails.email,
@@ -380,7 +417,9 @@ const createSessionFromSlotLock = async (slotLock) => {
             status: session.status || 'booked',
             psychologistId: slotLock.psychologist_id,
             clientId: slotLock.client_id,
-            packageInfo: packageInfo // Include package details
+            packageInfo: packageInfo, // Include package details
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+            receiptNumber: receiptResult?.receiptNumber || null
           });
           
           if (emailResult) {
@@ -408,13 +447,20 @@ const createSessionFromSlotLock = async (slotLock) => {
               ? clientDetails.child_name 
               : null;
             
+            // Get client name from receiptDetails (first_name + last_name) for receipt filename
+            const receiptClientName = receiptResult?.receiptDetails?.client_name || 
+                                      `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || null;
+            
             const clientDetails_wa = {
               childName: childName,
               date: slotLock.scheduled_date,
               time: slotLock.scheduled_time,
               meetLink: meetResult.meetLink,
               psychologistName: psychologistName,
-              packageInfo: packageInfo // Include package details
+              packageInfo: packageInfo, // Include package details
+              receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+              receiptNumber: receiptResult?.receiptNumber || null,
+              clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
             };
             
             const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);

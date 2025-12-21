@@ -50,7 +50,7 @@ const getClientReceipts = async (req, res) => {
     // 2) Fetch receipts for those sessions
     const { data: receipts, error: receiptsError } = await supabaseAdmin
       .from('receipts')
-      .select('id, receipt_number, file_url, file_size, created_at, session_id, payment_id')
+        .select('id, receipt_number, receipt_details, file_url, created_at, session_id, payment_id')
       .in('session_id', sessionIdList)
       .order('created_at', { ascending: false });
 
@@ -131,8 +131,10 @@ const getClientReceipts = async (req, res) => {
           transaction_id: payment.transaction_id || 'N/A',
           payment_date: payment.completed_at || payment.created_at || r.created_at,
           status: session.status,
-          file_url: r.file_url,
-          file_size: r.file_size
+          // Note: file_url is for legacy receipts only (old system stored PDFs in storage)
+          // New receipts use receipt_details and generate PDF on-demand
+          file_url: r.file_url || null,
+          has_receipt_details: !!r.receipt_details
         };
       })
       .filter(Boolean);
@@ -160,26 +162,47 @@ const downloadReceipt = async (req, res) => {
 
     console.log('🔍 Download receipt request - receiptId:', receiptId, 'userId:', userId);
 
-    // Get client ID from clients table
-    const { data: clientData, error: clientDataError } = await supabaseAdmin
+    // Get client ID from clients table (support both old and new system)
+    // New system: clients.user_id references users.id
+    // Old system: clients.id === users.id
+    let clientId = null;
+    
+    // Try new system first: find client by user_id
+    const { data: clientDataByUserId, error: clientErrorByUserId } = await supabaseAdmin
+      .from('clients')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (clientDataByUserId && !clientErrorByUserId) {
+      clientId = clientDataByUserId.id;
+      console.log('✅ Found client by user_id (new system):', clientId);
+    } else {
+      // Fallback to old system: try clients.id === userId
+      const { data: clientDataById, error: clientErrorById } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
-      .single();
+        .maybeSingle();
 
-    if (clientDataError || !clientData) {
-      console.log('📝 No client profile found');
+      if (clientDataById && !clientErrorById) {
+        clientId = clientDataById.id;
+        console.log('✅ Found client by id (old system):', clientId);
+      }
+    }
+
+    if (!clientId) {
+      console.log('📝 No client profile found for user:', userId);
       return res.status(404).json(
         errorResponse('Client profile not found')
       );
     }
 
-    const clientId = clientData.id;
-
     // Try to get receipt by receipt ID first (new approach)
+    // Fetch receipt with receipt_details (new system) or file_url (legacy)
     let { data: receipt, error: receiptError } = await supabaseAdmin
       .from('receipts')
-      .select('id, receipt_number, file_url, file_path, session_id')
+      .select('id, receipt_number, receipt_details, file_url, session_id')
       .eq('id', receiptId)
       .single();
 
@@ -188,7 +211,7 @@ const downloadReceipt = async (req, res) => {
       console.log('⚠️ Receipt not found by ID, trying by session_id:', receiptId);
       ({ data: receipt, error: receiptError } = await supabaseAdmin
         .from('receipts')
-        .select('id, receipt_number, file_url, file_path, session_id')
+        .select('id, receipt_number, receipt_details, file_url, session_id')
         .eq('session_id', receiptId)
         .single());
     }
@@ -223,19 +246,60 @@ const downloadReceipt = async (req, res) => {
       );
     }
 
-    if (!receipt.file_url) {
-      console.log('❌ Receipt has no file URL:', receipt.id);
+    // Check if receipt has receipt_details (new system) or file_url (legacy)
+    if (receipt.receipt_details) {
+      // New system: Generate PDF on-demand from receipt_details
+      console.log('📄 Generating PDF on-demand from receipt_details for receipt:', receipt.id);
+      try {
+        // Parse receipt_details (stored as JSON)
+        const receiptDetails = typeof receipt.receipt_details === 'string' 
+          ? JSON.parse(receipt.receipt_details) 
+          : receipt.receipt_details;
+        
+        // Generate PDF on-demand
+        const pdfBuffer = await generateReceiptPDFFromDetails(receiptDetails);
+        
+        // Generate filename using client name (sanitized for filesystem)
+        let fileName = 'Receipt';
+        if (receiptDetails.client_name) {
+          // Sanitize client name: replace spaces with hyphens, remove special characters
+          const sanitizedName = receiptDetails.client_name
+            .trim()
+            .replace(/\s+/g, '-') // Replace spaces with hyphens
+            .replace(/[^a-zA-Z0-9\-_]/g, '') // Remove special characters except hyphens and underscores
+            .substring(0, 50); // Limit length to 50 characters
+          fileName = sanitizedName || 'Receipt';
+        } else {
+          // Fallback to receipt number if client name not available
+          fileName = `Receipt-${receipt.receipt_number}`;
+        }
+        
+        // Set headers for PDF download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}.pdf"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        
+        console.log('✅ PDF generated on-demand, sending to client');
+        return res.send(pdfBuffer);
+        
+      } catch (pdfError) {
+        console.error('❌ Error generating PDF on-demand:', pdfError);
+        return res.status(500).json(
+          errorResponse('Error generating receipt PDF')
+        );
+      }
+    } else if (receipt.file_url) {
+      // Legacy system: Return file URL (for backward compatibility with old receipts)
+      console.log('✅ Receipt found (legacy), returning download URL:', receipt.file_url);
+      return res.json(
+        successResponse({ downloadUrl: receipt.file_url }, 'Download URL generated')
+      );
+    } else {
+      console.log('❌ Receipt has no receipt_details or file_url:', receipt.id);
       return res.status(404).json(
-        errorResponse('Receipt file not available')
+        errorResponse('Receipt data not available')
       );
     }
-
-    console.log('✅ Receipt found, returning download URL:', receipt.file_url);
-
-    // Return JSON with the download URL to match frontend expectations
-    return res.json(
-      successResponse({ downloadUrl: receipt.file_url }, 'Download URL generated')
-    );
 
   } catch (error) {
     console.error('Download receipt error:', error);
@@ -245,101 +309,15 @@ const downloadReceipt = async (req, res) => {
   }
 };
 
-// Generate PDF receipt
-const generateReceiptPDF = async (receipt) => {
-  try {
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({
-      size: 'A4',
-      margin: 50
-    });
-
-    const chunks = [];
-    let pdfBuffer = null;
-    
-    doc.on('data', chunk => chunks.push(chunk));
-    doc.on('end', () => {
-      pdfBuffer = Buffer.concat(chunks);
-    });
-
-    // Add company logo/header
-    doc.fontSize(24).font('Helvetica-Bold').text('Little Care', { align: 'center' });
-    doc.fontSize(12).font('Helvetica').text('Mental Health & Wellness Platform', { align: 'center' });
-    doc.moveDown();
-
-    // Add receipt title
-    doc.fontSize(18).font('Helvetica-Bold').text('PAYMENT RECEIPT', { align: 'center' });
-    doc.moveDown();
-
-    // Add receipt details
-    doc.fontSize(10).font('Helvetica');
-    
-    // Receipt number
-    doc.text(`Receipt Number: RCP-${receipt.id.toString().padStart(6, '0')}`);
-    doc.text(`Date: ${new Date(receipt.payment.completed_at).toLocaleDateString('en-IN')}`);
-    doc.text(`Time: ${new Date(receipt.payment.completed_at).toLocaleTimeString('en-IN')}`);
-    doc.moveDown();
-
-    // Session details
-    doc.fontSize(12).font('Helvetica-Bold').text('Session Details:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Date: ${new Date(receipt.scheduled_date).toLocaleDateString('en-IN')}`);
-    doc.text(`Time: ${receipt.scheduled_time}`);
-    doc.text(`Status: ${receipt.status}`);
-    doc.moveDown();
-
-    // Psychologist details
-    doc.fontSize(12).font('Helvetica-Bold').text('Therapist:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Name: ${receipt.psychologist.first_name} ${receipt.psychologist.last_name}`);
-    doc.text(`Email: ${receipt.psychologist.email}`);
-    doc.text(`Phone: ${receipt.psychologist.phone_number}`);
-    doc.moveDown();
-
-    // Client details
-    doc.fontSize(12).font('Helvetica-Bold').text('Client:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Name: ${receipt.client.user.first_name} ${receipt.client.user.last_name}`);
-    doc.text(`Email: ${receipt.client.user.email}`);
-    doc.moveDown();
-
-    // Payment details
-    doc.fontSize(12).font('Helvetica-Bold').text('Payment Details:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Transaction ID: ${receipt.payment.transaction_id}`);
-    doc.text(`Amount: ₹${receipt.payment.amount}`);
-    doc.text(`Payment Date: ${new Date(receipt.payment.completed_at).toLocaleDateString('en-IN')}`);
-    doc.moveDown();
-
-    // Footer
-    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Little Care for your mental health needs.', { align: 'center' });
-    doc.text('For any queries, please contact our support team.', { align: 'center' });
-
-    doc.end();
-
-    // Wait for the PDF to be generated
-    return new Promise((resolve, reject) => {
-      doc.on('end', () => {
-        try {
-          const buffer = Buffer.concat(chunks);
-          console.log('✅ PDF generated successfully, size:', buffer.length, 'bytes');
-          resolve(buffer);
-        } catch (error) {
-          console.error('❌ Error generating PDF buffer:', error);
-          reject(error);
-        }
-      });
-      
-      doc.on('error', (error) => {
-        console.error('❌ PDF generation error:', error);
-        reject(error);
-      });
-    });
-
-  } catch (error) {
-    console.error('❌ Error in generateReceiptPDF:', error);
-    throw error;
-  }
+/**
+ * Generate PDF buffer from receipt details (on-demand generation)
+ * Uses receipt_details JSON stored in database
+ * Reuses the template-based generation from paymentController
+ */
+const generateReceiptPDFFromDetails = async (receiptDetails) => {
+  // Reuse the generateReceiptPDF function from paymentController which uses the template
+  const { generateReceiptPDF } = require('./paymentController');
+  return generateReceiptPDF(receiptDetails);
 };
 
 // Get receipt by Razorpay order ID
@@ -451,7 +429,7 @@ const getReceiptByOrderId = async (req, res) => {
     // Get receipt by payment_id (may not exist yet if payment verification is still processing)
     const { data: receipt, error: receiptError } = await supabaseAdmin
       .from('receipts')
-      .select('id, receipt_number, file_url, file_path, session_id, payment_id, created_at')
+      .select('id, receipt_number, receipt_details, file_url, session_id, payment_id, created_at')
       .eq('payment_id', payment.id)
       .single();
 
@@ -476,8 +454,10 @@ const getReceiptByOrderId = async (req, res) => {
       successResponse({
         receipt_available: true,
         receipt_number: receipt.receipt_number,
-        file_url: receipt.file_url,
-        file_path: receipt.file_path,
+        // file_url is for legacy receipts only (old system)
+        // New receipts use receipt_details and generate PDF on-demand
+        file_url: receipt.file_url || null,
+        has_receipt_details: !!receipt.receipt_details,
         created_at: receipt.created_at,
         transaction_id: payment.transaction_id,
         payment_status: payment.status || 'success',

@@ -15,7 +15,7 @@ class SessionReminderService {
 
   /**
    * Start the session reminder service
-   * Runs every hour to check for sessions 2 hours away
+   * Runs every hour to check for sessions and free assessments in the next 2 hours (0-2 hours from now)
    */
   start() {
     console.log('🔔 Starting Session Reminder Service...');
@@ -31,32 +31,52 @@ class SessionReminderService {
     });
 
     console.log('✅ Session Reminder Service scheduled (runs every hour)');
+    
+    // Also run immediately on startup (after a short delay to let server fully start)
+    setTimeout(() => {
+      console.log('🔔 Running initial reminder check on startup...');
+      if (!this.isRunning) {
+        this.checkAndSendReminders().catch(error => {
+          console.error('❌ Error in initial reminder check:', error);
+        });
+      }
+    }, 15000); // Wait 15 seconds after startup to let server fully initialize
   }
 
   /**
-   * Check for sessions 2 hours away and send WhatsApp reminders
+   * Check for sessions and free assessments in the next 2 hours (0-2 hours from now)
+   * and send WhatsApp reminders to both clients and psychologists
+   * Runs every hour to catch all sessions in the upcoming 2-hour window
    */
   async checkAndSendReminders() {
     this.isRunning = true;
-    console.log('🔍 Checking for sessions requiring reminders...');
+    console.log('🔍 Checking for sessions and free assessments requiring reminders...');
 
     try {
       // Get current time and calculate 2 hours from now
       const now = dayjs().tz('Asia/Kolkata');
-      const targetTime = now.add(2, 'hours');
+      const endTime = now.add(2, 'hours');
       
       console.log(`📅 Current time: ${now.format('YYYY-MM-DD HH:mm:ss')}`);
-      console.log(`📅 Checking for sessions at: ${targetTime.format('YYYY-MM-DD HH:mm:ss')}`);
+      console.log(`📅 Checking for sessions between: ${now.format('YYYY-MM-DD HH:mm:ss')} and ${endTime.format('YYYY-MM-DD HH:mm:ss')}`);
 
-      // Query sessions that are:
-      // 1. Scheduled in approximately 2 hours (within a 1-hour window)
-      // 2. Status is 'booked' or 'rescheduled'
-      // 3. Haven't had reminder sent yet (check notifications table)
+      // Get date range (today and tomorrow in case sessions span across dates)
+      const startDate = now.format('YYYY-MM-DD');
+      const endDate = endTime.format('YYYY-MM-DD');
+      const datesToCheck = [];
       
-      const targetDate = targetTime.format('YYYY-MM-DD');
-      const targetTimeStr = targetTime.format('HH:mm:ss');
+      let currentDate = dayjs(now).tz('Asia/Kolkata').startOf('day');
+      const finalDate = dayjs(endTime).tz('Asia/Kolkata').startOf('day');
       
-      // Get sessions scheduled for the target date
+      // Use isBefore or isSame instead of isSameOrBefore (which requires a plugin)
+      while (currentDate.isBefore(finalDate, 'day') || currentDate.isSame(finalDate, 'day')) {
+        datesToCheck.push(currentDate.format('YYYY-MM-DD'));
+        currentDate = currentDate.add(1, 'day');
+      }
+      
+      console.log(`📅 Checking dates: ${datesToCheck.join(', ')}`);
+      
+      // Get all sessions scheduled for the date range
       // Use supabaseAdmin to bypass RLS and avoid fetch errors
       const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
@@ -84,8 +104,9 @@ class SessionReminderService {
             email
           )
         `)
-        .eq('scheduled_date', targetDate)
+        .in('scheduled_date', datesToCheck)
         .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
 
       if (sessionsError) {
@@ -99,26 +120,100 @@ class SessionReminderService {
         return;
       }
 
-      if (!sessions || sessions.length === 0) {
-        console.log('✅ No sessions found for reminder check');
-        this.isRunning = false;
-        return;
+      console.log(`📋 Found ${sessions?.length || 0} sessions in date range`);
+
+      // Log details of sessions found (for debugging)
+      if (sessions && sessions.length > 0) {
+        console.log('📋 Sessions found:');
+        sessions.forEach((session, index) => {
+          if (session.scheduled_time) {
+            const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+            const timeDiffMinutes = sessionTime.diff(now, 'minute');
+            console.log(`   ${index + 1}. Session ${session.id}: ${session.scheduled_date} ${session.scheduled_time} (${timeDiffMinutes} minutes from now)`);
+          } else {
+            console.log(`   ${index + 1}. Session ${session.id}: ${session.scheduled_date} [NO TIME]`);
+          }
+        });
       }
 
-      console.log(`📋 Found ${sessions.length} sessions for ${targetDate}`);
-
-      // Filter sessions that are approximately 2 hours away (within 1-hour window)
-      const reminderSessions = sessions.filter(session => {
+      // Filter sessions that are in the next 2 hours (0 to 2 hours from now)
+      const reminderSessions = (sessions || []).filter(session => {
         if (!session.scheduled_time) return false;
         
         const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
-        const timeDiff = sessionTime.diff(now, 'hour', true); // Difference in hours (decimal)
+        const timeDiffMinutes = sessionTime.diff(now, 'minute'); // Difference in minutes
         
-        // Check if session is between 1.5 and 2.5 hours away (1-hour window)
-        return timeDiff >= 1.5 && timeDiff <= 2.5;
+        // Check if session is between 0 and 120 minutes from now (next 2 hours)
+        return timeDiffMinutes >= 0 && timeDiffMinutes <= 120;
       });
 
-      console.log(`🔔 Found ${reminderSessions.length} sessions requiring 2-hour reminders`);
+      console.log(`🔔 Found ${reminderSessions.length} sessions in the next 2 hours requiring reminders`);
+      
+      // Log details of sessions that will receive reminders
+      if (reminderSessions.length > 0) {
+        console.log('🔔 Sessions receiving reminders:');
+        reminderSessions.forEach((session, index) => {
+          const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+          const timeDiffMinutes = sessionTime.diff(now, 'minute');
+          const clientName = session.client?.child_name || `${session.client?.first_name || ''} ${session.client?.last_name || ''}`.trim() || 'Unknown';
+          console.log(`   ${index + 1}. Session ${session.id} for ${clientName}: ${session.scheduled_date} ${session.scheduled_time} (${timeDiffMinutes} minutes from now)`);
+        });
+      }
+
+      // Get free assessments in the next 2 hours
+      const { data: freeAssessments, error: freeAssessmentsError } = await supabaseAdmin
+        .from('free_assessments')
+        .select(`
+          id,
+          client_id,
+          psychologist_id,
+          scheduled_date,
+          scheduled_time,
+          status,
+          user_id,
+          client:clients(
+            id,
+            first_name,
+            last_name,
+            child_name,
+            phone_number,
+            email,
+            user_id
+          ),
+          psychologist:psychologists(
+            id,
+            first_name,
+            last_name,
+            phone,
+            email
+          )
+        `)
+        .in('scheduled_date', datesToCheck)
+        .in('status', ['booked', 'rescheduled'])
+        .order('scheduled_date', { ascending: true })
+        .order('scheduled_time', { ascending: true });
+
+      if (freeAssessmentsError) {
+        console.error('❌ Error fetching free assessments:', {
+          message: freeAssessmentsError.message,
+          details: freeAssessmentsError.details || freeAssessmentsError.toString()
+        });
+      } else {
+        console.log(`📋 Found ${freeAssessments?.length || 0} free assessments in date range`);
+      }
+
+      // Filter free assessments that are in the next 2 hours
+      const reminderFreeAssessments = (freeAssessments || []).filter(assessment => {
+        if (!assessment.scheduled_time) return false;
+        
+        const assessmentTime = dayjs(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+        const timeDiffMinutes = assessmentTime.diff(now, 'minute');
+        
+        // Check if assessment is between 0 and 120 minutes from now (next 2 hours)
+        return timeDiffMinutes >= 0 && timeDiffMinutes <= 120;
+      });
+
+      console.log(`🔔 Found ${reminderFreeAssessments.length} free assessments in the next 2 hours requiring reminders`);
 
       // Process sessions in batches with parallel processing within each batch
       // This balances speed with API rate limiting
@@ -139,11 +234,22 @@ class SessionReminderService {
         }
       }
 
-      console.log('✅ Session reminder check completed');
+      // Process free assessments
+      for (let i = 0; i < reminderFreeAssessments.length; i += BATCH_SIZE) {
+        const batch = reminderFreeAssessments.slice(i, i + BATCH_SIZE);
       
-      // IMPORTANT: Do a final check for any new sessions that were created/rescheduled 
-      // during the reminder processing to catch edge cases
-      await this.checkForNewSessionsDuringProcessing(now);
+        // Process batch in parallel
+        await Promise.all(
+          batch.map(assessment => this.sendReminderForFreeAssessment(assessment))
+        );
+        
+        // Add delay between batches
+        if (i + BATCH_SIZE < reminderFreeAssessments.length) {
+          await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+        }
+      }
+
+      console.log('✅ Reminder check completed (sessions and free assessments)');
     } catch (error) {
       console.error('❌ Error in session reminder check:', error);
     } finally {
@@ -274,16 +380,146 @@ class SessionReminderService {
   }
 
   /**
+   * Send WhatsApp reminder for a specific free assessment
+   */
+  async sendReminderForFreeAssessment(assessment) {
+    try {
+      // Check if reminder has already been sent
+      const { data: existingNotifications } = await supabaseAdmin
+        .from('notifications')
+        .select('id')
+        .eq('related_id', assessment.id)
+        .eq('type', 'free_assessment_reminder_2h')
+        .limit(1);
+
+      if (existingNotifications && existingNotifications.length > 0) {
+        console.log(`⏭️  Reminder already sent for free assessment ${assessment.id}, skipping...`);
+        return;
+      }
+
+      const client = assessment.client;
+      const psychologist = assessment.psychologist;
+
+      if (!client) {
+        console.warn(`⚠️  Missing client data for free assessment ${assessment.id}`);
+        return;
+      }
+
+      // Format assessment date and time
+      const assessmentDateTime = dayjs(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+      const formattedDate = assessmentDateTime.format('DD MMMM YYYY');
+      const formattedTime = assessmentDateTime.format('hh:mm A');
+
+      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      const psychologistName = psychologist ? `${psychologist.first_name} ${psychologist.last_name}`.trim() : 'your psychologist';
+
+      // Send reminders to both client and psychologist (if psychologist exists)
+      const reminderPromises = [];
+
+      // Send reminder to client
+      if (client.phone_number) {
+        const clientMessage = `🔔 Reminder: Your free assessment session with ${psychologistName} is scheduled in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+          `Please be ready for your assessment session. We look forward to meeting you!`;
+
+        reminderPromises.push(
+          whatsappService.sendWhatsAppTextWithRetry(client.phone_number, clientMessage)
+            .then(result => {
+              if (result?.success) {
+                console.log(`✅ Reminder sent to client for free assessment ${assessment.id}`);
+              } else {
+                console.warn(`⚠️  Failed to send reminder to client for free assessment ${assessment.id}:`, result?.error || result?.reason);
+              }
+            })
+            .catch(err => {
+              console.error(`❌ Error sending reminder to client for free assessment ${assessment.id}:`, err);
+            })
+        );
+      } else {
+        console.log(`ℹ️  No phone number for client in free assessment ${assessment.id}`);
+      }
+
+      // Send reminder to psychologist if exists
+      if (psychologist && psychologist.phone) {
+        const psychologistMessage = `🔔 Reminder: You have a free assessment session with ${clientName} in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+          `👤 Client: ${clientName}\n` +
+          `Assessment ID: ${assessment.id}`;
+
+        reminderPromises.push(
+          whatsappService.sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage)
+            .then(result => {
+              if (result?.success) {
+                console.log(`✅ Reminder sent to psychologist for free assessment ${assessment.id}`);
+              } else {
+                console.warn(`⚠️  Failed to send reminder to psychologist for free assessment ${assessment.id}:`, result?.error || result?.reason);
+              }
+            })
+            .catch(err => {
+              console.error(`❌ Error sending reminder to psychologist for free assessment ${assessment.id}:`, err);
+            })
+        );
+      }
+
+      // Wait for all messages to complete
+      await Promise.all(reminderPromises);
+
+      // Create notification record to track that reminder was sent
+      const notificationsToInsert = [
+        {
+          user_id: assessment.user_id || client.user_id,
+          user_role: 'client',
+          type: 'free_assessment_reminder_2h',
+          title: 'Free Assessment Reminder',
+          message: `Your free assessment session is in 2 hours`,
+          related_id: assessment.id,
+          is_read: false
+        }
+      ];
+
+      if (psychologist) {
+        notificationsToInsert.push({
+          user_id: psychologist.id,
+          user_role: 'psychologist',
+          type: 'free_assessment_reminder_2h',
+          title: 'Free Assessment Reminder',
+          message: `Your free assessment session with ${clientName} is in 2 hours`,
+          related_id: assessment.id,
+          is_read: false
+        });
+      }
+
+      await supabaseAdmin
+        .from('notifications')
+        .insert(notificationsToInsert);
+
+      console.log(`✅ Reminder notifications created for free assessment ${assessment.id}`);
+    } catch (error) {
+      console.error(`❌ Error sending reminder for free assessment ${assessment.id}:`, error);
+    }
+  }
+
+  /**
    * Check for any new sessions that were created/rescheduled during the reminder processing
    * This catches edge cases where a booking/reschedule happened while reminders were being sent
+   * Checks for sessions in the next 2 hours (0-2 hours from now)
    */
   async checkForNewSessionsDuringProcessing(originalCheckTime) {
     try {
       const now = dayjs().tz('Asia/Kolkata');
-      const targetTime = now.add(2, 'hours');
-      const targetDate = targetTime.format('YYYY-MM-DD');
+      const endTime = now.add(2, 'hours');
+      const startDate = now.format('YYYY-MM-DD');
+      const endDate = endTime.format('YYYY-MM-DD');
+      const datesToCheck = [];
       
-      // Query for sessions that are still in the 2-hour window
+      let currentDate = dayjs(now).tz('Asia/Kolkata').startOf('day');
+      const finalDate = dayjs(endTime).tz('Asia/Kolkata').startOf('day');
+      
+      // Use isBefore or isSame instead of isSameOrBefore (which requires a plugin)
+      while (currentDate.isBefore(finalDate, 'day') || currentDate.isSame(finalDate, 'day')) {
+        datesToCheck.push(currentDate.format('YYYY-MM-DD'));
+        currentDate = currentDate.add(1, 'day');
+      }
+      
+      // Query for sessions in the next 2 hours
       // Check for both newly created sessions AND recently rescheduled sessions
       const checkTimeMinus1Min = originalCheckTime.subtract(1, 'minute').toISOString();
       
@@ -318,8 +554,9 @@ class SessionReminderService {
             email
           )
         `)
-        .eq('scheduled_date', targetDate)
+        .in('scheduled_date', datesToCheck)
         .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
 
       if (sessionsError || !allTargetSessions) {
@@ -338,14 +575,14 @@ class SessionReminderService {
         return; // No new sessions found
       }
 
-      // Filter for sessions that are 1.5-2.5 hours away (same window as main function)
+      // Filter for sessions that are in the next 2 hours (0-2 hours from now)
       const newReminderSessions = newSessions.filter(session => {
         if (!session.scheduled_time) return false;
         
         const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
-        const timeDiff = sessionTime.diff(now, 'hour', true);
+        const timeDiffMinutes = sessionTime.diff(now, 'minute');
         
-        return timeDiff >= 1.5 && timeDiff <= 2.5;
+        return timeDiffMinutes >= 0 && timeDiffMinutes <= 120;
       });
 
       if (newReminderSessions.length > 0) {
@@ -368,6 +605,7 @@ class SessionReminderService {
    * Check and send reminder immediately for a specific session (PRIORITY)
    * This is called when a new booking/reschedule happens to give it immediate priority
    * over the batch reminder processing
+   * Checks if session is in the next 2 hours (0-2 hours from now)
    * @param {string} sessionId - Session ID to check
    */
   async checkAndSendReminderForSessionId(sessionId) {
@@ -413,22 +651,22 @@ class SessionReminderService {
         return;
       }
 
-      // Check if session is approximately 2 hours away (within 1-hour window)
+      // Check if session is in the next 2 hours
       if (!session.scheduled_time) {
         console.log(`ℹ️  [PRIORITY] Session ${sessionId} has no scheduled time`);
         return;
       }
 
       const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
-      const timeDiff = sessionTime.diff(now, 'hour', true);
+      const timeDiffMinutes = sessionTime.diff(now, 'minute');
 
-      // Check if session is between 1.5 and 2.5 hours away
-      if (timeDiff >= 1.5 && timeDiff <= 2.5) {
-        console.log(`✅ [PRIORITY] Session ${sessionId} is in 2-hour window, sending reminder immediately...`);
+      // Check if session is between 0 and 120 minutes from now (next 2 hours)
+      if (timeDiffMinutes >= 0 && timeDiffMinutes <= 120) {
+        console.log(`✅ [PRIORITY] Session ${sessionId} is in next 2 hours, sending reminder immediately...`);
         await this.sendReminderForSession(session);
         console.log(`✅ [PRIORITY] Reminder sent immediately for session ${sessionId}`);
       } else {
-        console.log(`ℹ️  [PRIORITY] Session ${sessionId} is ${timeDiff.toFixed(2)} hours away (not in 2-hour window)`);
+        console.log(`ℹ️  [PRIORITY] Session ${sessionId} is ${timeDiffMinutes} minutes away (not in next 2 hours)`);
       }
     } catch (error) {
       console.error(`❌ [PRIORITY] Error checking reminder for session ${sessionId}:`, error);

@@ -14,7 +14,400 @@ const emailService = require('../utils/emailService');
 const userInteractionLogger = require('../utils/userInteractionLogger');
 
 // Generate and store PDF receipt in Supabase storage
-const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psychologistData) => {
+/**
+ * Generate PDF buffer from receipt data using template PDF
+ * Uses pdf-lib to load template and fill in data based on demo PDF structure
+ */
+const generateReceiptPDF = async (receiptDetails) => {
+  try {
+    const { PDFDocument, rgb } = require('pdf-lib');
+    const fs = require('fs').promises;
+    const path = require('path');
+
+    // Load the template PDF from frontend/public folder
+    // Path is relative to backend/controllers/, so go up two levels then into frontend/public
+    const templatePath = path.join(__dirname, '../../frontend/public/template.pdf');
+    
+    // Check if template exists, if not use fallback
+    try {
+      await fs.access(templatePath);
+    } catch (err) {
+      console.log('⚠️ Template PDF not found at:', templatePath);
+      console.log('⚠️ Using fallback PDF generation method');
+      return generateReceiptPDFFallback(receiptDetails);
+    }
+    
+    const templateBytes = await fs.readFile(templatePath);
+    
+    // Load the PDF document
+    const pdfDoc = await PDFDocument.load(templateBytes);
+    const pages = pdfDoc.getPages();
+    const firstPage = pages[0];
+    const { width, height } = firstPage.getSize();
+
+    // Get form fields if the template has them
+    const form = pdfDoc.getForm();
+    const formFields = form.getFields();
+    
+    // If template has form fields, fill them
+    // Otherwise, we'll add text overlays based on demo PDF structure
+    if (formFields.length > 0) {
+      // Fill form fields (adjust field names based on actual template)
+      try {
+        if (form.getTextField('receipt_number')) {
+          form.getTextField('receipt_number').setText(receiptDetails.receipt_number);
+        }
+        if (form.getTextField('date')) {
+          form.getTextField('date').setText(new Date(receiptDetails.payment_date || new Date()).toLocaleDateString('en-IN'));
+        }
+        if (form.getTextField('time')) {
+          form.getTextField('time').setText(new Date(receiptDetails.payment_date || new Date()).toLocaleTimeString('en-IN'));
+        }
+        if (form.getTextField('session_date')) {
+          form.getTextField('session_date').setText(new Date(receiptDetails.session_date).toLocaleDateString('en-IN'));
+        }
+        if (form.getTextField('session_time')) {
+          form.getTextField('session_time').setText(receiptDetails.session_time);
+        }
+        if (form.getTextField('psychologist_name')) {
+          form.getTextField('psychologist_name').setText(receiptDetails.psychologist_name);
+        }
+        if (form.getTextField('client_name')) {
+          form.getTextField('client_name').setText(receiptDetails.client_name);
+        }
+        if (form.getTextField('transaction_id')) {
+          form.getTextField('transaction_id').setText(receiptDetails.transaction_id);
+        }
+        if (form.getTextField('amount')) {
+          // Use INR instead of ₹ to avoid encoding issues
+          form.getTextField('amount').setText(`INR ${receiptDetails.amount}`);
+        }
+      } catch (fieldError) {
+        console.log('⚠️ Template may not have form fields, using text overlay method');
+      }
+    }
+
+    // If no form fields or form fields failed, add text overlays
+    // Position coordinates based on demo PDF analysis (A4 = 595.5 x 842.25 points)
+    // PDF coordinates: origin (0,0) is at bottom-left, Y increases upward
+    
+    // Configuration - Invoice-style layout coordinates from demo PDF
+    const documentConfig = {
+      pageWidth: 595.5,
+      pageHeight: 842.25,
+      labelFontSize: 10,
+      valueFontSize: 11,
+      lineHeight: 15
+    };
+
+    const config = {
+      // Document and font settings
+      documentConfig: documentConfig,
+      fontSizes: {
+        label: documentConfig.labelFontSize,
+        value: documentConfig.valueFontSize,
+        lineHeight: documentConfig.lineHeight
+      },
+      
+      // Field positions with alignment (exact coordinates from demo PDF)
+      fields: {
+        receiptNumberLabel: { x: 435, y: 666, alignment: 'left' },
+        receiptNumberValue: { x: 435, y: 651, alignment: 'left' },
+        receiptDate: { x: 485, y: 691, alignment: 'left' },
+        clientName: { x: 60, y: 665, alignment: 'left' },
+        clientEmail: { x: 60, y: 648, alignment: 'left' },
+        clientPhone: { x: 60, y: 631, alignment: 'left' },
+        paymentModeValue: { x: 60, y: 585, alignment: 'left' },
+        transactionId: { x: 60, y: 570, alignment: 'left' },
+        itemDescription: { x: 60, y: 435, alignment: 'left' },
+        sessionDetails: { x: 60, y: 420, alignment: 'left' },
+        therapistName: { x: 60, y: 405, alignment: 'left' },
+        quantity: { x: 315, y: 435, alignment: 'center' },
+        unitPrice: { x: 405, y: 435, alignment: 'center' },
+        lineTotal: { x: 520, y: 435, alignment: 'right' },
+        grandTotal: { x: 520, y: 370, alignment: 'right' },
+        footerWebsite: { x: 297, y: 55, alignment: 'center' },
+        footerPhone: { x: 297, y: 40, alignment: 'center' },
+        footerEmail: { x: 297, y: 25, alignment: 'center' }
+      }
+    };
+
+    // Embed standard fonts (pdf-lib supports Helvetica and Helvetica-Bold)
+    const helveticaFont = await pdfDoc.embedFont('Helvetica');
+    const helveticaBoldFont = await pdfDoc.embedFont('Helvetica-Bold');
+    
+    // Helper function to draw text with alignment support
+    // Note: pdf-lib coordinates are already provided, so x represents the left edge for left alignment
+    // For center/right alignment, we calculate the adjusted x position based on text width
+    const drawText = (text, x, y, size, bold = false, alignment = 'left', maxWidth = null, lineHeight = null) => {
+      // Ensure text is always a string (pdf-lib requires strings)
+      const textStr = String(text || '');
+      const font = bold ? helveticaBoldFont : helveticaFont;
+      const spacing = lineHeight || size * 1.2; // Default line height
+      
+      // If maxWidth is specified, wrap text to multiple lines
+      if (maxWidth && alignment === 'left') {
+        const lines = [];
+        let remainingText = textStr;
+        
+        while (remainingText) {
+          // Check if entire remaining text fits
+          const textWidth = font.widthOfTextAtSize(remainingText, size);
+          
+          if (textWidth <= maxWidth) {
+            lines.push(remainingText);
+            break;
+          }
+          
+          // Binary search for the longest substring that fits
+          let low = 0;
+          let high = remainingText.length;
+          let bestFit = '';
+          
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const testText = remainingText.substring(0, mid);
+            const testWidth = font.widthOfTextAtSize(testText, size);
+            
+            if (testWidth <= maxWidth) {
+              bestFit = testText;
+              low = mid + 1;
+            } else {
+              high = mid - 1;
+            }
+          }
+          
+          if (bestFit) {
+            lines.push(bestFit);
+            remainingText = remainingText.substring(bestFit.length).trim();
+          } else {
+            // Even a single character doesn't fit, force break to prevent infinite loop
+            lines.push(remainingText.substring(0, 1));
+            remainingText = remainingText.substring(1);
+          }
+        }
+        
+        // Draw each line
+        lines.forEach((line, index) => {
+          firstPage.drawText(line, {
+            x: x,
+            y: y - (index * spacing),
+            size: size,
+            color: rgb(0, 0, 0),
+            font: font,
+          });
+        });
+        
+        return lines.length; // Return number of lines drawn
+      }
+      
+      // Single line drawing (original behavior)
+      let adjustedX = x;
+      
+      // Calculate text width if alignment is center or right
+      if (alignment === 'center' || alignment === 'right') {
+        const textWidth = font.widthOfTextAtSize(textStr, size);
+        if (alignment === 'center') {
+          adjustedX = x - (textWidth / 2);
+        } else if (alignment === 'right') {
+          adjustedX = x - textWidth;
+        }
+      }
+      
+      firstPage.drawText(textStr, {
+        x: adjustedX,
+        y: y,
+        size: size,
+        color: rgb(0, 0, 0),
+        font: font,
+      });
+      
+      return 1; // Single line
+    };
+
+    // Receipt Number Label (top right, left aligned)
+    drawText(
+      'Receipt No:', 
+      config.fields.receiptNumberLabel.x, 
+      config.fields.receiptNumberLabel.y, 
+      config.fontSizes.label,
+      false,
+      config.fields.receiptNumberLabel.alignment
+    );
+    
+    // Receipt Number Value (10px below label, left aligned, bold)
+    // Wrap text if too long (max width ~150px to fit within page bounds at x:435)
+    const receiptNumberMaxWidth = 150;
+    drawText(
+      receiptDetails.receipt_number, 
+      config.fields.receiptNumberValue.x, 
+      config.fields.receiptNumberValue.y, 
+      config.fontSizes.value,
+      true, // bold
+      config.fields.receiptNumberValue.alignment,
+      receiptNumberMaxWidth,
+      config.fontSizes.lineHeight
+    );
+
+    // Receipt Date (top right, below receipt number, left aligned)
+    const receiptDateStr = new Date(receiptDetails.payment_date || new Date()).toLocaleDateString('en-IN');
+    drawText(
+      receiptDateStr, 
+      config.fields.receiptDate.x, 
+      config.fields.receiptDate.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.receiptDate.alignment
+    );
+
+    // Client Name (left side, left aligned, bold) - moved up
+    drawText(
+      receiptDetails.client_name || 'N/A', 
+      config.fields.clientName.x, 
+      config.fields.clientName.y, 
+      config.fontSizes.value,
+      true, // bold
+      config.fields.clientName.alignment
+    );
+
+    // Client Email (left side, below name, left aligned) - moved down
+    if (receiptDetails.client_email) {
+      drawText(
+        receiptDetails.client_email, 
+        config.fields.clientEmail.x, 
+        config.fields.clientEmail.y, 
+        config.fontSizes.value,
+        false,
+        config.fields.clientEmail.alignment
+      );
+    }
+
+    // Client Phone (left side, below email, left aligned)
+    if (receiptDetails.client_phone) {
+      drawText(
+        receiptDetails.client_phone, 
+        config.fields.clientPhone.x, 
+        config.fields.clientPhone.y, 
+        config.fontSizes.value,
+        false,
+        config.fields.clientPhone.alignment
+      );
+    }
+
+    // Payment Mode Value (left aligned) - from receiptDetails.payment_method
+    const paymentMode = receiptDetails.payment_method || (receiptDetails.transaction_id ? 'Online Payment' : 'Cash Payment');
+    drawText(
+      paymentMode, 
+      config.fields.paymentModeValue.x, 
+      config.fields.paymentModeValue.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.paymentModeValue.alignment
+    );
+
+    // Transaction ID (left aligned)
+    if (receiptDetails.transaction_id) {
+      drawText(
+        `Transaction ID: ${receiptDetails.transaction_id}`, 
+        config.fields.transactionId.x, 
+        config.fields.transactionId.y, 
+        config.fontSizes.value,
+        false,
+        config.fields.transactionId.alignment
+      );
+    }
+
+    // Item Description (Individual Therapy or Package Session, left aligned)
+    const itemDescription = receiptDetails.item_description || 'Therapy Session';
+    drawText(
+      itemDescription, 
+      config.fields.itemDescription.x, 
+      config.fields.itemDescription.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.itemDescription.alignment
+    );
+
+    // Session Details (date and time, left aligned)
+    const sessionDetails = `${new Date(receiptDetails.session_date).toLocaleDateString('en-IN')} at ${receiptDetails.session_time}`;
+    drawText(
+      sessionDetails, 
+      config.fields.sessionDetails.x, 
+      config.fields.sessionDetails.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.sessionDetails.alignment
+    );
+
+    // Therapist Name (left aligned)
+    drawText(
+      receiptDetails.psychologist_name, 
+      config.fields.therapistName.x, 
+      config.fields.therapistName.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.therapistName.alignment
+    );
+
+    // Quantity (center aligned) - dynamic based on package or individual
+    const quantity = receiptDetails.quantity || '1';
+    drawText(
+      quantity, 
+      config.fields.quantity.x, 
+      config.fields.quantity.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.quantity.alignment
+    );
+
+    // Unit Price (center aligned) - only price number, no INR
+    drawText(
+      receiptDetails.amount, 
+      config.fields.unitPrice.x, 
+      config.fields.unitPrice.y, 
+      config.fontSizes.value,
+      false,
+      config.fields.unitPrice.alignment
+    );
+
+    // Line Total (right aligned) - same font weight as unit price, no INR
+    drawText(
+      receiptDetails.amount, 
+      config.fields.lineTotal.x, 
+      config.fields.lineTotal.y, 
+      config.fontSizes.value,
+      false, // regular weight, same as unit price
+      config.fields.lineTotal.alignment
+    );
+
+    // Grand Total (right aligned, bold) - currency from receiptDetails
+    const currency = receiptDetails.currency || 'INR';
+    drawText(
+      `${currency} ${receiptDetails.amount}`, 
+      config.fields.grandTotal.x, 
+      config.fields.grandTotal.y, 
+      config.fontSizes.value,
+      true, // bold
+      config.fields.grandTotal.alignment
+    );
+
+    // Save the PDF
+    const pdfBytes = await pdfDoc.save();
+    console.log('✅ PDF generated using template, size:', pdfBytes.length, 'bytes');
+    return Buffer.from(pdfBytes);
+
+  } catch (error) {
+    console.error('❌ Error generating receipt PDF with template:', error);
+    // Fallback to old method if template loading fails
+    console.log('⚠️ Falling back to pdfkit method');
+    return generateReceiptPDFFallback(receiptDetails);
+  }
+};
+
+/**
+ * Fallback PDF generation using pdfkit (original method)
+ */
+const generateReceiptPDFFallback = async (receiptDetails) => {
   return new Promise((resolve, reject) => {
     try {
       const PDFDocument = require('pdfkit');
@@ -26,173 +419,233 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
       const chunks = [];
       
       doc.on('data', chunk => chunks.push(chunk));
-      doc.on('end', async () => {
-      try {
-        const pdfBuffer = Buffer.concat(chunks);
-        console.log('✅ PDF generated successfully, size:', pdfBuffer.length, 'bytes');
-
-        // Generate unique filename
-        const receiptNumber = `RCP-${sessionData.id.toString().padStart(6, '0')}`;
-        const filename = `receipts/${receiptNumber}-${sessionData.id}.pdf`;
-
-        // Upload to Supabase storage using admin client
-        const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-          .from('receipts')
-          .upload(filename, pdfBuffer, {
-            contentType: 'application/pdf',
-            cacheControl: '3600'
-          });
-
-        if (uploadError) {
-          console.error('❌ Error uploading receipt to storage:', uploadError);
-          return;
+      doc.on('end', () => {
+        try {
+          const pdfBuffer = Buffer.concat(chunks);
+          console.log('✅ PDF generated successfully (fallback), size:', pdfBuffer.length, 'bytes');
+          resolve(pdfBuffer);
+        } catch (error) {
+          console.error('❌ Error creating PDF buffer:', error);
+          reject(error);
         }
+      });
 
-        // Get public URL
-        const { data: urlData } = supabaseAdmin.storage
-          .from('receipts')
-          .getPublicUrl(filename);
-
-        console.log('✅ Receipt uploaded successfully:', urlData.publicUrl);
-
-        // Store receipt metadata in database using admin client
-        const receiptData = {
-          session_id: sessionData.id,
-          payment_id: paymentData.id,
-          receipt_number: receiptNumber,
-          file_path: filename,
-          file_url: urlData.publicUrl,
-          file_size: pdfBuffer.length,
-          created_at: new Date().toISOString()
-        };
-        
-        console.log('📄 Storing receipt data - session_id:', receiptData.session_id, 'receipt_number:', receiptData.receipt_number);
-        
-        const { error: receiptError } = await supabaseAdmin
-          .from('receipts')
-          .insert(receiptData);
-
-        if (receiptError) {
-          console.error('❌ Error storing receipt metadata:', receiptError);
-          reject(receiptError);
-        } else {
-          console.log('✅ Receipt metadata stored successfully');
-          
-          // Log receipt generation
-          if (clientData?.id) {
-            userInteractionLogger.logReceipt({
-              userId: clientData.id,
-              userRole: 'client',
-              paymentId: paymentData.id,
-              sessionId: sessionData.id,
-              amount: paymentData.amount,
-              status: 'success',
-              action: 'generate'
-            }).catch(err => console.error('Error logging receipt:', err));
-          }
-          
-          // Verify the receipt was stored by querying it back
-          // Use maybeSingle() to avoid error if receipt doesn't exist yet (race condition)
-          const { data: verifyReceipt, error: verifyError } = await supabaseAdmin
-            .from('receipts')
-            .select('*')
-            .eq('session_id', sessionData.id)
-            .maybeSingle(); // Use maybeSingle() instead of single() to handle missing receipts gracefully
-            
-          if (verifyError) {
-            // Only log if it's not a "not found" error (PGRST116)
-            if (verifyError.code !== 'PGRST116') {
-            console.error('❌ Error verifying receipt storage:', verifyError);
-          } else {
-              console.log('ℹ️ Receipt not found yet (may still be processing):', verifyError.code);
-            }
-          } else if (verifyReceipt) {
-            console.log('✅ Receipt verification successful:', verifyReceipt);
-          } else {
-            console.log('ℹ️ Receipt not found in verification query (may still be processing)');
-          }
-          
-          resolve({ 
-            success: true, 
-            receiptNumber, 
-            fileUrl: urlData.publicUrl,
-            pdfBuffer: pdfBuffer // Return buffer for email attachment
-          });
-        }
-
-        // Note: pdfBuffer is automatically garbage collected - no local file cleanup needed
-
-      } catch (error) {
-        console.error('❌ Error in PDF upload process:', error);
+      doc.on('error', (error) => {
+        console.error('❌ PDF generation error:', error);
         reject(error);
-      }
-    });
+      });
 
-    // Add company logo/header
-    doc.fontSize(24).font('Helvetica-Bold').text('Little Care', { align: 'center' });
-    doc.fontSize(12).font('Helvetica').text('Mental Health & Wellness Platform', { align: 'center' });
-    doc.moveDown();
+      // Add company logo/header
+      doc.fontSize(24).font('Helvetica-Bold').text('Little Care', { align: 'center' });
+      doc.fontSize(12).font('Helvetica').text('Mental Health & Wellness Platform', { align: 'center' });
+      doc.moveDown();
 
-    // Add receipt title
-    doc.fontSize(18).font('Helvetica-Bold').text('PAYMENT RECEIPT', { align: 'center' });
-    doc.moveDown();
+      // Add receipt title
+      doc.fontSize(18).font('Helvetica-Bold').text('PAYMENT RECEIPT', { align: 'center' });
+      doc.moveDown();
 
-    // Add receipt details
-    doc.fontSize(10).font('Helvetica');
-    
-    // Receipt number
-    doc.text(`Receipt Number: RCP-${sessionData.id.toString().padStart(6, '0')}`);
-    doc.text(`Date: ${new Date(paymentData.completed_at || new Date()).toLocaleDateString('en-IN')}`);
-    doc.text(`Time: ${new Date(paymentData.completed_at || new Date()).toLocaleTimeString('en-IN')}`);
-    doc.moveDown();
+      // Add receipt details
+      doc.fontSize(10).font('Helvetica');
+      
+      // Receipt number
+      doc.text(`Receipt Number: ${receiptDetails.receipt_number}`);
+      doc.text(`Date: ${new Date(receiptDetails.payment_date || new Date()).toLocaleDateString('en-IN')}`);
+      doc.text(`Time: ${new Date(receiptDetails.payment_date || new Date()).toLocaleTimeString('en-IN')}`);
+      doc.moveDown();
 
-    // Session details
-    doc.fontSize(12).font('Helvetica-Bold').text('Session Details:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Date: ${new Date(sessionData.scheduled_date).toLocaleDateString('en-IN')}`);
-    doc.text(`Time: ${sessionData.scheduled_time}`);
-    doc.text(`Status: ${sessionData.status}`);
-    doc.moveDown();
+      // Session details
+      doc.fontSize(12).font('Helvetica-Bold').text('Session Details:');
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Date: ${new Date(receiptDetails.session_date).toLocaleDateString('en-IN')}`);
+      doc.text(`Time: ${receiptDetails.session_time}`);
+      doc.text(`Status: ${receiptDetails.session_status || 'booked'}`);
+      doc.moveDown();
 
-    // Psychologist details
-    doc.fontSize(12).font('Helvetica-Bold').text('Therapist:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Name: ${psychologistData.first_name} ${psychologistData.last_name}`);
-    doc.text(`Email: ${psychologistData.email}`);
-    doc.text(`Phone: ${psychologistData.phone || 'N/A'}`);
-    doc.moveDown();
+      // Psychologist details
+      doc.fontSize(12).font('Helvetica-Bold').text('Therapist:');
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Name: ${receiptDetails.psychologist_name}`);
+      doc.text(`Email: ${receiptDetails.psychologist_email || 'N/A'}`);
+      doc.text(`Phone: ${receiptDetails.psychologist_phone || 'N/A'}`);
+      doc.moveDown();
 
-    // Client details
-    doc.fontSize(12).font('Helvetica-Bold').text('Client:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Name: ${clientData.first_name} ${clientData.last_name}`);
-    doc.text(`Email: ${clientData.user?.email || 'N/A'}`);
-    doc.moveDown();
+      // Client details
+      doc.fontSize(12).font('Helvetica-Bold').text('Client:');
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Name: ${receiptDetails.client_name}`);
+      doc.text(`Email: ${receiptDetails.client_email || 'N/A'}`);
+      doc.moveDown();
 
-    // Payment details
-    doc.fontSize(12).font('Helvetica-Bold').text('Payment Details:');
-    doc.fontSize(10).font('Helvetica');
-    doc.text(`Transaction ID: ${paymentData.transaction_id}`);
-    doc.text(`Amount: ₹${paymentData.amount}`);
-    doc.text(`Payment Date: ${new Date(paymentData.completed_at || new Date()).toLocaleDateString('en-IN')}`);
-    doc.moveDown();
+      // Payment details
+      doc.fontSize(12).font('Helvetica-Bold').text('Payment Details:');
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Transaction ID: ${receiptDetails.transaction_id}`);
+      doc.text(`Amount: ₹${receiptDetails.amount}`);
+      doc.text(`Payment Date: ${new Date(receiptDetails.payment_date || new Date()).toLocaleDateString('en-IN')}`);
+      doc.moveDown();
 
-    // Footer
-    doc.fontSize(10).font('Helvetica').text('Thank you for choosing Little Care for your mental health needs.', { align: 'center' });
-    doc.text('For any queries, please contact our support team.', { align: 'center' });
+      // Footer
+      doc.fontSize(10).font('Helvetica').text('Thank you for choosing Little Care for your mental health needs.', { align: 'center' });
+      doc.text('For any queries, please contact our support team.', { align: 'center' });
 
-    doc.end();
+      doc.end();
 
-    doc.on('error', (error) => {
-      console.error('❌ PDF generation error:', error);
+    } catch (error) {
+      console.error('❌ Error generating receipt PDF:', error);
       reject(error);
-    });
+    }
+  });
+};
+
+/**
+ * Generate receipt PDF and store receipt details in database (without storing PDF file)
+ * PDF is generated, sent via email/WhatsApp, then discarded
+ */
+const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psychologistData) => {
+  try {
+    // Generate unique receipt number (shorter format: R-XXXX instead of RCP-XXXXXX)
+    const receiptNumber = `R-${sessionData.id.toString().padStart(4, '0')}`;
+    
+    // Determine if it's a package or individual session
+    const isPackage = paymentData.package_id && 
+                      paymentData.package_id !== 'null' && 
+                      paymentData.package_id !== 'undefined' && 
+                      paymentData.package_id !== 'individual';
+    
+    // Get package data if it's a package
+    let packageSessionCount = 1; // Default to 1 for individual sessions
+    if (isPackage) {
+      try {
+        const { data: packageData, error: packageError } = await supabaseAdmin
+          .from('packages')
+          .select('session_count')
+          .eq('id', paymentData.package_id)
+          .single();
+        
+        if (!packageError && packageData && packageData.session_count) {
+          packageSessionCount = packageData.session_count;
+        }
+      } catch (err) {
+        console.warn('⚠️ Error fetching package session_count, using default:', err);
+      }
+    }
+    
+    // Get payment method from Razorpay response or payment data
+    const razorpayResponse = paymentData.razorpay_response || paymentData.razorpay_params || {};
+    let paymentMethod = razorpayResponse.method || razorpayResponse.payment_method;
+    
+    // If no method in response, check payment_method field or infer from transaction_id
+    if (!paymentMethod) {
+      if (paymentData.payment_method === 'cash') {
+        paymentMethod = 'cash';
+      } else if (paymentData.transaction_id) {
+        paymentMethod = 'online'; // Online payment but method not specified
+      } else {
+        paymentMethod = 'cash';
+      }
+    }
+    
+    // Map Razorpay method names to readable format
+    let paymentModeText = 'Cash Payment';
+    if (paymentMethod && paymentMethod !== 'cash') {
+      const methodMap = {
+        'netbanking': 'Net Banking',
+        'card': 'Card Payment',
+        'credit_card': 'Card Payment',
+        'debit_card': 'Card Payment',
+        'upi': 'UPI Payment',
+        'wallet': 'Wallet Payment',
+        'online': 'Online Payment'
+      };
+      paymentModeText = methodMap[paymentMethod.toLowerCase()] || 'Online Payment';
+    }
+    
+    // Get currency from Razorpay (default to INR)
+    const currency = razorpayResponse.currency || 
+                    paymentData.razorpay_params?.currency || 
+                    'INR';
+    
+    // Determine item description
+    const itemDescription = isPackage ? 'Package Session' : 'Individual Therapy';
+    
+    // Prepare receipt details to store in database (as JSON/text)
+    const receiptDetails = {
+      receipt_number: receiptNumber,
+      session_date: sessionData.scheduled_date,
+      session_time: sessionData.scheduled_time,
+      session_status: sessionData.status || 'booked',
+      psychologist_name: `${psychologistData.first_name} ${psychologistData.last_name}`,
+      psychologist_email: psychologistData.email || null,
+      psychologist_phone: psychologistData.phone || null,
+      client_name: `${clientData.first_name || ''} ${clientData.last_name || ''}`.trim() || 'N/A',
+      client_email: clientData.user?.email || null,
+      client_phone: clientData.phone_number || null,
+      transaction_id: paymentData.transaction_id,
+      amount: paymentData.amount,
+      payment_date: paymentData.completed_at || new Date().toISOString(),
+      payment_method: paymentModeText,
+      currency: currency,
+      item_description: itemDescription,
+      quantity: packageSessionCount.toString(),
+      is_package: isPackage
+    };
+
+    // Generate PDF buffer for sending (will be discarded after sending)
+    const pdfBuffer = await generateReceiptPDF(receiptDetails);
+    console.log('✅ PDF generated successfully, size:', pdfBuffer.length, 'bytes');
+
+    // Store receipt details in database (as JSON/text, not PDF file)
+    // Note: file_path, file_url, file_size are legacy columns (for old receipts stored in storage)
+    // New receipts generate PDFs on-demand, so these are set to NULL
+    const receiptData = {
+      session_id: sessionData.id,
+      payment_id: paymentData.id,
+      receipt_number: receiptNumber,
+      receipt_details: receiptDetails, // Store as JSON/text
+      file_path: null, // Legacy: PDFs are not stored anymore
+      file_url: null, // Legacy: PDFs are not stored anymore
+      file_size: null, // Legacy: PDFs are not stored anymore
+      created_at: new Date().toISOString()
+    };
+    
+    console.log('📄 Storing receipt data - session_id:', receiptData.session_id, 'receipt_number:', receiptData.receipt_number);
+    
+    const { error: receiptError } = await supabaseAdmin
+      .from('receipts')
+      .insert(receiptData);
+
+    if (receiptError) {
+      console.error('❌ Error storing receipt details:', receiptError);
+      throw receiptError;
+    }
+
+    console.log('✅ Receipt details stored successfully in database');
+    
+    // Log receipt generation
+    if (clientData?.id) {
+      userInteractionLogger.logReceipt({
+        userId: clientData.id,
+        userRole: 'client',
+        paymentId: paymentData.id,
+        sessionId: sessionData.id,
+        amount: paymentData.amount,
+        status: 'success',
+        action: 'generate'
+      }).catch(err => console.error('Error logging receipt:', err));
+    }
+    
+    // Return receipt info with PDF buffer (PDF will be sent then discarded)
+    return { 
+      success: true, 
+      receiptNumber, 
+      pdfBuffer: pdfBuffer, // PDF buffer for email/WhatsApp (will be discarded after sending)
+      receiptDetails: receiptDetails // Receipt details stored in database
+    };
 
   } catch (error) {
-    console.error('❌ Error generating receipt PDF:', error);
-    reject(error);
+    console.error('❌ Error in generateAndStoreReceipt:', error);
+    throw error;
   }
-  });
 };
 
 // Create Razorpay payment order
@@ -1296,14 +1749,14 @@ const handlePaymentSuccess = async (req, res) => {
         psychologistDetails
       );
       
-      if (receiptResult && receiptResult.fileUrl) {
+      if (receiptResult && receiptResult.receiptNumber) {
         console.log('✅ Receipt generated successfully:', {
           receiptNumber: receiptResult.receiptNumber,
-          fileUrl: receiptResult.fileUrl,
-          fileSize: receiptResult.fileSize
+          pdfGenerated: !!receiptResult.pdfBuffer,
+          pdfSize: receiptResult.pdfBuffer?.length || 0
         });
       } else {
-        console.warn('⚠️ Receipt generation returned no file URL:', receiptResult);
+        console.warn('⚠️ Receipt generation failed or returned no result:', receiptResult);
       }
       
       // Log receipt generation with details
@@ -1313,14 +1766,13 @@ const handlePaymentSuccess = async (req, res) => {
         paymentId: paymentRecord.id,
         sessionId: session.id,
         amount: paymentRecord.amount,
-        status: receiptResult?.fileUrl ? 'success' : 'partial',
+        status: receiptResult?.receiptNumber ? 'success' : 'partial',
         action: 'generate',
         details: {
           receiptNumber: receiptResult?.receiptNumber,
-          fileUrl: receiptResult?.fileUrl,
-          fileSize: receiptResult?.fileSize,
           pdfGenerated: !!receiptResult?.pdfBuffer,
-          hasFileUrl: !!receiptResult?.fileUrl
+          pdfSize: receiptResult?.pdfBuffer?.length || 0,
+          detailsStored: !!receiptResult?.receiptDetails
         }
       });
     } catch (receiptError) {
@@ -1481,8 +1933,13 @@ const handlePaymentSuccess = async (req, res) => {
         try {
           console.log('📧 Sending confirmation emails with receipt (async)...');
       
+      // Use client_name from receiptDetails if available (first_name + last_name), otherwise use first_name + last_name directly
+      const emailClientName = receiptResult?.receiptDetails?.client_name || 
+                              `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 
+                              'Client';
+      
       await emailService.sendSessionConfirmation({
-        clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+        clientName: emailClientName,
         psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
         sessionDate: actualScheduledDate,
         sessionTime: actualScheduledTime,
@@ -1497,8 +1954,8 @@ const handlePaymentSuccess = async (req, res) => {
             status: session.status || 'booked',
             psychologistId: session.psychologist_id || actualPsychologistId,
             clientId: session.client_id || clientId,
-            receiptUrl: receiptResult?.fileUrl || null,
-            receiptPdfBuffer: receiptResult?.pdfBuffer || null
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+            receiptNumber: receiptResult?.receiptNumber || null
       });
       
           console.log('✅ Confirmation emails sent successfully with receipt (async)');
@@ -1513,7 +1970,7 @@ const handlePaymentSuccess = async (req, res) => {
               sessionId: session.id,
               clientEmail: clientDetails?.user?.email || clientDetails?.email,
               psychologistEmail: psychologistDetails?.email,
-              hasReceipt: !!receiptResult?.fileUrl,
+              hasReceipt: !!receiptResult?.pdfBuffer,
               meetLink: meetData?.meetLink
             }
           });
@@ -1567,18 +2024,24 @@ const handlePaymentSuccess = async (req, res) => {
           ? clientDetails.child_name 
           : null;
         
+        // Get client name from receiptDetails (first_name + last_name) for receipt filename
+        const receiptClientName = receiptResult?.receiptDetails?.client_name || 
+                                  `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || null;
+        
         const clientDetails_wa = {
           childName: childName,
           date: actualScheduledDate,
           time: actualScheduledTime,
           meetLink: meetData.meetLink,
           psychologistName: psychologistName, // Add psychologist name to WhatsApp message
-          // Pass receipt URL so we can send the PDF via WhatsApp as well
-          receiptUrl: receiptResult?.fileUrl || null
+          // Pass receipt PDF buffer so we can send the PDF via WhatsApp
+          receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+          receiptNumber: receiptResult?.receiptNumber || null,
+          clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {
-              console.log('✅ WhatsApp confirmation & receipt sent to client via WhatsApp API (async)');
+              console.log('✅ WhatsApp confirmation sent to client (receipt sent via email with PDF attachment)');
               whatsappLogs.clientSent = true;
               if (clientWaResult.data?.msgId) {
                 whatsappLogs.clientMessageIds.push(clientWaResult.data.msgId);
@@ -2310,5 +2773,7 @@ module.exports = {
   createCashPayment,
   handlePaymentSuccess,
   handlePaymentFailure,
-  getPaymentStatus
+  getPaymentStatus,
+  generateAndStoreReceipt,
+  generateReceiptPDF
 };

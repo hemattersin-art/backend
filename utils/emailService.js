@@ -410,7 +410,19 @@ class EmailService {
           contentType: calendarInvite.contentType
         }] : []),
         ...(receiptPdfBuffer ? [{
-          filename: `Receipt-${sessionId}.pdf`,
+          filename: (() => {
+            // Generate filename using client name (sanitized for filesystem)
+            if (clientName) {
+              const sanitizedName = clientName
+                .trim()
+                .replace(/\s+/g, '-') // Replace spaces with hyphens
+                .replace(/[^a-zA-Z0-9\-_]/g, '') // Remove special characters except hyphens and underscores
+                .substring(0, 50); // Limit length to 50 characters
+              return `${sanitizedName || 'Receipt'}.pdf`;
+            }
+            // Fallback to session ID if client name not available
+            return `Receipt-${sessionId}.pdf`;
+          })(),
           content: receiptPdfBuffer,
           contentType: 'application/pdf'
         }] : [])

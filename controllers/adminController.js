@@ -221,108 +221,219 @@ const getAllUsers = async (req, res) => {
       );
     }
 
-    let query = supabase
-      .from('users')
-      .select(`
-        id,
-        email,
-        role,
-        profile_picture_url,
-        created_at,
-        updated_at
-      `);
+    // Default to 'client' role if not specified (for users page)
+    const targetRole = role || 'client';
 
-    // Filter by role if provided
-    if (role) {
-      query = query.eq('role', role);
-    }
-
-    // Apply sorting
-    if (sort && order) {
-      query = query.order(sort, { ascending: order === 'asc' });
-    }
-
-    // Add pagination
-    const offset = (page - 1) * limit;
-    query = query.range(offset, offset + limit - 1);
-
-    const { data: users, error, count } = await query;
-
-    if (error) {
-      console.error('Get all users error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to fetch users')
-      );
-    }
-
-    console.log('Raw users from database - count:', users?.length || 0);
-    console.log('Users count:', users?.length || 0);
-
-    let enrichedUsers = users;
-
-    // Also fetch clients who don't have entries in users table (Google OAuth users)
-    console.log('Fetching clients without user entries...');
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('*')
-      .is('user_id', null)
-      .not('email', 'is', null);
-
-    if (clientsError) {
-      console.error('Error fetching clients:', clientsError);
-    } else {
-      console.log('Found clients without user entries:', clients?.length || 0);
+    // For client role, we need to fetch from both users table and clients table
+    // and merge them for proper pagination
+    if (targetRole === 'client') {
+      // Fetch all client users from users table
+      let usersFromTable = null;
+      let usersError = null;
       
-      // Convert clients to user format
-      const clientUsers = clients?.map(client => ({
+      try {
+        const result = await supabase
+          .from('users')
+          .select(`
+            id,
+            email,
+            role,
+            profile_picture_url,
+            created_at,
+            updated_at
+          `)
+          .eq('role', 'client')
+          .order('created_at', { ascending: false });
+        
+        usersFromTable = result.data;
+        usersError = result.error;
+      } catch (fetchError) {
+        console.error('Error in fetch users query:', {
+          message: fetchError.message,
+          stack: fetchError.stack,
+          name: fetchError.name,
+          cause: fetchError.cause
+        });
+        usersError = {
+          message: fetchError.message || 'Network error while fetching users',
+          details: fetchError.stack || String(fetchError),
+          code: fetchError.code || 'FETCH_ERROR'
+        };
+      }
+
+      if (usersError) {
+        console.error('Error fetching users:', {
+          message: usersError.message,
+          details: usersError.details,
+          hint: usersError.hint,
+          code: usersError.code
+        });
+        return res.status(500).json(
+          errorResponse(`Failed to fetch users: ${usersError.message || 'Unknown error'}`)
+        );
+      }
+
+      // Fetch all clients without user_id entries
+      const { data: clientsWithoutUser, error: clientsError } = await supabase
+        .from('clients')
+        .select('*')
+        .is('user_id', null)
+        .not('email', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (clientsError) {
+        console.error('Error fetching clients:', clientsError);
+      }
+
+      // Convert users to enriched format
+      let enrichedUsers = (usersFromTable || []).map(user => ({
+        ...user,
+        name: user.email // Will be enriched with client profile data below
+      }));
+
+      // Convert clients without user_id to user format
+      const clientUsers = (clientsWithoutUser || []).map(client => ({
         id: client.id,
         email: client.email,
         role: 'client',
         profile_picture_url: client.profile_picture_url,
         created_at: client.created_at,
         updated_at: client.updated_at,
-        // Include client-specific data
         first_name: client.first_name,
         last_name: client.last_name,
         phone_number: client.phone_number,
         child_name: client.child_name,
         child_age: client.child_age,
         name: `${client.first_name || ''} ${client.last_name || ''}`.trim() || client.email
-      })) || [];
+      }));
 
-      console.log('Converted client users:', clientUsers);
-      
-      // Merge users and client users
-      enrichedUsers = [...users, ...clientUsers];
-      console.log('Combined users count:', enrichedUsers.length);
-    }
+      // Merge all client users
+      let allClientUsers = [...enrichedUsers, ...clientUsers];
 
-    // Filter by search if provided
-    let filteredUsers = enrichedUsers;
-    if (search) {
-      const searchLower = search.toLowerCase();
-      filteredUsers = enrichedUsers.filter(user => 
-        user.email.toLowerCase().includes(searchLower) ||
-        (user.name && user.name.toLowerCase().includes(searchLower))
+      // Fetch client profiles for users from users table to enrich them
+      const userIds = enrichedUsers.map(u => u.id);
+      if (userIds.length > 0) {
+        const { data: clientProfiles, error: profileError } = await supabase
+          .from('clients')
+          .select('user_id, first_name, last_name, phone_number, child_name, child_age')
+          .in('user_id', userIds);
+
+        if (!profileError && clientProfiles) {
+          // Create a map of user_id to profile
+          const profileMap = {};
+          clientProfiles.forEach(profile => {
+            profileMap[profile.user_id] = profile;
+          });
+
+          // Enrich users with profile data
+          allClientUsers = allClientUsers.map(user => {
+            if (user.id && profileMap[user.id]) {
+              const profile = profileMap[user.id];
+              return {
+                ...user,
+                profile: {
+                  first_name: profile.first_name,
+                  last_name: profile.last_name,
+                  phone_number: profile.phone_number,
+                  child_name: profile.child_name,
+                  child_age: profile.child_age
+                },
+                name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || user.email
+              };
+            }
+            return user;
+          });
+        }
+      }
+
+      // Sort all merged users by created_at descending
+      allClientUsers.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB - dateA;
+      });
+
+      // Apply search filter if provided
+      let filteredUsers = allClientUsers;
+      if (search) {
+        const searchLower = search.toLowerCase();
+        filteredUsers = allClientUsers.filter(user => 
+          user.email.toLowerCase().includes(searchLower) ||
+          (user.name && user.name.toLowerCase().includes(searchLower)) ||
+          (user.profile?.first_name && user.profile.first_name.toLowerCase().includes(searchLower)) ||
+          (user.profile?.last_name && user.profile.last_name.toLowerCase().includes(searchLower)) ||
+          (user.profile?.phone_number && user.profile.phone_number.toLowerCase().includes(searchLower)) ||
+          (user.profile?.child_name && user.profile.child_name.toLowerCase().includes(searchLower))
+        );
+      }
+
+      const totalCount = filteredUsers.length;
+
+      // Apply pagination
+      const offset = (page - 1) * limit;
+      const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
+
+      console.log('Final client users being returned - count:', paginatedUsers.length, 'of', totalCount);
+
+      res.json(
+        successResponse({
+          users: paginatedUsers,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: totalCount
+          }
+        })
+      );
+    } else {
+      // For other roles, fetch from users table only
+      let usersQuery = supabase
+        .from('users')
+        .select(`
+          id,
+          email,
+          role,
+          profile_picture_url,
+          created_at,
+          updated_at
+        `, { count: 'exact' })
+        .eq('role', targetRole);
+
+      if (sort && order) {
+        usersQuery = usersQuery.order(sort, { ascending: order === 'asc' });
+      } else {
+        usersQuery = usersQuery.order('created_at', { ascending: false });
+      }
+
+      const offset = (page - 1) * limit;
+      const { data: users, error, count } = await usersQuery.range(offset, offset + parseInt(limit) - 1);
+
+      if (error) {
+        console.error('Get all users error:', error);
+        return res.status(500).json(
+          errorResponse('Failed to fetch users')
+        );
+      }
+
+      let filteredUsers = users || [];
+      if (search) {
+        const searchLower = search.toLowerCase();
+        filteredUsers = (users || []).filter(user => 
+          user.email.toLowerCase().includes(searchLower)
+        );
+      }
+
+      res.json(
+        successResponse({
+          users: filteredUsers,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: count || filteredUsers.length
+          }
+        })
       );
     }
-
-    console.log('Final users being returned - count:', filteredUsers?.length || 0);
-    console.log('Users by role:', filteredUsers.reduce((acc, user) => {
-      acc[user.role] = (acc[user.role] || 0) + 1;
-      return acc;
-    }, {}));
-
-    res.json(
-      successResponse({
-        users: filteredUsers,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: count || filteredUsers.length
-        }
-      })
-    );
 
   } catch (error) {
     console.error('Get all users error:', error);
@@ -855,6 +966,47 @@ const getPlatformStats = async (req, res) => {
         stats.totalRevenue += parseFloat(session.price || 0);
       });
     }
+
+    // Get payment failure statistics
+    const { count: totalPayments, error: paymentsCountError } = await supabase
+      .from('payments')
+      .select('*', { count: 'exact', head: true });
+
+    const { count: failedPayments, error: failedPaymentsError } = await supabase
+      .from('payments')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'failed');
+
+    const { count: pendingPayments, error: pendingPaymentsError } = await supabase
+      .from('payments')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+
+    // Get cancelled sessions count
+    const { count: cancelledSessions, error: cancelledSessionsError } = await supabase
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'cancelled');
+
+    // Get no-show sessions count
+    const { count: noShowSessions, error: noShowSessionsError } = await supabase
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'no_show');
+
+    // Add failure metrics to stats
+    stats.failures = {
+      paymentFailures: failedPayments || 0,
+      pendingPayments: pendingPayments || 0,
+      cancelledSessions: cancelledSessions || 0,
+      noShowSessions: noShowSessions || 0,
+      totalPayments: totalPayments || 0
+    };
+
+    // Calculate failure rate
+    stats.failureRate = totalPayments > 0 
+      ? ((failedPayments || 0) / totalPayments * 100).toFixed(2)
+      : 0;
 
     res.json(
       successResponse(stats, 'Platform statistics retrieved successfully')
@@ -1911,7 +2063,7 @@ const deleteUser = async (req, res) => {
     const { userId } = req.params;
 
     // Get user
-    const { data: user, error: userError } = await supabase
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', userId)
@@ -1923,12 +2075,96 @@ const deleteUser = async (req, res) => {
       );
     }
 
-    // Delete profile first
+    // If client, delete all related data first
     if (user.role === 'client') {
-      const { error: deleteProfileError } = await supabase
+      // Find client record (for new system, client.id != user.id)
+      const { data: clientRecord } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const clientId = clientRecord?.id || userId; // Fallback to userId for old system
+
+      console.log(`🗑️  Deleting all related data for client_id: ${clientId}`);
+
+      // 1. Delete messages (via conversations)
+      const { data: conversations } = await supabaseAdmin
+        .from('conversations')
+        .select('id')
+        .eq('client_id', clientId);
+
+      if (conversations && conversations.length > 0) {
+        const conversationIds = conversations.map(c => c.id);
+        await supabaseAdmin
+          .from('messages')
+          .delete()
+          .in('conversation_id', conversationIds);
+        console.log(`   ✅ Deleted messages from ${conversations.length} conversation(s)`);
+      }
+
+      // 2. Delete conversations
+      await supabaseAdmin
+        .from('conversations')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted conversations`);
+
+      // 3. Delete receipts (via sessions)
+      const { data: sessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('client_id', clientId);
+
+      if (sessions && sessions.length > 0) {
+        const sessionIds = sessions.map(s => s.id);
+        await supabaseAdmin
+          .from('receipts')
+          .delete()
+          .in('session_id', sessionIds);
+        console.log(`   ✅ Deleted receipts for ${sessions.length} session(s)`);
+      }
+
+      // 4. Delete payments
+      await supabaseAdmin
+        .from('payments')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted payments`);
+
+      // 5. Delete sessions
+      await supabaseAdmin
+        .from('sessions')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted sessions`);
+
+      // 6. Delete assessment sessions
+      await supabaseAdmin
+        .from('assessment_sessions')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted assessment sessions`);
+
+      // 7. Delete free assessments
+      await supabaseAdmin
+        .from('free_assessments')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted free assessments`);
+
+      // 8. Delete client packages
+      await supabaseAdmin
+        .from('client_packages')
+        .delete()
+        .eq('client_id', clientId);
+      console.log(`   ✅ Deleted client packages`);
+
+      // 9. Delete client profile
+      const { error: deleteProfileError } = await supabaseAdmin
         .from('clients')
         .delete()
-        .eq('id', userId);
+        .or(`id.eq.${clientId},user_id.eq.${userId}`); // Delete by either id or user_id
 
       if (deleteProfileError) {
         console.error('Delete client profile error:', deleteProfileError);
@@ -1936,10 +2172,11 @@ const deleteUser = async (req, res) => {
           errorResponse('Failed to delete client profile')
         );
       }
+      console.log(`   ✅ Deleted client profile`);
     }
 
     // Delete user account
-    const { error: deleteUserError } = await supabase
+    const { error: deleteUserError } = await supabaseAdmin
       .from('users')
       .delete()
       .eq('id', userId);
@@ -1951,8 +2188,10 @@ const deleteUser = async (req, res) => {
       );
     }
 
+    console.log(`   ✅ Deleted user account`);
+
     res.json(
-      successResponse(null, 'User deleted successfully')
+      successResponse(null, 'User and all related data deleted successfully')
     );
 
   } catch (error) {
@@ -3828,7 +4067,9 @@ const createManualBooking = async (req, res) => {
     console.log('✅ Client found:', {
       clientId: client.id,
       clientEmail: client.user?.email,
-      clientName: `${client.first_name} ${client.last_name}`
+      clientPhone: client.phone_number,
+      clientName: `${client.first_name} ${client.last_name}`,
+      childName: client.child_name
     });
 
     // Check if psychologist exists (use admin client to bypass RLS)
@@ -4101,16 +4342,49 @@ const createManualBooking = async (req, res) => {
       .update({ session_id: session.id })
       .eq('id', paymentRecord.id);
 
-    // Send email notifications
+    // Generate PDF receipt FIRST (before sending email/WhatsApp so we can attach it)
+    let receiptResult = null;
+    try {
+      console.log('📄 Generating PDF receipt...');
+      const { generateAndStoreReceipt } = require('../controllers/paymentController');
+      receiptResult = await generateAndStoreReceipt(
+        session,
+        paymentRecord,
+        client,
+        psychologist
+      );
+      if (receiptResult && receiptResult.receiptNumber) {
+        console.log('✅ Receipt generated successfully:', {
+          receiptNumber: receiptResult.receiptNumber,
+          pdfGenerated: !!receiptResult.pdfBuffer,
+          pdfSize: receiptResult.pdfBuffer?.length || 0
+        });
+      }
+    } catch (receiptError) {
+      console.error('❌ Error generating receipt:', receiptError);
+      // Continue even if receipt generation fails
+    }
+
+    // Send email notifications (with receipt attachment)
     try {
       console.log('📧 Sending email notifications...');
       const emailService = require('../utils/emailService');
       
-      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      // Use client_name from receiptDetails if available (first_name + last_name), otherwise use first_name + last_name directly
+      const emailClientName = receiptResult?.receiptDetails?.client_name || 
+                              `${client.first_name || ''} ${client.last_name || ''}`.trim() || 
+                              'Client';
       const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
 
+      console.log('📧 Client details for email:', {
+        clientName: emailClientName,
+        clientEmail: client.user?.email,
+        clientPhone: client.phone_number,
+        psychologistName
+      });
+
       await emailService.sendSessionConfirmation({
-        clientName: clientName,
+        clientName: emailClientName,
         psychologistName: psychologistName,
         sessionDate: scheduled_date,
         sessionTime: scheduled_time,
@@ -4118,9 +4392,16 @@ const createManualBooking = async (req, res) => {
         clientEmail: client.user?.email,
         psychologistEmail: psychologist.email,
         googleMeetLink: meetData?.meetLink,
+        meetLink: meetData?.meetLink,
         sessionId: session.id,
         transactionId: transactionId,
-        amount: amount
+        amount: amount,
+        price: amount,
+        status: session.status || 'booked',
+        psychologistId: psychologist_id,
+        clientId: client.id,
+        receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+        receiptNumber: receiptResult?.receiptNumber || null
       });
 
       console.log('✅ Email notifications sent');
@@ -4129,16 +4410,29 @@ const createManualBooking = async (req, res) => {
       // Continue even if email fails
     }
 
-    // Send WhatsApp notifications
+    // Send WhatsApp notifications (with receipt PDF)
     try {
       console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      // Fix clientName: Don't use child_name if it's "Pending", null, or empty
+      const clientName = (client.child_name && 
+        client.child_name.trim() !== '' && 
+        client.child_name.toLowerCase() !== 'pending')
+        ? client.child_name
+        : `${client.first_name || ''} ${client.last_name || ''}`.trim();
       const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
+
+      console.log('📱 Client details for WhatsApp:', {
+        clientName,
+        clientPhone: client.phone_number,
+        psychologistName,
+        hasReceiptPdf: !!receiptResult?.pdfBuffer
+      });
 
       // Send WhatsApp to client
       if (client.phone_number) {
+        console.log(`📱 Sending WhatsApp to client at: ${client.phone_number}`);
         const meetLinkText = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new') 
           ? `🔗 Google Meet Link: ${meetData.meetLink}` 
           : meetData?.requiresOAuth
@@ -4160,12 +4454,18 @@ const createManualBooking = async (req, res) => {
             ? client.child_name 
             : null;
           
+          // Get client name from receiptDetails (first_name + last_name) for receipt filename
+          const receiptClientName = receiptResult?.receiptDetails?.client_name || clientName || null;
+          
           const clientDetails = {
             childName: childName,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
-            psychologistName: psychologistName // Add psychologist name to WhatsApp message
+            psychologistName: psychologistName, // Add psychologist name to WhatsApp message
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null, // Add receipt PDF buffer
+            receiptNumber: receiptResult?.receiptNumber || null, // Add receipt number
+            clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
           };
           await sendBookingConfirmation(client.phone_number, clientDetails);
         } else {
@@ -4205,22 +4505,6 @@ const createManualBooking = async (req, res) => {
     } catch (whatsappError) {
       console.error('❌ Error sending WhatsApp:', whatsappError);
       // Continue even if WhatsApp fails
-    }
-
-    // Generate PDF receipt
-    try {
-      console.log('📄 Generating PDF receipt...');
-      const { generateAndStoreReceipt } = require('../controllers/paymentController');
-      await generateAndStoreReceipt(
-        session,
-        paymentRecord,
-        client,
-        psychologist
-      );
-      console.log('✅ Receipt generated');
-    } catch (receiptError) {
-      console.error('❌ Error generating receipt:', receiptError);
-      // Continue even if receipt generation fails
     }
 
     // If package booking, create client package record

@@ -406,7 +406,7 @@ const getSessions = async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const { page = 1, limit = 10, status } = req.query;
+    const { page = 1, limit = 5, status } = req.query;
 
     // Determine client ID based on system (new or old)
     // For new system: req.user.id is users.id, use req.user.client_id (set by middleware)
@@ -429,160 +429,102 @@ const getSessions = async (req, res) => {
         `)
         .eq('client_id', clientId);
 
-      // Filter by status if provided
-      if (status) {
+      // Handle "upcoming" status specially (requires date/time filtering)
+      const isUpcomingFilter = status === 'upcoming';
+      
+      if (status && !isUpcomingFilter) {
+        // Regular status filter
         query = query.eq('status', status);
+      } else if (isUpcomingFilter) {
+        // For upcoming: exclude completed/cancelled/no_show statuses
+        query = query.not('status', 'in', '(completed,cancelled,no_show,noshow)');
+        // Also filter by date: only sessions from today onwards
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        query = query.gte('scheduled_date', today);
       }
 
-      // Add pagination and ordering
-      const offset = (page - 1) * limit;
-      query = query.range(offset, offset + limit - 1).order('scheduled_date', { ascending: false });
+      // Ordering: upcoming sessions by nearest first, others by most recent first
+      if (isUpcomingFilter) {
+        query = query.order('scheduled_date', { ascending: true })
+                     .order('scheduled_time', { ascending: true });
+      } else {
+        query = query.order('scheduled_date', { ascending: false });
+      }
 
-      const { data: sessions, error, count } = await query;
+      // For upcoming, fetch a larger batch to filter properly, then paginate client-side
+      // For regular queries, use standard pagination
+      let sessions, upcomingTotalCount;
+      if (isUpcomingFilter) {
+        // Fetch larger batch for upcoming (enough to get all upcoming sessions)
+        const fetchLimit = 100;
+        const { data: allSessions, error, count } = await query.limit(fetchLimit);
 
       if (error) {
-        console.error('Error fetching sessions:', error);
-        // If package relationship fails, try without it
-        if (error.message && (error.message.includes('package') || error.message.includes('relation') || error.code === 'PGRST116')) {
-          console.log('Retrying query without package relationship...');
-          let fallbackQuery = supabase
-            .from('sessions')
-            .select(`
-              *,
-              psychologist:psychologists(
-                id,
-                first_name,
-                last_name,
-                area_of_expertise,
-                cover_image_url
-              )
-            `)
-            .eq('client_id', clientId);
-
-          if (status) {
-            fallbackQuery = fallbackQuery.eq('status', status);
-          }
-
-          const offset = (page - 1) * limit;
-          fallbackQuery = fallbackQuery.range(offset, offset + limit - 1).order('scheduled_date', { ascending: false });
-
-          const { data: fallbackSessions, error: fallbackError } = await fallbackQuery;
-          
-          if (fallbackError) {
-            console.error('Fallback query also failed:', fallbackError);
-            return res.status(500).json(
-              errorResponse('Failed to fetch sessions: ' + fallbackError.message)
-            );
-          }
-
-          // Also fetch assessment sessions for fallback
-          let assessmentSessions = [];
-          try {
-            const assessQuery = supabaseAdmin
-              .from('assessment_sessions')
-              .select(`
-                id,
-                assessment_id,
-                assessment_slug,
-                psychologist_id,
-                scheduled_date,
-                scheduled_time,
-                status,
-                amount,
-                payment_id,
-                created_at,
-                assessment:assessments(
-                  id,
-                  slug,
-                  hero_title,
-                  seo_title
-                ),
-                psychologist:psychologists(
-                  id,
-                  first_name,
-                  last_name,
-                  area_of_expertise,
-                  cover_image_url
-                )
-              `)
-              .eq('client_id', clientId);
-            
-            if (status) {
-              assessQuery.eq('status', status);
-            }
-            
-            const { data: assessData } = await assessQuery.order('scheduled_date', { ascending: false });
-            
-            assessmentSessions = (assessData || []).map(a => ({
-              ...a,
-              session_type: 'assessment',
-              type: 'assessment'
-            }));
-          } catch (assessError) {
-            console.log('Assessment sessions fetch error (non-blocking):', assessError);
-          }
-
-          // Fetch package information for fallback sessions that have package_id
-          const fallbackSessionsWithPackages = await Promise.all((fallbackSessions || []).map(async (session) => {
-            if (session.package_id) {
-              try {
-                const { data: packageData, error: packageError } = await supabase
-                  .from('packages')
-                  .select('id, package_type, price, description, session_count')
-                  .eq('id', session.package_id)
-                  .single();
-                
-                if (!packageError && packageData) {
-                  // Calculate package progress: count completed sessions for this package
-                  const { data: packageSessions, error: sessionsError } = await supabase
-                    .from('sessions')
-                    .select('id, status')
-                    .eq('package_id', session.package_id)
-                    .eq('client_id', clientId);
-                  
-                  if (!sessionsError && packageSessions) {
-                    const totalSessions = packageData.session_count || 0;
-                    const completedSessions = packageSessions.filter(
-                      s => s.status === 'completed'
-                    ).length;
-                    
-                    packageData.completed_sessions = completedSessions;
-                    packageData.total_sessions = totalSessions;
-                    packageData.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
-                  }
-                  
-                  session.package = packageData;
-                }
-              } catch (err) {
-                console.log('Error fetching package for session:', session.id, err);
-              }
-            }
-            return session;
-          }));
-
-          // Combine with assessment sessions
-          const allSessions = [...(fallbackSessionsWithPackages || []), ...assessmentSessions]
-            .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
-
-          return res.json(
-            successResponse({
-              sessions: allSessions,
-              pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total: (fallbackSessionsWithPackages?.length || 0) + assessmentSessions.length
-              }
-            })
-          );
+          throw error;
         }
         
-        return res.status(500).json(
-          errorResponse('Failed to fetch sessions: ' + error.message)
-        );
+        // Filter out expired sessions client-side (can't do complex time math in SQL easily)
+        const dayjs = require('dayjs');
+        const utc = require('dayjs/plugin/utc');
+        const timezone = require('dayjs/plugin/timezone');
+        dayjs.extend(utc);
+        dayjs.extend(timezone);
+
+        const now = dayjs().tz('Asia/Kolkata');
+        const filteredUpcoming = (allSessions || []).filter(session => {
+          if (!session.scheduled_date || !session.scheduled_time) {
+            return false;
+          }
+          
+          // Parse session end time (start + 50 minutes)
+          const timeStr = session.scheduled_time || '00:00:00';
+          const timeOnly = timeStr.split(' ')[0];
+          const sessionDateTime = dayjs(`${session.scheduled_date}T${timeOnly}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+          const sessionEndDateTime = sessionDateTime.add(50, 'minute');
+          
+          // Only include if session hasn't ended yet
+          return sessionEndDateTime.isAfter(now);
+        });
+        
+        // Sort by nearest first
+        filteredUpcoming.sort((a, b) => {
+          const timeA = a.scheduled_time || '00:00:00';
+          const timeOnlyA = timeA.split(' ')[0];
+          const dateA = dayjs(`${a.scheduled_date}T${timeOnlyA}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+          
+          const timeB = b.scheduled_time || '00:00:00';
+          const timeOnlyB = timeB.split(' ')[0];
+          const dateB = dayjs(`${b.scheduled_date}T${timeOnlyB}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+          
+          return dateA - dateB;
+        });
+        
+        // Store total count for pagination
+        upcomingTotalCount = filteredUpcoming.length;
+        
+        // Apply pagination after filtering
+        const offset = (page - 1) * limit;
+        sessions = filteredUpcoming.slice(offset, offset + limit);
+      } else {
+        // Regular pagination for non-upcoming
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit - 1);
+        const { data: fetchedSessions, error, count } = await query;
+        
+        if (error) {
+          throw error;
+        }
+        
+        sessions = fetchedSessions || [];
+        upcomingTotalCount = null; // Not applicable for non-upcoming
       }
 
-      // Also fetch assessment sessions
+      // Also fetch assessment sessions (run in parallel with package fetching for better performance)
+      // Only fetch if status filter allows (to reduce unnecessary queries)
       let assessmentSessions = [];
+      const shouldFetchAssessments = !status || ['upcoming', 'completed', 'cancelled', 'rescheduled'].includes(status);
+      
+      if (shouldFetchAssessments) {
       try {
         const assessQuery = supabaseAdmin
           .from('assessment_sessions')
@@ -613,63 +555,123 @@ const getSessions = async (req, res) => {
           `)
           .eq('client_id', clientId);
         
-        if (status) {
+          if (status && status !== 'upcoming') {
+            // For non-upcoming, apply status filter directly
           assessQuery.eq('status', status);
+          } else if (status === 'upcoming') {
+            // For upcoming, exclude completed/cancelled
+            assessQuery.not('status', 'in', '(completed,cancelled,no_show,noshow)');
+            const today = new Date().toISOString().split('T')[0];
+            assessQuery.gte('scheduled_date', today);
         }
         
         const { data: assessData } = await assessQuery.order('scheduled_date', { ascending: false });
         
+          // For upcoming, filter out expired assessment sessions
+          if (status === 'upcoming' && assessData) {
+            const dayjs = require('dayjs');
+            const utc = require('dayjs/plugin/utc');
+            const timezone = require('dayjs/plugin/timezone');
+            dayjs.extend(utc);
+            dayjs.extend(timezone);
+            const now = dayjs().tz('Asia/Kolkata');
+            
+            assessmentSessions = (assessData || []).filter(a => {
+              if (!a.scheduled_date || !a.scheduled_time) return false;
+              const timeStr = a.scheduled_time || '00:00:00';
+              const timeOnly = timeStr.split(' ')[0];
+              const sessionDateTime = dayjs(`${a.scheduled_date}T${timeOnly}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+              const sessionEndDateTime = sessionDateTime.add(50, 'minute');
+              return sessionEndDateTime.isAfter(now);
+            }).map(a => ({
+              ...a,
+              session_type: 'assessment',
+              type: 'assessment'
+            }));
+          } else {
         // Transform assessment sessions to match session format
         assessmentSessions = (assessData || []).map(a => ({
           ...a,
           session_type: 'assessment',
           type: 'assessment'
         }));
+          }
       } catch (assessError) {
         console.log('Assessment sessions fetch error (non-blocking):', assessError);
       }
+      }
 
-      // Fetch package information for sessions that have package_id
-      const sessionsWithPackages = await Promise.all((sessions || []).map(async (session) => {
-        if (session.package_id) {
+      // Fetch package information for sessions that have package_id (optimized batch query)
+      const packageIds = [...new Set((sessions || []).map(s => s.package_id).filter(Boolean))];
+      let packagesMap = {};
+      
+      if (packageIds.length > 0) {
           try {
-            const { data: packageData, error: packageError } = await supabase
+          // Batch fetch all packages at once
+          const { data: packagesData, error: packagesError } = await supabase
               .from('packages')
               .select('id, package_type, price, description, session_count')
-              .eq('id', session.package_id)
-              .single();
+            .in('id', packageIds);
             
-            if (!packageError && packageData) {
-              // Calculate package progress: count completed sessions for this package
-              const { data: packageSessions, error: sessionsError } = await supabase
+          if (!packagesError && packagesData) {
+            // Create a map for quick lookup
+            packagesMap = packagesData.reduce((acc, pkg) => {
+              acc[pkg.id] = pkg;
+              return acc;
+            }, {});
+            
+            // Batch count completed sessions for all packages at once
+            const { data: allPackageSessions, error: sessionsError } = await supabase
                 .from('sessions')
-                .select('id, status')
-                .eq('package_id', session.package_id)
+              .select('package_id, status')
+              .in('package_id', packageIds)
                 .eq('client_id', clientId);
               
-              if (!sessionsError && packageSessions) {
-                const totalSessions = packageData.session_count || 0;
-                const completedSessions = packageSessions.filter(
-                  s => s.status === 'completed'
-                ).length;
-                
-                packageData.completed_sessions = completedSessions;
-                packageData.total_sessions = totalSessions;
-                packageData.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
-              }
+            if (!sessionsError && allPackageSessions) {
+              // Count completed sessions per package
+              const completedCounts = allPackageSessions.reduce((acc, s) => {
+                if (s.status === 'completed' && s.package_id) {
+                  acc[s.package_id] = (acc[s.package_id] || 0) + 1;
+                }
+                return acc;
+              }, {});
               
-              session.package = packageData;
+              // Add progress info to each package
+              Object.keys(packagesMap).forEach(pkgId => {
+                const pkg = packagesMap[pkgId];
+                const totalSessions = pkg.session_count || 0;
+                const completedSessions = completedCounts[pkgId] || 0;
+                pkg.completed_sessions = completedSessions;
+                pkg.total_sessions = totalSessions;
+                pkg.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+              });
+            }
             }
           } catch (err) {
-            console.log('Error fetching package for session:', session.id, err);
-          }
+          console.log('Error fetching packages:', err);
+        }
+      }
+      
+      // Attach package data to sessions
+      const sessionsWithPackages = (sessions || []).map(session => {
+        if (session.package_id && packagesMap[session.package_id]) {
+          session.package = packagesMap[session.package_id];
         }
         return session;
-      }));
+      });
 
       // Combine regular sessions and assessment sessions
-      const allSessions = [...(sessionsWithPackages || []), ...assessmentSessions]
-        .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
+      // Only sort by date descending for non-upcoming (upcoming already sorted by nearest)
+      let allSessions = [...(sessionsWithPackages || []), ...assessmentSessions];
+      if (!isUpcomingFilter) {
+        allSessions = allSessions.sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
+      }
+
+      // Calculate total count for pagination
+      // Assessment sessions are already filtered for upcoming, so just use length
+      const totalCount = isUpcomingFilter 
+        ? (upcomingTotalCount || 0) + assessmentSessions.length
+        : ((count || 0) + assessmentSessions.length);
 
       res.json(
         successResponse({
@@ -677,7 +679,7 @@ const getSessions = async (req, res) => {
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: (count || 0) + assessmentSessions.length
+            total: totalCount
           }
         })
       );
