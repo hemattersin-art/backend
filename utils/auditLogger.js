@@ -37,6 +37,9 @@ class AuditLogger {
     userAgent
   }) {
     try {
+      // Handle null userId for failed authentication attempts
+      // For failed logins, userId will be null, but we still want to log the attempt
+      // If user_id column has NOT NULL constraint, we'll skip the insert but log to console
       const auditLog = {
         user_id: userId,
         user_email: userEmail,
@@ -55,11 +58,31 @@ class AuditLogger {
       // Try to insert into audit_logs table if it exists
       // SECURITY: Fail secure - if audit logging fails, we should know about it
       try {
+        // If userId is null (e.g., failed login for non-existent user), 
+        // check if we can still insert (depends on schema)
+        // If schema requires user_id, we'll catch the error and log to console
         const { error } = await supabaseAdmin
           .from('audit_logs')
           .insert([auditLog]);
 
         if (error) {
+          // Handle NOT NULL constraint violation for user_id
+          if (error.code === '23502' && error.message.includes('user_id')) {
+            // user_id is required but we don't have it (failed login attempt)
+            // Log to console for security monitoring, but don't fail the request
+            console.warn('⚠️ Audit log skipped (null user_id):', {
+              action,
+              user_email: userEmail,
+              user_role: userRole,
+              endpoint,
+              ip_address: ip,
+              reason: 'user_id is null (failed authentication attempt)'
+            });
+            console.warn('⚠️ Full audit log (console only):', JSON.stringify(auditLog, null, 2));
+            // Return success since we've logged it to console
+            return { success: true, loggedToConsole: true };
+          }
+          
           // Table might not exist - this is a critical security issue
           if (error.code === '42P01') { // Table doesn't exist
             console.error('🚨 CRITICAL: audit_logs table not found! Run migration: create_audit_logs_table.sql');
@@ -73,7 +96,7 @@ class AuditLogger {
             // Consider sending alert to monitoring system
           }
         } else {
-          console.log(`📋 Audit logged: ${action} by ${userEmail} (${userRole})`);
+          console.log(`📋 Audit logged: ${action} by ${userEmail || 'unknown'} (${userRole})`);
         }
       } catch (dbError) {
         // Critical error - log and alert
