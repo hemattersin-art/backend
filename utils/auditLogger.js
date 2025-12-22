@@ -58,15 +58,16 @@ class AuditLogger {
       // Try to insert into audit_logs table if it exists
       // SECURITY: Fail secure - if audit logging fails, we should know about it
       try {
-        // If userId is null (e.g., failed login for non-existent user), 
-        // check if we can still insert (depends on schema)
-        // If schema requires user_id, we'll catch the error and log to console
+        // Note: user_id column is nullable, so failed login attempts (null user_id) 
+        // can be inserted into the database. This is the expected behavior.
+        // If schema changes to require user_id, we'll catch the error and log to console as fallback.
         const { error } = await supabaseAdmin
           .from('audit_logs')
           .insert([auditLog]);
 
         if (error) {
-          // Handle NOT NULL constraint violation for user_id
+          // Handle NOT NULL constraint violation for user_id (fallback for schema changes)
+          // Note: Currently user_id is nullable, so this shouldn't happen, but kept as safety net
           if (error.code === '23502' && error.message.includes('user_id')) {
             // user_id is required but we don't have it (failed login attempt)
             // Log to console for security monitoring, but don't fail the request
