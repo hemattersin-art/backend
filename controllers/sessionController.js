@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
@@ -54,7 +54,8 @@ const bookSession = async (req, res) => {
     console.log('✅ Time slot is available');
 
     // Get client and psychologist details for Google Calendar
-    const { data: clientDetails, error: clientDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
       .select(`
         first_name, 
@@ -72,7 +73,7 @@ const bookSession = async (req, res) => {
       );
     }
 
-    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email')
       .eq('id', psychologist_id)
@@ -149,7 +150,8 @@ const bookSession = async (req, res) => {
       sessionData.google_meet_start_url = meetData.meetLink;
     }
 
-    const { data: session, error: createError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: session, error: createError } = await supabaseAdmin
       .from('sessions')
       .insert(sessionData)
       .select()
@@ -292,7 +294,9 @@ const getAllSessions = async (req, res) => {
     const { page = 1, limit = 10, status, psychologist_id, client_id, date, sort = 'created_at', order = 'desc' } = req.query;
 
     // First, get the total count of sessions (without pagination)
-    let countQuery = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { supabaseAdmin } = require('../config/supabase');
+    let countQuery = supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true });
 
@@ -314,7 +318,8 @@ const getAllSessions = async (req, res) => {
     console.log('Total sessions count:', sessionsCount);
 
     // Now fetch the paginated sessions
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -538,7 +543,9 @@ const getClientSessions = async (req, res) => {
     const { clientId } = req.params;
     const { page = 1, limit = 10, status } = req.query;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { supabaseAdmin } = require('../config/supabase');
+    let query = supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -605,7 +612,8 @@ const getPsychologistSessions = async (req, res) => {
     const { psychologistId } = req.params;
     const { page = 1, limit = 10, status } = req.query;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -661,7 +669,7 @@ const getSessionById = async (req, res) => {
   try {
     const { sessionId } = req.params;
 
-    const { data: session, error } = await supabase
+    const { data: session, error } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -713,7 +721,7 @@ const getSessionById = async (req, res) => {
         // If package object doesn't exist, fetch it
         if (!session.package) {
           console.log('⚠️ Package object missing, fetching from packages table...');
-          const { data: packageData, error: packageError } = await supabase
+          const { data: packageData, error: packageError } = await supabaseAdmin
             .from('packages')
             .select('id, package_type, price, description, session_count')
             .eq('id', session.package_id)
@@ -730,7 +738,7 @@ const getSessionById = async (req, res) => {
         }
         
         // Count completed sessions for this package
-        const { data: packageSessions, error: sessionsError } = await supabase
+        const { data: packageSessions, error: sessionsError } = await supabaseAdmin
           .from('sessions')
           .select('id, status')
           .eq('package_id', session.package_id)
@@ -813,7 +821,7 @@ const updateSessionStatus = async (req, res) => {
     }
 
     // Check if session exists
-    const { data: session } = await supabase
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -830,7 +838,7 @@ const updateSessionStatus = async (req, res) => {
       updateData.session_notes = notes;
     }
 
-    const { data: updatedSession, error } = await supabase
+    const { data: updatedSession, error } = await supabaseAdmin
       .from('sessions')
       .update({
         ...updateData,
@@ -948,7 +956,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Check if session exists
-    const { data: session } = await supabase
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -972,7 +980,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Check if new time slot is available
-    const { data: availability } = await supabase
+    const { data: availability } = await supabaseAdmin
       .from('availability')
       .select('time_slots')
       .eq('psychologist_id', session.psychologist_id)
@@ -987,7 +995,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Check if new time slot is already booked
-    const { data: existingSession } = await supabase
+    const { data: existingSession } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('psychologist_id', session.psychologist_id)
@@ -1007,13 +1015,13 @@ const rescheduleSession = async (req, res) => {
     /* 
     if (session.google_calendar_event_id) {
       try {
-        const { data: clientDetails } = await supabase
+        const { data: clientDetails } = await supabaseAdmin
           .from('clients')
           .select('first_name, last_name, child_name')
           .eq('id', session.client_id)
           .single();
 
-        const { data: psychologistDetails } = await supabase
+        const { data: psychologistDetails } = await supabaseAdmin
           .from('psychologists')
           .select('first_name, last_name')
           .eq('id', session.psychologist_id)
@@ -1033,13 +1041,13 @@ const rescheduleSession = async (req, res) => {
     // Get client and psychologist details for email notifications
     if (true) { // Always fetch for email notifications
       try {
-        const { data: clientDetails } = await supabase
+        const { data: clientDetails } = await supabaseAdmin
           .from('clients')
           .select('first_name, last_name, child_name')
           .eq('id', session.client_id)
           .single();
 
-        const { data: psychologistDetails } = await supabase
+        const { data: psychologistDetails } = await supabaseAdmin
           .from('psychologists')
           .select('first_name, last_name')
           .eq('id', session.psychologist_id)
@@ -1067,13 +1075,14 @@ const rescheduleSession = async (req, res) => {
       }
     }
 
-    // Update session
-    const { data: updatedSession, error } = await supabase
+    // Update session (reset reminder_sent since it's rescheduled)
+    const { data: updatedSession, error } = await supabaseAdmin
       .from('sessions')
       .update({
         scheduled_date: formatDate(new_date),
         scheduled_time: formatTime(new_time),
         status: 'rescheduled',
+        reminder_sent: false, // Reset reminder flag when rescheduled
         updated_at: new Date().toISOString()
       })
       .eq('id', sessionId)
@@ -1104,7 +1113,8 @@ const getSessionStats = async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('sessions')
       .select('status, scheduled_date, price');
 
@@ -1164,7 +1174,8 @@ const searchSessions = async (req, res) => {
       end_date
     } = req.query;
 
-    let supabaseQuery = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let supabaseQuery = supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -1263,7 +1274,7 @@ const createSession = async (req, res) => {
     }
 
     // Check if client exists
-    const { data: client, error: clientError } = await supabase
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', client_id)
@@ -1276,7 +1287,7 @@ const createSession = async (req, res) => {
     }
 
     // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id')
       .eq('id', psychologist_id)
@@ -1289,7 +1300,7 @@ const createSession = async (req, res) => {
     }
 
     // Check if package exists
-    const { data: package, error: packageError } = await supabase
+    const { data: package, error: packageError } = await supabaseAdmin
       .from('packages')
       .select('id, price')
       .eq('id', package_id)
@@ -1302,7 +1313,7 @@ const createSession = async (req, res) => {
     }
 
     // Create session
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([{
         client_id,
@@ -1342,7 +1353,7 @@ const deleteSession = async (req, res) => {
     const { sessionId } = req.params;
 
     // Check if session exists
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('id, status')
       .eq('id', sessionId)
@@ -1375,7 +1386,7 @@ const deleteSession = async (req, res) => {
     console.log('ℹ️  Google Calendar sync disabled - skipping calendar event deletion');
 
     // Delete session
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await supabaseAdmin
       .from('sessions')
       .delete()
       .eq('id', sessionId);
@@ -1420,7 +1431,7 @@ const handleRescheduleRequest = async (req, res) => {
 
     // Get the notification and verify it belongs to this psychologist
     // Note: notifications table uses user_id, not psychologist_id
-    const { data: notification, error: notificationError } = await supabase
+    const { data: notification, error: notificationError } = await supabaseAdmin
       .from('notifications')
       .select('*')
       .eq('id', notificationId)
@@ -1470,7 +1481,7 @@ const handleRescheduleRequest = async (req, res) => {
     const originalTime = originalDateMatch[2] + ':00';
 
     // Get the session details
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1485,7 +1496,7 @@ const handleRescheduleRequest = async (req, res) => {
 
     if (action === 'approve') {
       // Check if new time slot is still available
-      const { data: conflictingSessions } = await supabase
+      const { data: conflictingSessions } = await supabaseAdmin
         .from('sessions')
         .select('id')
         .eq('psychologist_id', psychologistId)
@@ -1502,13 +1513,14 @@ const handleRescheduleRequest = async (req, res) => {
 
       // Update session with new date/time
       const { formatDate, formatTime } = require('../utils/helpers');
-      const { data: updatedSession, error: updateError } = await supabase
+      const { data: updatedSession, error: updateError } = await supabaseAdmin
         .from('sessions')
         .update({
           scheduled_date: formatDate(newDate),
           scheduled_time: formatTime(newTime),
           status: 'rescheduled',
           reschedule_count: (session.reschedule_count || 0) + 1,
+          reminder_sent: false, // Reset reminder flag when rescheduled
           updated_at: new Date().toISOString()
         })
         .eq('id', session.id)
@@ -1523,7 +1535,7 @@ const handleRescheduleRequest = async (req, res) => {
       }
 
       // Get client user_id for notification
-      const { data: client } = await supabase
+      const { data: client } = await supabaseAdmin
         .from('clients')
         .select('user_id')
         .eq('id', session.client_id)
@@ -1542,13 +1554,13 @@ const handleRescheduleRequest = async (req, res) => {
         created_at: new Date().toISOString()
       };
 
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .insert([clientNotificationData]);
       }
 
       // Mark original request as read
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
@@ -1561,7 +1573,7 @@ const handleRescheduleRequest = async (req, res) => {
     } else {
       // Reject the request
       // Get client user_id for notification
-      const { data: client } = await supabase
+      const { data: client } = await supabaseAdmin
         .from('clients')
         .select('user_id')
         .eq('id', session.client_id)
@@ -1583,13 +1595,13 @@ const handleRescheduleRequest = async (req, res) => {
         created_at: new Date().toISOString()
       };
 
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .insert([clientNotificationData]);
       }
 
       // Mark original request as read
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
@@ -1623,7 +1635,7 @@ const completeSession = async (req, res) => {
     }
 
     // Check if session exists and belongs to this psychologist
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -1655,7 +1667,7 @@ const completeSession = async (req, res) => {
     }
 
     // Update session with completion data
-    const { data: updatedSession, error: updateError } = await supabase
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'completed',
@@ -1697,7 +1709,7 @@ const completeSession = async (req, res) => {
         related_type: 'session'
       };
 
-      await supabase
+      await supabaseAdmin
         .from('notifications')
         .insert([clientNotificationData]);
 
@@ -1740,7 +1752,7 @@ const markSessionAsNoShow = async (req, res) => {
     const userRole = req.user.role;
 
     // Check if session exists
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -1797,7 +1809,7 @@ const markSessionAsNoShow = async (req, res) => {
     }
 
     // Update session status
-    const { data: updatedSession, error: updateError } = await supabase
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'no_show',
@@ -1848,7 +1860,7 @@ const markSessionAsNoShow = async (req, res) => {
           related_type: 'session'
         };
 
-        await supabase
+        await supabaseAdmin
           .from('notifications')
           .insert([notificationData]);
       }
@@ -1937,7 +1949,8 @@ const getRescheduleRequests = async (req, res) => {
 
     // Get all reschedule request notifications
     // These are notifications where related_type='session' and message/title contains 'reschedule'
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('notifications')
       .select('*')
       .or('type.eq.warning,type.eq.info')
@@ -1966,7 +1979,7 @@ const getRescheduleRequests = async (req, res) => {
       const sessionId = notification.related_id;
       
       // Get session details
-      const { data: session } = await supabase
+      const { data: session } = await supabaseAdmin
         .from('sessions')
         .select('*, client:clients(*), psychologist:psychologists(*)')
         .eq('id', sessionId)

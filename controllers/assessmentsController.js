@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const multer = require('multer');
@@ -85,7 +84,8 @@ const getAllAssessments = async (req, res) => {
     const { page = 1, limit = 20, search = '' } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('assessments')
       .select('*', { count: 'exact' })
       .eq('status', 'published')
@@ -119,7 +119,8 @@ const getAllAssessments = async (req, res) => {
 const getAssessmentBySlug = async (req, res) => {
   try {
     const { slug } = req.params;
-    const { data, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data, error } = await supabaseAdmin
       .from('assessments')
       .select('*')
       .eq('slug', slug)

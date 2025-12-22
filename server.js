@@ -6,7 +6,6 @@ const {
   createRateLimiters, 
   requestSizeLimiter, 
   memoryMonitor, 
-  ipFilter, 
   requestValidator 
 } = require('./middleware/security');
 const securityMonitor = require('./utils/securityMonitor');
@@ -57,12 +56,16 @@ const {
   emailVerificationLimiter
 } = createRateLimiters();
 
+// MEDIUM-RISK FIX: Request ID correlation middleware (must be early in chain)
+const requestIdMiddleware = require('./middleware/requestId');
+app.use(requestIdMiddleware);
+
 // Security middleware stack
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'"], // Removed 'unsafe-inline' for better XSS protection
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'"],
@@ -89,17 +92,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept']
 }));
 
-// Get real IP from Cloudflare (if using Cloudflare)
-app.use((req, res, next) => {
-  // Cloudflare sets CF-Connecting-IP header with real client IP
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  if (cfConnectingIp) {
-    req.realIp = cfConnectingIp;
-    // Also update req.ip for rate limiting to use real IP
-    req.ip = cfConnectingIp;
-  }
-  next();
-});
+// Trust Cloudflare proxy - Express will automatically use CF-Connecting-IP
+// With 'trust proxy' set, req.ip will automatically use the correct IP
+// No need to manually parse headers - Express handles it correctly
 
 // Keep-alive headers for better connection reuse (especially for international users)
 // Cloudflare-compatible: Cloudflare manages connections but these headers help with origin connections
@@ -138,8 +133,8 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// IP filtering only (bot detection removed)
-app.use(ipFilter);
+// Note: IP filtering and bot detection handled by Cloudflare at the edge
+// App-level filtering removed to avoid false positives and duplicate logic
 
 // Request validation and size limiting
 app.use(requestValidator);
@@ -354,12 +349,13 @@ const formatPublicPsychologist = (psych) => {
 // ... existing /api/public/psychologists route (use helper)
 app.get('/api/public/psychologists', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
 
     // Filter out assessment psychologist
     const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com').toLowerCase();
     
-    const { data: psychologists, error: psychologistsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
+    const { data: psychologists, error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .select(`
         id,
@@ -460,8 +456,9 @@ app.get('/api/public/psychologists', async (req, res) => {
 app.get('/api/public/psychologists/cache-version', async (req, res) => {
   try {
     // Get the most recent update timestamp from psychologists table
-    const supabase = require('./config/supabase');
-    const { data: latestPsychologist, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
+    const { supabaseAdmin } = require('./config/supabase');
+    const { data: latestPsychologist, error } = await supabaseAdmin
       .from('psychologists')
       .select('updated_at')
       .order('updated_at', { ascending: false })
@@ -503,10 +500,11 @@ app.get('/api/public/psychologists/cache-version', async (req, res) => {
 
 app.get('/api/public/psychologists/:psychologistId/details', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { psychologistId } = req.params;
 
-    const { data: psychologist, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
+    const { data: psychologist, error } = await supabaseAdmin
       .from('psychologists')
       .select(`
         *,
@@ -544,12 +542,13 @@ app.get('/api/public/psychologists/:psychologistId/details', async (req, res) =>
 // Public psychologist packages endpoint
 app.get('/api/public/psychologists/:psychologistId/packages', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { psychologistId } = req.params;
     console.log(`📦 Getting packages for psychologist ${psychologistId}`);
 
     // Get packages for this psychologist
-    const { data: packages, error: packagesError } = await supabase
+    // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
+    const { data: packages, error: packagesError } = await supabaseAdmin
       .from('packages')
       .select('*')
       .eq('psychologist_id', psychologistId)
@@ -580,51 +579,54 @@ app.get('/api/public/psychologists/:psychologistId/packages', async (req, res) =
   }
 });
 
-// TEMPORARY: Check database contents (for debugging)
-app.get('/api/debug/users', async (req, res) => {
-  try {
-    const supabase = require('./config/supabase');
-    
-    // Check users table
-    const { data: users, error: usersError } = await supabase
-      .from('users')
-      .select('*');
-    
-    // Check clients table
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('*');
-    
-    // Check psychologists table
-    const { data: psychologists, error: psychologistsError } = await supabase
-      .from('psychologists')
-      .select('*');
+// Debug endpoints - ONLY available in development mode
+// SECURITY: These endpoints are disabled in production to prevent unauthorized access
+if (process.env.NODE_ENV === 'development' && process.env.ENABLE_DEBUG_ROUTES === 'true') {
+  // TEMPORARY: Check database contents (for debugging)
+  app.get('/api/debug/users', async (req, res) => {
+    try {
+      const { supabaseAdmin } = require('./config/supabase');
+      
+      // Check users table
+      const { data: users, error: usersError } = await supabaseAdmin
+        .from('users')
+        .select('*');
+      
+      // Check clients table
+      const { data: clients, error: clientsError } = await supabaseAdmin
+        .from('clients')
+        .select('*');
+      
+      // Check psychologists table
+      const { data: psychologists, error: psychologistsError } = await supabaseAdmin
+        .from('psychologists')
+        .select('*');
 
-    res.json({
-      success: true,
-      data: {
-        users: users || [],
-        clients: clients || [],
-        psychologists: psychologists || [],
-        errors: {
-          users: usersError?.message,
-          clients: clientsError?.message,
-          psychologists: psychologistsError?.message
+      res.json({
+        success: true,
+        data: {
+          users: users || [],
+          clients: clients || [],
+          psychologists: psychologists || [],
+          errors: {
+            users: usersError?.message,
+            clients: clientsError?.message,
+            psychologists: psychologistsError?.message
+          }
         }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
 
-// TEMPORARY: Create test psychologist user (for debugging)
-app.post('/api/debug/create-psychologist', async (req, res) => {
+  // TEMPORARY: Create test psychologist user (for debugging)
+  app.post('/api/debug/create-psychologist', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { hashPassword } = require('./utils/helpers');
     
     const testPsychologist = {
@@ -642,7 +644,7 @@ app.post('/api/debug/create-psychologist', async (req, res) => {
     };
 
     // Check if psychologist already exists
-    const { data: existingPsychologist } = await supabase
+    const { data: existingPsychologist } = await supabaseAdmin
       .from('psychologists')
       .select('id')
       .eq('email', testPsychologist.email)
@@ -664,7 +666,7 @@ app.post('/api/debug/create-psychologist', async (req, res) => {
     const hashedPassword = await hashPassword(testPsychologist.password);
 
     // Create psychologist
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .insert([{
         email: testPsychologist.email,
@@ -711,13 +713,12 @@ app.post('/api/debug/create-psychologist', async (req, res) => {
       error: error.message
     });
   }
-});
+  });
 
-
-// TEMPORARY: Create test admin user (for debugging)
-app.post('/api/debug/create-admin', async (req, res) => {
+  // TEMPORARY: Create test admin user (for debugging)
+  app.post('/api/debug/create-admin', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { hashPassword } = require('./utils/helpers');
     
     const testAdmin = {
@@ -729,7 +730,7 @@ app.post('/api/debug/create-admin', async (req, res) => {
     };
 
     // Check if admin already exists
-    const { data: existingAdmin } = await supabase
+    const { data: existingAdmin } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('email', testAdmin.email)
@@ -751,7 +752,7 @@ app.post('/api/debug/create-admin', async (req, res) => {
     const hashedPassword = await hashPassword(testAdmin.password);
 
     // Create admin user
-    const { data: admin, error: adminError } = await supabase
+    const { data: admin, error: adminError } = await supabaseAdmin
       .from('users')
       .insert([{
         email: testAdmin.email,
@@ -789,25 +790,25 @@ app.post('/api/debug/create-admin', async (req, res) => {
       error: error.message
     });
   }
-});
+  });
 
-// TEMPORARY: Clear test data (for debugging)
-app.delete('/api/debug/clear-test-data', async (req, res) => {
+  // TEMPORARY: Clear test data (for debugging)
+  app.delete('/api/debug/clear-test-data', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     
     // Clear test data from all tables
-    const { error: usersError } = await supabase
+    const { error: usersError } = await supabaseAdmin
       .from('users')
       .delete()
       .neq('id', '00000000-0000-0000-0000-000000000000'); // Keep system IDs
     
-    const { error: clientsError } = await supabase
+    const { error: clientsError } = await supabaseAdmin
       .from('clients')
       .delete()
       .neq('id', '00000000-0000-0000-0000-000000000000');
     
-    const { error: psychologistsError } = await supabase
+    const { error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .delete()
       .neq('id', '00000000-0000-0000-0000-000000000000');
@@ -827,12 +828,12 @@ app.delete('/api/debug/clear-test-data', async (req, res) => {
       error: error.message
     });
   }
-});
+  });
 
-// TEMPORARY: Seed availability for testing
-app.post('/api/debug/seed-availability', async (req, res) => {
+  // TEMPORARY: Seed availability for testing
+  app.post('/api/debug/seed-availability', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { psychologist_id, date, time_slots } = req.body;
 
     if (!psychologist_id || !date || !Array.isArray(time_slots)) {
@@ -843,7 +844,7 @@ app.post('/api/debug/seed-availability', async (req, res) => {
     }
 
     // Upsert availability
-    const { data: existing } = await supabase
+    const { data: existing } = await supabaseAdmin
       .from('availability')
       .select('*')
       .eq('psychologist_id', psychologist_id)
@@ -851,7 +852,7 @@ app.post('/api/debug/seed-availability', async (req, res) => {
       .single();
 
     if (existing) {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('availability')
         .update({ time_slots, is_available: true })
         .eq('id', existing.id)
@@ -861,7 +862,7 @@ app.post('/api/debug/seed-availability', async (req, res) => {
       if (error) throw error;
       res.json({ success: true, data, message: 'Availability updated' });
     } else {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('availability')
         .insert({ psychologist_id, date, time_slots, is_available: true })
         .select()
@@ -874,15 +875,15 @@ app.post('/api/debug/seed-availability', async (req, res) => {
     console.error('Error seeding availability:', error);
     res.status(500).json({ success: false, error: error.message });
   }
-});
+  });
 
-// TEMPORARY: Check sessions for a specific date and psychologist
-app.get('/api/debug/sessions/:psychologist_id/:date', async (req, res) => {
+  // TEMPORARY: Check sessions for a specific date and psychologist
+  app.get('/api/debug/sessions/:psychologist_id/:date', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { psychologist_id, date } = req.params;
 
-    const { data: sessions, error } = await supabase
+    const { data: sessions, error } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('psychologist_id', psychologist_id)
@@ -909,18 +910,18 @@ app.get('/api/debug/sessions/:psychologist_id/:date', async (req, res) => {
       error: error.message
     });
   }
-});
+  });
 
-// TEMPORARY: Debug client sessions
-app.get('/api/debug/client-sessions/:clientId', async (req, res) => {
+  // TEMPORARY: Debug client sessions
+  app.get('/api/debug/client-sessions/:clientId', async (req, res) => {
   try {
-    const supabase = require('./config/supabase');
+    const { supabaseAdmin } = require('./config/supabase');
     const { clientId } = req.params;
 
     console.log('🔍 Debug - Checking sessions for client:', clientId);
 
     // Get all sessions for this client
-    const { data: sessions, error } = await supabase
+    const { data: sessions, error } = await supabaseAdmin
       .from('sessions')
       .select(`
         id,
@@ -962,7 +963,16 @@ app.get('/api/debug/client-sessions/:clientId', async (req, res) => {
       error: error.message
     });
   }
-});
+  });
+} else {
+  // In production, return 404 for debug endpoints
+  app.use('/api/debug/*', (req, res) => {
+    res.status(404).json({
+      error: 'Not found',
+      message: 'Debug endpoints are not available in production'
+    });
+  });
+}
 
 // Public endpoint to get psychologist availability (no authentication required)
 // This is now handled by the availability routes with better Google Calendar integration
@@ -972,6 +982,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/psychologists', psychologistRoutes);
 app.use('/api/sessions', sessionRoutes);
+app.use('/api/user-sessions', sessionRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/availability', availabilityRoutes);
@@ -1048,11 +1059,12 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   const { startRecoveryScheduler } = require('./jobs/recoveryJob');
   startRecoveryScheduler(5); // Run every 5 minutes
   
-  // Start Slot Lock Cleanup Job (releases expired slots, runs every 10 minutes)
-  const { releaseExpiredSlots } = require('./services/slotLockService');
+  // Start Slot Lock Cleanup Job (releases expired slots and cleans up abandoned payments, runs every 10 minutes)
+  const { releaseExpiredSlots, cleanupAbandonedPendingPayments } = require('./services/slotLockService');
   setInterval(async () => {
     try {
       await releaseExpiredSlots();
+      await cleanupAbandonedPendingPayments();
     } catch (error) {
       console.error('❌ Error in slot lock cleanup:', error);
     }
@@ -1060,6 +1072,9 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   // Run immediately on startup
   releaseExpiredSlots().catch(err => {
     console.error('❌ Error in initial slot lock cleanup:', err);
+  });
+  cleanupAbandonedPendingPayments().catch(err => {
+    console.error('❌ Error in initial abandoned payments cleanup:', err);
   });
 });
 

@@ -2,7 +2,13 @@ const express = require('express');
 const router = express.Router();
 const securityNotifications = require('../utils/securityNotifications');
 const securityMonitor = require('../utils/securityMonitor');
-const advancedBotDetector = require('../utils/advancedBotDetector');
+// Note: Bot detection moved to Cloudflare - stats endpoint kept for backward compatibility
+let advancedBotDetector = null;
+try {
+  advancedBotDetector = require('../utils/advancedBotDetector');
+} catch (e) {
+  // Bot detector not available - Cloudflare handles bot detection now
+}
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 
@@ -46,7 +52,12 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const securityStats = securityNotifications.getSecurityStats();
     const monitorStats = securityMonitor.getSecuritySummary();
-    const botStats = advancedBotDetector.getStats();
+    // Bot detection now handled by Cloudflare - return empty stats or note
+    const botStats = advancedBotDetector ? advancedBotDetector.getStats() : {
+      note: 'Bot detection handled by Cloudflare at the edge',
+      blocked: 0,
+      detected: 0
+    };
     
     res.json({
       success: true,
@@ -54,6 +65,7 @@ router.get('/stats', authenticateToken, requireAdmin, async (req, res) => {
         alerts: securityStats,
         monitoring: monitorStats,
         botDetection: botStats,
+        note: 'Bot detection is now handled by Cloudflare. Check Cloudflare dashboard for bot statistics.',
         timestamp: new Date().toISOString()
       }
     });
@@ -131,14 +143,21 @@ router.post('/settings', authenticateToken, requireAdmin, async (req, res) => {
 });
 
 // Get bot detection details
+// Note: Bot detection is now handled by Cloudflare at the edge
 router.get('/bot-detection', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const botStats = advancedBotDetector.getStats();
+    const botStats = advancedBotDetector ? advancedBotDetector.getStats() : {
+      note: 'Bot detection handled by Cloudflare',
+      blocked: 0,
+      detected: 0,
+      recommendation: 'Check Cloudflare dashboard for bot statistics'
+    };
     
     res.json({
       success: true,
       data: {
         statistics: botStats,
+        note: 'Bot detection is now handled by Cloudflare at the edge. View bot statistics in Cloudflare dashboard.',
         timestamp: new Date().toISOString()
       }
     });

@@ -1,10 +1,7 @@
-const { createClient } = require('@supabase/supabase-js');
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Use supabaseAdmin from config for consistency and RLS bypass
+const { supabaseAdmin } = require('../config/supabase');
+// Alias for storage operations (same client, just for clarity)
+const supabase = supabaseAdmin;
 
 const LOGS_BUCKET = 'logs';
 
@@ -74,7 +71,9 @@ class UserInteractionLogger {
     try {
       if (userRole === 'client') {
         // Try to get email from clients table
-        const { data: client } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { supabaseAdmin } = require('../config/supabase');
+        const { data: client } = await supabaseAdmin
           .from('clients')
           .select('email, user_id')
           .eq('id', userId)
@@ -86,7 +85,7 @@ class UserInteractionLogger {
 
         // If client has user_id, try to get email from users table
         if (client && client.user_id) {
-          const { data: user } = await supabase
+          const { data: user } = await supabaseAdmin
             .from('users')
             .select('email')
             .eq('id', client.user_id)
@@ -97,7 +96,8 @@ class UserInteractionLogger {
           }
         }
       } else if (userRole === 'psychologist') {
-        const { data: psychologist } = await supabase
+        const { supabaseAdmin } = require('../config/supabase');
+        const { data: psychologist } = await supabaseAdmin
           .from('psychologists')
           .select('email')
           .eq('id', userId)
@@ -108,7 +108,9 @@ class UserInteractionLogger {
         }
       } else {
         // For admin/superadmin, get from users table
-        const { data: user } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { supabaseAdmin } = require('../config/supabase');
+        const { data: user } = await supabaseAdmin
           .from('users')
           .select('email')
           .eq('id', userId)

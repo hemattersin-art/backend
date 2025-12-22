@@ -1,7 +1,7 @@
 const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { authenticateToken, requirePsychologist } = require('../middleware/auth');
 const router = express.Router();
 
@@ -32,7 +32,8 @@ router.post('/connect', authenticateToken, requirePsychologist, async (req, res)
     const { tokens } = await oAuth2Client.getToken(code);
     
     // Store tokens in database
-    const { error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error } = await supabaseAdmin
       .from('psychologists')
       .update({
         google_calendar_credentials: {
@@ -75,7 +76,8 @@ router.post('/disconnect', authenticateToken, requirePsychologist, async (req, r
     const psychologist_id = req.user.id;
 
     // Remove Google Calendar credentials
-    const { error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error } = await supabaseAdmin
       .from('psychologists')
       .update({
         google_calendar_credentials: null,
@@ -110,7 +112,8 @@ router.get('/status', authenticateToken, requirePsychologist, async (req, res) =
   try {
     const psychologist_id = req.user.id;
 
-    const { data: psychologist, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error } = await supabaseAdmin
       .from('psychologists')
       .select('google_calendar_credentials')
       .eq('id', psychologist_id)
@@ -154,7 +157,8 @@ router.get('/events', authenticateToken, requirePsychologist, async (req, res) =
     const { timeMin, timeMax } = req.query;
 
     // Get psychologist's Google Calendar credentials
-    const { data: psychologist, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error } = await supabaseAdmin
       .from('psychologists')
       .select('google_calendar_credentials')
       .eq('id', psychologist_id)

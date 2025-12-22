@@ -1,12 +1,24 @@
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
 const supabaseAdmin = require('../config/supabase').supabaseAdmin;
+const tokenRevocationService = require('../utils/tokenRevocation');
 
 // Verify JWT token (handles both backend JWT and Supabase JWT)
 const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    // Check if token is revoked
+    if (token) {
+      const isRevoked = await tokenRevocationService.isTokenRevoked(token);
+      if (isRevoked) {
+        return res.status(401).json({
+          error: 'Access denied',
+          message: 'Token has been revoked'
+        });
+      }
+    }
 
     // Only log auth debug in development mode
     if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
@@ -40,7 +52,8 @@ const authenticateToken = async (req, res, next) => {
     
     try {
       // First try to verify as backend JWT token
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      // Explicitly specify algorithm to prevent algorithm confusion attacks (e.g., 'none' algorithm)
+      decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
         console.log('Decoded backend token:', decoded);
       }
@@ -70,10 +83,12 @@ const authenticateToken = async (req, res, next) => {
         
         // For Supabase users, we need to find them in our database
         // Check clients table first (since clients are stored directly in clients table)
+        // Use supabaseAdmin to bypass RLS (authentication middleware needs database access)
+        const { supabaseAdmin } = require('../config/supabase');
         if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
           console.log('🔍 Looking up client in database for email:', supabaseUser.email);
         }
-        const { data: client, error: clientError } = await supabase
+        const { data: client, error: clientError } = await supabaseAdmin
           .from('clients')
           .select('*')
           .eq('email', supabaseUser.email)
@@ -98,10 +113,11 @@ const authenticateToken = async (req, res, next) => {
         }
 
         // If not found in clients table, check users table (for admins/superadmins)
+        // Use supabaseAdmin to bypass RLS (authentication middleware needs database access)
         if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
           console.log('🔍 Looking up user in users table for email:', supabaseUser.email);
         }
-        const { data: user, error: userError } = await supabase
+        const { data: user, error: userError } = await supabaseAdmin
           .from('users')
           .select('*')
           .eq('email', supabaseUser.email)
@@ -120,10 +136,11 @@ const authenticateToken = async (req, res, next) => {
         }
 
         // If not found in users table, check psychologists table
+        // Use supabaseAdmin to bypass RLS (authentication middleware needs database access)
         if (process.env.NODE_ENV === 'development' && process.env.DEBUG_AUTH === 'true') {
           console.log('🔍 Looking up psychologist for email:', supabaseUser.email);
         }
-        const { data: psychologist, error: psychologistError } = await supabase
+        const { data: psychologist, error: psychologistError } = await supabaseAdmin
           .from('psychologists')
           .select('*')
           .eq('email', supabaseUser.email)
@@ -154,7 +171,8 @@ const authenticateToken = async (req, res, next) => {
         
         try {
           // Create client directly in clients table (following the same pattern as registration)
-          const { data: newClient, error: clientCreateError } = await supabase
+          // Use supabaseAdmin to bypass RLS (authentication middleware needs database access)
+          const { data: newClient, error: clientCreateError } = await supabaseAdmin
             .from('clients')
             .insert({ 
               email: supabaseUser.email,
@@ -216,6 +234,15 @@ const authenticateToken = async (req, res, next) => {
       return res.status(401).json({ 
         error: 'Invalid token structure', 
         message: 'Token missing user ID' 
+      });
+    }
+
+    // Check if user's tokens are revoked (e.g., account deactivated)
+    const isUserRevoked = await tokenRevocationService.isUserRevoked(userId);
+    if (isUserRevoked) {
+      return res.status(401).json({
+        error: 'Access denied',
+        message: 'Account access has been revoked'
       });
     }
     

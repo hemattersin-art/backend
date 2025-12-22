@@ -19,7 +19,9 @@ router.put('/profile', validateClientProfile, clientController.updateProfile);
 // Session management
 router.get('/sessions', clientController.getSessions);
 router.get('/sessions/:sessionId', clientController.getSession);
-router.post('/book-session', clientController.bookSession);
+// SECURITY FIX: Direct booking endpoint disabled - all bookings must go through payment flow
+// This prevents booking without payment and ensures consistent booking flow
+// router.post('/book-session', clientController.bookSession); // DISABLED - Use payment flow instead
 router.put('/sessions/:sessionId/cancel', clientController.cancelSession);
 router.post('/sessions/:sessionId/reschedule-request', clientController.requestReschedule);
 router.put('/sessions/:sessionId/reschedule', clientController.rescheduleSession);

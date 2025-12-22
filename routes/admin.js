@@ -3,24 +3,50 @@ const router = express.Router();
 const adminController = require('../controllers/adminController');
 const assessmentBookingController = require('../controllers/assessmentBookingController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { withCache } = require('../utils/cache');
+const { createRateLimiters } = require('../middleware/security');
+const { requireRequestSignature } = require('../middleware/requestSigning');
 const multer = require('multer');
 const path = require('path');
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
+
+// Admin-specific rate limiter (stricter than general API)
+// Note: This runs BEFORE authentication, so we can only use IP
+const adminLimiter = require('express-rate-limit')({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per 15 minutes per IP
+  message: {
+    error: 'Too many admin requests',
+    message: 'Rate limit exceeded for admin operations. Please try again later.',
+    retryAfter: '15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false, // Count all requests
+  keyGenerator: (req) => {
+    // Use IP only (user ID not available before authentication)
+    return `admin-${req.ip}`;
+  }
+});
 
 // All routes require authentication and admin role
+// Apply rate limiting first, then authentication, then authorization
+// Note: IP filtering is handled by Cloudflare, not application-level
+const validateCSRF = require('../middleware/csrf');
+router.use(adminLimiter);
+router.use(validateCSRF); // MEDIUM-RISK FIX: CSRF protection
 router.use(authenticateToken);
 router.use(requireAdmin);
 
 // User management
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:userId', adminController.getUserDetails);
-router.put('/users/:userId/role', adminController.updateUserRole);
-router.put('/users/:userId/deactivate', adminController.deactivateUser);
+// Critical operations require request signing
+router.put('/users/:userId/role', requireRequestSignature, adminController.updateUserRole);
+router.put('/users/:userId/deactivate', requireRequestSignature, adminController.deactivateUser);
 
-// Platform statistics (with optimized caching for 2GB plan)
-router.get('/stats/platform', withCache(adminController.getPlatformStats, 'platform_stats', 3 * 60 * 1000));
-router.get('/stats/dashboard', withCache(adminController.getPlatformStats, 'platform_stats', 3 * 60 * 1000)); // Alias for dashboard
+// Platform statistics
+router.get('/stats/platform', adminController.getPlatformStats);
+router.get('/stats/dashboard', adminController.getPlatformStats); // Alias for dashboard
 
 // User search
 router.get('/search/users', adminController.searchUsers);
@@ -51,9 +77,9 @@ router.delete('/packages/:packageId', adminController.deletePackage);
 router.get('/debug/stuck-slot-locks', adminController.getStuckSlotLocks);
 
 // User management
-router.post('/users', adminController.createUser);
+router.post('/users', requireRequestSignature, adminController.createUser);
 router.put('/users/:userId', adminController.updateUser);
-router.delete('/users/:userId', adminController.deleteUser);
+router.delete('/users/:userId', requireRequestSignature, adminController.deleteUser);
 
 // Session rescheduling
 router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);
@@ -137,17 +163,20 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
 
-    const bucket = 'profile-pictures';
-    const ext = path.extname(req.file.originalname) || '.jpg';
-    const base = path
-      .basename(req.file.originalname, ext)
-      .replace(/[^a-zA-Z0-9-_]/g, '_')
-      .toLowerCase();
-    const filename = `${base}-${Date.now()}${ext}`;
+    // HIGH-RISK FIX: Path traversal protection - generate UUID filename, ignore client-supplied name
+    const crypto = require('crypto');
+    const uuid = crypto.randomUUID();
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    const ext = allowedExtensions.includes(path.extname(req.file.originalname).toLowerCase()) 
+      ? path.extname(req.file.originalname).toLowerCase() 
+      : '.jpg';
+    const filename = `${uuid}${ext}`;
     const objectPath = `${filename}`; // flat path; change to folders if needed
 
+    const bucket = 'profile-pictures';
+
     // Upload to Supabase Storage using admin client (bypasses RLS)
-    const { error: uploadError } = await supabase.supabaseAdmin.storage
+    const { error: uploadError } = await supabaseAdmin.storage
       .from(bucket)
       .upload(objectPath, req.file.buffer, {
         contentType: req.file.mimetype,
@@ -160,7 +189,7 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
     }
 
     // Get public URL (assumes bucket has public policy)
-    const { data: publicData } = supabase.supabaseAdmin.storage
+    const { data: publicData } = supabaseAdmin.storage
       .from(bucket)
       .getPublicUrl(objectPath);
 

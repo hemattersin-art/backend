@@ -167,10 +167,38 @@ const processPaymentCaptured = async (payload, eventId, skipSignatureCheck = fal
       };
     }
 
-    // Get payment record first (always exists)
+    // CRITICAL FIX: Webhook idempotency - Check if payment already processed by payment_id
+    const { data: existingPaymentByPaymentId } = await supabaseAdmin
+      .from('payments')
+      .select('id, session_id, status')
+      .eq('razorpay_payment_id', paymentId)
+      .maybeSingle();
+
+    if (existingPaymentByPaymentId) {
+      // Payment already processed - idempotent webhook
+      if (existingPaymentByPaymentId.session_id) {
+        const { data: existingSession } = await supabaseAdmin
+          .from('sessions')
+          .select('id')
+          .eq('id', existingPaymentByPaymentId.session_id)
+          .maybeSingle();
+
+        if (existingSession) {
+          console.log('✅ Payment already processed (idempotent webhook):', existingSession.id);
+          return {
+            success: true,
+            message: 'Payment already processed',
+            sessionId: existingSession.id,
+            alreadyProcessed: true
+          };
+        }
+      }
+    }
+
+    // Get payment record by order ID (always exists)
     const { data: paymentRecord } = await supabaseAdmin
       .from('payments')
-      .select('id, amount, razorpay_order_id, psychologist_id, client_id, package_id, session_id, razorpay_params, status')
+      .select('id, amount, razorpay_order_id, razorpay_payment_id, psychologist_id, client_id, package_id, session_id, razorpay_params, status')
       .eq('razorpay_order_id', orderId)
       .maybeSingle();
 
@@ -180,6 +208,14 @@ const processPaymentCaptured = async (payload, eventId, skipSignatureCheck = fal
         success: false,
         message: 'Payment record not found'
       };
+    }
+
+    // CRITICAL FIX: Ensure razorpay_payment_id is stored for idempotency
+    if (!paymentRecord.razorpay_payment_id && paymentId) {
+      await supabaseAdmin
+        .from('payments')
+        .update({ razorpay_payment_id: paymentId })
+        .eq('id', paymentRecord.id);
     }
 
     // Check if session already exists

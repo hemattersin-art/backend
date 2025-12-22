@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
@@ -16,7 +15,8 @@ const getAvailabilityRange = async (req, res) => {
     console.log('🔍 Getting availability range for admin:', startDate, 'to', endDate);
 
     // Get all active free assessment timeslots
-    const { data: timeslots, error: timeslotsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: timeslots, error: timeslotsError } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .select('time_slot, is_active, max_bookings_per_slot')
       .eq('is_active', true);
@@ -58,7 +58,8 @@ const getAvailabilityRange = async (req, res) => {
     }
 
     // Get existing bookings for the date range
-    const { data: existingBookings, error: bookingsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: existingBookings, error: bookingsError } = await supabaseAdmin
       .from('free_assessments')
       .select('scheduled_date, scheduled_time')
       .gte('scheduled_date', startDate)
@@ -137,7 +138,8 @@ const getFreeAssessmentTimeslots = async (req, res) => {
   try {
     console.log('🔍 Getting all free assessment timeslots');
 
-    const { data: timeslots, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: timeslots, error } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .select('*')
       .order('time_slot', { ascending: true });
@@ -219,7 +221,8 @@ const addMultipleTimeslots = async (req, res) => {
 
     // Check for existing timeslots to avoid duplicates
     const timeSlotsToCheck = deduped.map(slot => slot.time_slot);
-    const { data: existingTimeslots, error: checkError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: existingTimeslots, error: checkError } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .select('time_slot')
       .in('time_slot', timeSlotsToCheck);
@@ -400,7 +403,8 @@ const deleteTimeslot = async (req, res) => {
     console.log('🔍 Deleting timeslot:', id);
 
     // Check if timeslot exists
-    const { data: existingTimeslot, error: checkError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: existingTimeslot, error: checkError } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .select('id, time_slot')
       .eq('id', id)
@@ -413,7 +417,7 @@ const deleteTimeslot = async (req, res) => {
     }
 
     // Check if there are any active bookings for this timeslot
-    const { data: activeBookings, error: bookingError } = await supabase
+    const { data: activeBookings, error: bookingError } = await supabaseAdmin
       .from('free_assessments')
       .select('id')
       .eq('scheduled_time', existingTimeslot.time_slot)
@@ -634,7 +638,7 @@ const getDateConfig = async (req, res) => {
 
     console.log('🔍 Getting date config for:', date);
 
-    const { data: config, error } = await supabase
+    const { data: config, error } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .select('*')
       .eq('date', date)
@@ -710,7 +714,7 @@ const getDateConfigsRange = async (req, res) => {
 
     console.log('🔍 Getting date configs range:', startDate, 'to', endDate);
 
-    const { data: configs, error } = await supabase
+    const { data: configs, error } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .select('*')
       .gte('date', startDate)

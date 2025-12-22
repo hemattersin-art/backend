@@ -14,6 +14,7 @@ const { supabaseAdmin } = require('../config/supabase');
 const { errorResponse } = require('../utils/helpers');
 
 const SLOT_HOLD_DURATION_MINUTES = 5; // 5 minutes to complete payment
+const SLOT_EXTENDED_DURATION_MINUTES = 15; // Extended duration after payment initiation (total 15 min)
 
 /**
  * Hold a slot for booking (called before payment initiation)
@@ -140,6 +141,126 @@ const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime
     return {
       success: false,
       error: error.message || 'Failed to hold slot'
+    };
+  }
+};
+
+/**
+ * Extend slot lock expiry (called when payment is initiated to prevent expiry during payment)
+ * 
+ * @param {string} orderId - Razorpay order_id
+ * @param {number} extendByMinutes - Minutes to extend (default: 10)
+ * @returns {Promise<Object>} { success: boolean, data?: slotLock, error?: string }
+ */
+const extendSlotLock = async (orderId, extendByMinutes = 10) => {
+  try {
+    console.log('⏰ Extending slot lock:', {
+      orderId: orderId?.substring(0, 10) + '...',
+      extendByMinutes
+    });
+
+    const { data: slotLock, error: fetchError } = await supabaseAdmin
+      .from('slot_locks')
+      .select('id, slot_expires_at, status')
+      .eq('order_id', orderId)
+      .single();
+
+    if (fetchError || !slotLock) {
+      console.warn('⚠️ Slot lock not found for extension:', fetchError);
+      return {
+        success: false,
+        error: 'Slot lock not found',
+        notFound: true
+      };
+    }
+
+    // Only extend if lock is still active
+    if (['FAILED', 'EXPIRED', 'SESSION_CREATED'].includes(slotLock.status)) {
+      console.log(`ℹ️ Slot lock already in final state: ${slotLock.status}`);
+      return {
+        success: true,
+        data: slotLock,
+        alreadyFinal: true
+      };
+    }
+
+    // Calculate new expiry time
+    const currentExpiry = new Date(slotLock.slot_expires_at);
+    const newExpiry = new Date(currentExpiry);
+    newExpiry.setMinutes(newExpiry.getMinutes() + extendByMinutes);
+
+    const { data: updatedLock, error: updateError } = await supabaseAdmin
+      .from('slot_locks')
+      .update({
+        slot_expires_at: newExpiry.toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_id', orderId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('❌ Error extending slot lock:', updateError);
+      return {
+        success: false,
+        error: 'Failed to extend slot lock'
+      };
+    }
+
+    console.log('✅ Slot lock extended:', {
+      lockId: updatedLock.id,
+      oldExpiry: slotLock.slot_expires_at,
+      newExpiry: updatedLock.slot_expires_at
+    });
+
+    return {
+      success: true,
+      data: updatedLock
+    };
+  } catch (error) {
+    console.error('❌ Exception in extendSlotLock:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to extend slot lock'
+    };
+  }
+};
+
+/**
+ * Check if payment order matches an expired lock (allows session creation if payment succeeded)
+ * 
+ * @param {string} orderId - Razorpay order_id
+ * @param {string} clientId - Client ID
+ * @returns {Promise<Object>} { success: boolean, matches: boolean, lock?: slotLock }
+ */
+const checkPaymentOrderMatchesLock = async (orderId, clientId) => {
+  try {
+    const { data: slotLock, error } = await supabaseAdmin
+      .from('slot_locks')
+      .select('*')
+      .eq('order_id', orderId)
+      .single();
+
+    if (error || !slotLock) {
+      return {
+        success: true,
+        matches: false
+      };
+    }
+
+    // Check if it's the same client and order (even if expired)
+    const matches = slotLock.client_id === clientId && slotLock.order_id === orderId;
+
+    return {
+      success: true,
+      matches,
+      lock: slotLock
+    };
+  } catch (error) {
+    console.error('❌ Exception in checkPaymentOrderMatchesLock:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to check payment order lock'
     };
   }
 };
@@ -394,7 +515,26 @@ const releaseExpiredSlots = async () => {
       }
     }
 
-    // Combine both sets of locks to release
+    // Also check for pending payments with expired locks (user cancelled/exited payment)
+    const pendingPaymentLocks = [];
+    if (expiredLocks) {
+      for (const lock of expiredLocks) {
+        if (lock.order_id) {
+          const { data: payment } = await supabaseAdmin
+            .from('payments')
+            .select('id, status')
+            .eq('razorpay_order_id', lock.order_id)
+            .maybeSingle();
+          
+          // If payment is still pending, it means user cancelled/exited without completing
+          if (payment && payment.status === 'pending') {
+            pendingPaymentLocks.push(lock);
+          }
+        }
+      }
+    }
+
+    // Combine all sets of locks to release
     const locksToRelease = [];
     const lockIds = new Set();
     
@@ -419,11 +559,12 @@ const releaseExpiredSlots = async () => {
     if (locksToRelease.length === 0) {
       return {
         success: true,
-        released: 0
+        released: 0,
+        paymentsUpdated: 0
       };
     }
 
-    // Update expired/failed slots to EXPIRED or FAILED status
+    // Update expired/failed slots to EXPIRED status
     const { error: updateError } = await supabaseAdmin
       .from('slot_locks')
       .update({
@@ -440,10 +581,38 @@ const releaseExpiredSlots = async () => {
       };
     }
 
+    // Mark associated pending payments as 'failed' (user cancelled/exited)
+    let paymentsUpdated = 0;
+    if (pendingPaymentLocks.length > 0) {
+      const orderIds = pendingPaymentLocks.map(lock => lock.order_id).filter(Boolean);
+      
+      if (orderIds.length > 0) {
+        const { error: paymentUpdateError, count } = await supabaseAdmin
+          .from('payments')
+          .update({
+            status: 'failed',
+            completed_at: now
+          })
+          .in('razorpay_order_id', orderIds)
+          .eq('status', 'pending')
+          .select('id', { count: 'exact', head: true });
+
+        if (paymentUpdateError) {
+          console.error('❌ Error updating pending payments to failed:', paymentUpdateError);
+        } else {
+          paymentsUpdated = count || 0;
+          if (paymentsUpdated > 0) {
+            console.log(`✅ Marked ${paymentsUpdated} abandoned pending payments as 'failed'`);
+          }
+        }
+      }
+    }
+
     console.log(`✅ Released ${locksToRelease.length} expired/failed slot locks`);
     return {
       success: true,
-      released: locksToRelease.length
+      released: locksToRelease.length,
+      paymentsUpdated: paymentsUpdated
     };
   } catch (error) {
     console.error('❌ Exception in releaseExpiredSlots:', error);
@@ -454,12 +623,110 @@ const releaseExpiredSlots = async () => {
   }
 };
 
+/**
+ * Cleanup old pending payments that have no active slot locks
+ * This handles cases where payments were abandoned but slot locks were already cleaned up
+ * 
+ * @returns {Promise<Object>} { success: boolean, updated: number, error?: string }
+ */
+const cleanupAbandonedPendingPayments = async () => {
+  try {
+    // Find pending payments older than 10 minutes (slot lock expiry is 5 minutes, so 10 is safe)
+    const tenMinutesAgo = new Date();
+    tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
+    
+    const { data: oldPendingPayments, error: findError } = await supabaseAdmin
+      .from('payments')
+      .select('id, razorpay_order_id, created_at')
+      .eq('status', 'pending')
+      .lt('created_at', tenMinutesAgo.toISOString())
+      .limit(100); // Limit to avoid too many queries
+
+    if (findError) {
+      console.error('❌ Error finding old pending payments:', findError);
+      return {
+        success: false,
+        error: 'Failed to find old pending payments'
+      };
+    }
+
+    if (!oldPendingPayments || oldPendingPayments.length === 0) {
+      return {
+        success: true,
+        updated: 0
+      };
+    }
+
+    // Check which payments have no active slot locks
+    const abandonedPayments = [];
+    for (const payment of oldPendingPayments) {
+      if (payment.razorpay_order_id) {
+        const { data: slotLock } = await supabaseAdmin
+          .from('slot_locks')
+          .select('id, status')
+          .eq('order_id', payment.razorpay_order_id)
+          .in('status', ['SLOT_HELD', 'PAYMENT_PENDING'])
+          .maybeSingle();
+
+        // If no active slot lock exists, payment was abandoned
+        if (!slotLock) {
+          abandonedPayments.push(payment.razorpay_order_id);
+        }
+      }
+    }
+
+    if (abandonedPayments.length === 0) {
+      return {
+        success: true,
+        updated: 0
+      };
+    }
+
+    // Mark abandoned payments as failed
+    const now = new Date().toISOString();
+    const { error: updateError, count } = await supabaseAdmin
+      .from('payments')
+      .update({
+        status: 'failed',
+        completed_at: now
+      })
+      .in('razorpay_order_id', abandonedPayments)
+      .eq('status', 'pending')
+      .select('id', { count: 'exact', head: true });
+
+    if (updateError) {
+      console.error('❌ Error updating abandoned payments:', updateError);
+      return {
+        success: false,
+        error: 'Failed to update abandoned payments'
+      };
+    }
+
+    const updated = count || 0;
+    if (updated > 0) {
+      console.log(`✅ Marked ${updated} abandoned pending payments as 'failed'`);
+    }
+
+    return {
+      success: true,
+      updated: updated
+    };
+  } catch (error) {
+    console.error('❌ Exception in cleanupAbandonedPendingPayments:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to cleanup abandoned payments'
+    };
+  }
+};
+
 module.exports = {
   holdSlot,
   updateSlotLockStatus,
   getSlotLockByOrderId,
   releaseSlotLock,
   releaseExpiredSlots,
+  cleanupAbandonedPendingPayments,
   SLOT_HOLD_DURATION_MINUTES
 };
 

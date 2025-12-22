@@ -275,8 +275,9 @@ class SecurityNotificationSystem extends EventEmitter {
   // Get admin emails from database
   async getAdminEmails() {
     try {
-      const supabase = require('../config/supabase');
-      const { data: admins, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { supabaseAdmin } = require('../config/supabase');
+      const { data: admins, error } = await supabaseAdmin
         .from('users')
         .select('email')
         .in('role', ['admin', 'superadmin']);
@@ -292,8 +293,9 @@ class SecurityNotificationSystem extends EventEmitter {
   // Get admin phone numbers
   async getAdminPhones() {
     try {
-      const supabase = require('../config/supabase');
-      const { data: admins, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { supabaseAdmin } = require('../config/supabase');
+      const { data: admins, error } = await supabaseAdmin
         .from('users')
         .select('phone_number')
         .in('role', ['admin', 'superadmin'])

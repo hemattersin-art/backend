@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const googleCalendarService = require('../utils/googleCalendarService');
 
 class CalendarSyncService {
@@ -44,7 +44,8 @@ class CalendarSyncService {
 
     try {
       // Get all psychologists with Google Calendar credentials
-      const { data: psychologists, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologists, error } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .not('google_calendar_credentials', 'is', null);
@@ -178,7 +179,8 @@ class CalendarSyncService {
           lastSyncAt: new Date().toISOString()
         };
         
-        await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        await supabaseAdmin
           .from('psychologists')
           .update({ 
             google_calendar_credentials: updatedCredentials
@@ -201,7 +203,8 @@ class CalendarSyncService {
           const clearedCredentials = { ...psychologist.google_calendar_credentials };
           delete clearedCredentials.syncToken;
           
-          await supabase
+          // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+          await supabaseAdmin
             .from('psychologists')
             .update({ google_calendar_credentials: clearedCredentials })
             .eq('id', psychologist.id);
@@ -225,7 +228,8 @@ class CalendarSyncService {
             lastSyncAt: new Date().toISOString()
           };
           
-          await supabase
+          // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+          await supabaseAdmin
             .from('psychologists')
             .update({ google_calendar_credentials: updatedCredentials })
             .eq('id', psychologist.id);
@@ -433,7 +437,8 @@ class CalendarSyncService {
     const availabilityMap = new Map();
     if (eventDates.size > 0) {
       const datesArray = Array.from(eventDates);
-      const { data: availabilityRecords, error: availError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availabilityRecords, error: availError } = await supabaseAdmin
         .from('availability')
         .select('id, date, time_slots')
         .eq('psychologist_id', psychologist.id)
@@ -542,8 +547,9 @@ class CalendarSyncService {
       const now = new Date().toISOString();
       
       for (const [availabilityId, updatedSlots] of updatesToApply.entries()) {
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
         updatePromises.push(
-          supabase
+          supabaseAdmin
             .from('availability')
             .update({ 
               time_slots: updatedSlots,
@@ -585,7 +591,8 @@ class CalendarSyncService {
    */
   async syncPsychologistById(psychologistId, startDate, endDate) {
     try {
-      const { data: psychologist, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologistId)

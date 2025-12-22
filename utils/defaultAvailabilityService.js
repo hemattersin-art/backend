@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 
 /**
  * Generate default time slots: continuous 1-hour slots from 8:00 AM to 10:00 PM IST
@@ -78,7 +78,8 @@ const setDefaultAvailability = async (psychologistId) => {
     
     // Check which dates already exist
     const existingDates = new Set();
-    const { data: existingAvailability } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: existingAvailability } = await supabaseAdmin
       .from('availability')
       .select('date')
       .eq('psychologist_id', psychologistId)
@@ -99,7 +100,8 @@ const setDefaultAvailability = async (psychologistId) => {
     }
     
     // Insert new availability records
-    const { error: insertError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { error: insertError } = await supabaseAdmin
       .from('availability')
       .insert(newRecords);
     
@@ -125,7 +127,8 @@ const setDefaultAvailability = async (psychologistId) => {
 const addNextDayAvailability = async () => {
   try {
     // Get all active psychologists
-    const { data: psychologists, error: psychError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: psychologists, error: psychError } = await supabaseAdmin
       .from('psychologists')
       .select('id');
     
@@ -155,7 +158,8 @@ const addNextDayAvailability = async () => {
     // Add availability for each psychologist
     for (const psych of psychologists) {
       // Check if availability already exists for this date
-      const { data: existing } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: existing } = await supabaseAdmin
         .from('availability')
         .select('id')
         .eq('psychologist_id', psych.id)
@@ -168,7 +172,8 @@ const addNextDayAvailability = async () => {
       }
       
       // Insert new availability
-      const { error: insertError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { error: insertError } = await supabaseAdmin
         .from('availability')
         .insert({
           psychologist_id: psych.id,
@@ -216,7 +221,8 @@ const cleanupPastAvailability = async () => {
     console.log(`🧹 Starting cleanup of past availability records (before ${todayStr})...`);
     
     // Count records before deletion (for logging)
-    const { count: totalCount, error: countError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { count: totalCount, error: countError } = await supabaseAdmin
       .from('availability')
       .select('id', { count: 'exact', head: true })
       .lt('date', todayStr);
@@ -246,7 +252,8 @@ const cleanupPastAvailability = async () => {
     
     while (hasMore) {
       // Get batch of IDs to delete
-      const { data: batch, error: fetchError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: batch, error: fetchError } = await supabaseAdmin
         .from('availability')
         .select('id')
         .lt('date', todayStr)
@@ -264,7 +271,8 @@ const cleanupPastAvailability = async () => {
       
       // Delete this batch
       const idsToDelete = batch.map(record => record.id);
-      const { error: deleteError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { error: deleteError } = await supabaseAdmin
         .from('availability')
         .delete()
         .in('id', idsToDelete);
@@ -311,7 +319,8 @@ const cleanupPastAvailability = async () => {
  */
 const updateAllPsychologistsAvailability = async () => {
   try {
-    const { data: psychologists, error: psychError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: psychologists, error: psychError } = await supabaseAdmin
       .from('psychologists')
       .select('id');
     

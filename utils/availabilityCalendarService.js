@@ -1,5 +1,4 @@
 const { calendar } = require('./googleOAuthClient');
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const googleCalendarService = require('./googleCalendarService');
 
@@ -17,7 +16,8 @@ class AvailabilityCalendarService {
       console.log(`🔍 Getting availability for psychologist ${psychologistId} on ${date}`);
       
       // Get psychologist details
-      const { data: psychologist, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('email')
         .eq('id', psychologistId)
@@ -28,7 +28,8 @@ class AvailabilityCalendarService {
       }
 
       // Get existing sessions from database for this date (include all active session statuses)
-      const { data: existingSessions, error: sessionsError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: existingSessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select('scheduled_time, status, id')
         .eq('psychologist_id', psychologistId)
@@ -171,7 +172,8 @@ class AvailabilityCalendarService {
       
       // Use the same data source as the frontend - the availability table
       // Use limit(1) instead of single() to handle cases where multiple records exist
-      const { data: availabilityRecords, error: availabilityError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availabilityRecords, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId)
@@ -271,7 +273,8 @@ class AvailabilityCalendarService {
       console.log(`🚀 Getting availability range for psychologist ${psychologistId} from ${startDate} to ${endDate}`);
       
       // Get psychologist details including Google Calendar credentials
-      const { data: psychologist, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologistId)
@@ -282,7 +285,7 @@ class AvailabilityCalendarService {
       }
 
       // SINGLE QUERY: Get availability from availability table
-      const { data: availabilityData, error: availabilityError } = await supabase
+      const { data: availabilityData, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId)
@@ -299,7 +302,7 @@ class AvailabilityCalendarService {
 
       // Get all booked sessions in the date range to filter them out
       // Check both regular therapy sessions and assessment sessions
-      const { data: bookedSessions, error: sessionsError } = await supabase
+      const { data: bookedSessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select('scheduled_date, scheduled_time, status, id')
         .eq('psychologist_id', psychologistId)
@@ -603,7 +606,8 @@ class AvailabilityCalendarService {
       
       // Get current availability for this date
       // Use limit(1) instead of single() to handle cases where multiple records exist
-      const { data: availabilityRecords, error: availabilityError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availabilityRecords, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId)
@@ -670,7 +674,8 @@ class AvailabilityCalendarService {
       }
       
       // Update the availability record
-      const { error: updateError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { error: updateError } = await supabaseAdmin
         .from('availability')
         .update({
           time_slots: updatedTimeSlots,

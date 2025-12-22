@@ -1,22 +1,116 @@
+/**
+ * Session Management Routes
+ * 
+ * Allows users to view and manage their active sessions
+ */
+
 const express = require('express');
 const router = express.Router();
-const { authenticateToken, requirePsychologist } = require('../middleware/auth');
-const sessionController = require('../controllers/sessionController');
+const { authenticateToken } = require('../middleware/auth');
+const sessionManager = require('../utils/sessionManager');
 
-// Public route for booking sessions (requires client authentication)
-router.post('/book', authenticateToken, sessionController.bookSession);
+// All routes require authentication
+router.use(authenticateToken);
 
-// Reschedule request handling (psychologist only) - place before parameterized routes
-router.get('/reschedule-requests', authenticateToken, requirePsychologist, sessionController.getRescheduleRequests);
-router.put('/reschedule-request/:notificationId', authenticateToken, requirePsychologist, sessionController.handleRescheduleRequest);
+/**
+ * GET /api/sessions
+ * Get all active sessions for the current user
+ */
+router.get('/', async (req, res) => {
+  try {
+    const sessions = await sessionManager.getUserSessions(req.user.id);
+    
+    // Remove sensitive data (token_hash)
+    const sanitizedSessions = sessions.map(session => ({
+      id: session.id,
+      ip_address: session.ip_address,
+      user_agent: session.user_agent,
+      last_activity: session.last_activity,
+      created_at: session.created_at,
+      expires_at: session.expires_at
+    }));
 
-// Protected routes for authenticated users
-router.get('/client/:clientId', authenticateToken, sessionController.getClientSessions);
-router.get('/psychologist/:psychologistId', authenticateToken, sessionController.getPsychologistSessions);
-router.get('/admin/all', authenticateToken, sessionController.getAllSessions);
-router.put('/:sessionId/status', authenticateToken, sessionController.updateSessionStatus);
-router.put('/:sessionId/complete', authenticateToken, sessionController.completeSession); // Complete session with summary, report, and notes
-router.put('/:sessionId/no-show', authenticateToken, sessionController.markSessionAsNoShow); // Mark session as no-show (psychologist or admin)
-router.delete('/:sessionId', authenticateToken, sessionController.deleteSession);
+    res.json({
+      success: true,
+      data: {
+        sessions: sanitizedSessions,
+        count: sanitizedSessions.length
+      }
+    });
+  } catch (error) {
+    console.error('Error getting sessions:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve sessions'
+    });
+  }
+});
+
+/**
+ * DELETE /api/sessions/:sessionId
+ * Revoke a specific session
+ */
+router.delete('/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const result = await sessionManager.revokeSession(sessionId, req.user.id);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to revoke session'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Session revoked successfully'
+    });
+  } catch (error) {
+    console.error('Error revoking session:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to revoke session'
+    });
+  }
+});
+
+/**
+ * DELETE /api/sessions
+ * Revoke all sessions for the current user (except current)
+ */
+router.delete('/', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (token) {
+      // Get all sessions
+      const sessions = await sessionManager.getUserSessions(req.user.id);
+      const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+      
+      // Revoke all except current
+      for (const session of sessions) {
+        if (session.token_hash !== tokenHash) {
+          await sessionManager.revokeSession(session.id, req.user.id);
+        }
+      }
+    } else {
+      // If no token, revoke all
+      await sessionManager.revokeAllUserSessions(req.user.id);
+    }
+
+    res.json({
+      success: true,
+      message: 'All other sessions revoked successfully'
+    });
+  } catch (error) {
+    console.error('Error revoking all sessions:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to revoke sessions'
+    });
+  }
+});
 
 module.exports = router;

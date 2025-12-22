@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+// Removed unused supabase import - using supabaseAdmin inline where needed
 const { 
   generateToken, 
   hashPassword, 
@@ -7,6 +7,10 @@ const {
   errorResponse
 } = require('../utils/helpers');
 const emailVerificationService = require('../utils/emailVerificationService');
+const accountLockoutService = require('../utils/accountLockout');
+const { validatePassword } = require('../utils/passwordPolicy');
+const auditLogger = require('../utils/auditLogger');
+const sessionManager = require('../utils/sessionManager');
 
 // User registration
 const register = async (req, res) => {
@@ -17,9 +21,12 @@ const register = async (req, res) => {
     }
 
     // Check if user already exists
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    
     if (role === 'client') {
       // Check users table first (for new system)
-      const { data: existingUser, error: userCheckError } = await supabase
+      const { data: existingUser, error: userCheckError } = await supabaseAdmin
         .from('users')
         .select('id')
         .eq('email', email.toLowerCase().trim()) // Normalize email
@@ -41,7 +48,7 @@ const register = async (req, res) => {
       }
 
       // Also check clients table for old entries (backward compatibility)
-      const { data: existingClient, error: clientCheckError } = await supabase
+      const { data: existingClient, error: clientCheckError } = await supabaseAdmin
         .from('clients')
         .select('id')
         .eq('email', email.toLowerCase().trim()) // Normalize email
@@ -62,7 +69,7 @@ const register = async (req, res) => {
         );
       }
     } else if (role === 'psychologist') {
-      const { data: existingPsychologist } = await supabase
+      const { data: existingPsychologist } = await supabaseAdmin
         .from('psychologists')
         .select('id')
         .eq('email', email)
@@ -75,7 +82,7 @@ const register = async (req, res) => {
       }
     } else {
       // For admin roles, check users table
-      const { data: existingUser } = await supabase
+      const { data: existingUser } = await supabaseAdmin
         .from('users')
         .select('id')
         .eq('email', email)
@@ -84,6 +91,16 @@ const register = async (req, res) => {
       if (existingUser) {
         return res.status(400).json(
           errorResponse('User with this email already exists')
+        );
+      }
+    }
+
+    // Validate password against policy
+    if (password) {
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json(
+          errorResponse('Password does not meet requirements', passwordValidation.errors)
         );
       }
     }
@@ -177,7 +194,8 @@ const register = async (req, res) => {
       console.log('🔍 Verification - user object id:', user.id, 'should match newUser.id:', newUser.id);
     } else if (role === 'psychologist') {
       // Create psychologist directly in psychologists table (no users table entry)
-      const { data: psychologist, error: psychologistError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychologistError } = await supabaseAdmin
         .from('psychologists')
         .insert([{
           email,
@@ -212,7 +230,8 @@ const register = async (req, res) => {
       profileData = psychologist;
     } else {
       // Create admin/super admin/finance user in users table
-      const { data: newUser, error: userError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: newUser, error: userError } = await supabaseAdmin
         .from('users')
         .insert([{
           email,
@@ -329,11 +348,14 @@ const googleLogin = async (req, res) => {
     }
 
     // Check if user already exists
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    
     let user = null;
     let userRole = 'client'; // Default role for Google sign-ins
 
     // First check psychologists table
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('*')
       .eq('email', email)
@@ -344,7 +366,7 @@ const googleLogin = async (req, res) => {
       userRole = 'psychologist';
     } else {
       // Check clients table
-      const { data: existingClient, error: clientError } = await supabase
+      const { data: existingClient, error: clientError } = await supabaseAdmin
         .from('clients')
         .select(`
           *,
@@ -358,7 +380,7 @@ const googleLogin = async (req, res) => {
         userRole = 'client';
       } else {
         // Check users table for admin roles
-        const { data: existingUser, error: userError } = await supabase
+        const { data: existingUser, error: userError } = await supabaseAdmin
           .from('users')
           .select('*')
           .eq('email', email)
@@ -382,7 +404,8 @@ const googleLogin = async (req, res) => {
       });
 
       // First create a user record in users table
-      const { data: newUser, error: userError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: newUser, error: userError } = await supabaseAdmin
         .from('users')
         .insert({
           email: email,
@@ -402,7 +425,8 @@ const googleLogin = async (req, res) => {
       }
 
       // Then create client record with user_id reference
-      const { data: newClient, error: createError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: newClient, error: createError } = await supabaseAdmin
         .from('clients')
         .insert({
           user_id: newUser.id,
@@ -418,8 +442,9 @@ const googleLogin = async (req, res) => {
 
       if (createError) {
         console.error('Error creating client:', createError);
-        // Clean up user record if client creation fails
-        await supabase.from('users').delete().eq('id', newUser.id);
+        // Clean up user record if client creation fails (use supabaseAdmin to bypass RLS)
+        const { supabaseAdmin } = require('../config/supabase');
+        await supabaseAdmin.from('users').delete().eq('id', newUser.id);
         return res.status(500).json(
           errorResponse(`Failed to create client account: ${createError.message}`)
         );
@@ -432,7 +457,8 @@ const googleLogin = async (req, res) => {
       // Update existing user with Google info if needed
       if (userRole === 'client') {
         // Update the user record with Google info
-        const { error: updateUserError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { error: updateUserError } = await supabaseAdmin
           .from('users')
           .update({
             google_id: googleId,
@@ -444,7 +470,8 @@ const googleLogin = async (req, res) => {
           console.error('Error updating user with Google info:', updateUserError);
         }
       } else if (userRole === 'psychologist') {
-        const { error: updateError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { error: updateError } = await supabaseAdmin
           .from('psychologists')
           .update({
             google_id: googleId,
@@ -457,7 +484,8 @@ const googleLogin = async (req, res) => {
         }
       } else {
         // Update admin users in users table
-        const { error: updateError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { error: updateError } = await supabaseAdmin
           .from('users')
           .update({
             google_id: googleId,
@@ -530,8 +558,11 @@ const googleLogin = async (req, res) => {
 
 // Helper function to find user with flexible Gmail dot handling
 const findUserWithFlexibleEmail = async (table, email) => {
+  // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+  const { supabaseAdmin } = require('../config/supabase');
+  
   // First try exact match
-  let { data, error } = await supabase
+  let { data, error } = await supabaseAdmin
     .from(table)
     .select('*')
     .eq('email', email)
@@ -546,7 +577,7 @@ const findUserWithFlexibleEmail = async (table, email) => {
     const [localPart, domain] = email.split('@');
     const emailWithoutDots = localPart.replace(/\./g, '') + '@' + domain;
     
-    const { data: dataWithoutDots, error: errorWithoutDots } = await supabase
+    const { data: dataWithoutDots, error: errorWithoutDots } = await supabaseAdmin
       .from(table)
       .select('*')
       .eq('email', emailWithoutDots)
@@ -568,7 +599,7 @@ const findUserWithFlexibleEmail = async (table, email) => {
     
     for (const dotPattern of dotPatterns) {
       const emailWithDots = dotPattern + '@' + domain;
-      const { data: dataWithDots, error: errorWithDots } = await supabase
+      const { data: dataWithDots, error: errorWithDots } = await supabaseAdmin
         .from(table)
         .select('*')
         .eq('email', emailWithDots)
@@ -591,6 +622,19 @@ const login = async (req, res) => {
       email = email.trim().toLowerCase();
     }
 
+    // Check if account is locked (before attempting login)
+    const lockoutStatus = await accountLockoutService.isAccountLocked(email);
+    if (lockoutStatus.locked) {
+      const minutesRemaining = Math.ceil((lockoutStatus.lockoutUntil.getTime() - Date.now()) / 60000);
+      return res.status(429).json(
+        errorResponse(
+          `Account temporarily locked due to too many failed login attempts. Please try again in ${minutesRemaining} minute(s).`,
+          null,
+          429
+        )
+      );
+    }
+
     // First check if it's a psychologist with flexible email matching
     const { data: psychologist, error: psychologistError } = await findUserWithFlexibleEmail('psychologists', email);
 
@@ -598,13 +642,54 @@ const login = async (req, res) => {
       // Verify password for psychologist
       const isValidPassword = await comparePassword(password, psychologist.password_hash);
       if (!isValidPassword) {
+        // Record failed attempt
+        const ip = req.ip || req.connection.remoteAddress;
+        await accountLockoutService.recordFailedAttempt(email, ip);
+        
+        // Log failed login attempt
+        await auditLogger.logAction({
+          userId: null,
+          userEmail: email,
+          userRole: 'psychologist',
+          action: 'LOGIN_FAILED',
+          resource: 'authentication',
+          resourceId: psychologist.id,
+          endpoint: '/api/auth/login',
+          method: 'POST',
+          details: { reason: 'Invalid password', role: 'psychologist' },
+          ip: ip,
+          userAgent: req.headers['user-agent'] || 'Unknown'
+        }).catch(err => console.error('Error logging failed login:', err));
+        
         return res.status(401).json(
           errorResponse('Invalid email or password')
         );
       }
 
+      // Log successful login
+      const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      await auditLogger.logAction({
+        userId: psychologist.id,
+        userEmail: email,
+        userRole: 'psychologist',
+        action: 'LOGIN_SUCCESS',
+        resource: 'authentication',
+        resourceId: psychologist.id,
+        endpoint: '/api/auth/login',
+        method: 'POST',
+        details: { role: 'psychologist' },
+        ip: ip,
+        userAgent: req.headers['user-agent'] || 'Unknown'
+      }).catch(err => console.error('Error logging successful login:', err));
+
+      // Clear failed attempts on successful login
+      await accountLockoutService.clearFailedAttempts(email);
+
       // Generate JWT token for psychologist
       const token = generateToken(psychologist.id, 'psychologist');
+
+      // Create session (reuse ip variable from above)
+      await sessionManager.createSession(psychologist.id, token, ip, req.headers['user-agent'] || 'Unknown');
 
       res.json(
         successResponse({
@@ -636,8 +721,13 @@ const login = async (req, res) => {
       const isValidPassword = await comparePassword(password, userFromUsers.password_hash);
       
       if (isValidPassword) {
+        // Clear failed attempts on successful login
+        await accountLockoutService.clearFailedAttempts(email);
+        
         // Now fetch the client profile
-        const { data: clientProfile, error: clientProfileError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        const { supabaseAdmin } = require('../config/supabase');
+        const { data: clientProfile, error: clientProfileError } = await supabaseAdmin
           .from('clients')
           .select('*')
           .eq('user_id', userFromUsers.id)
@@ -653,6 +743,25 @@ const login = async (req, res) => {
           userRole = 'client';
         }
       } else {
+        // Record failed attempt
+        const ip = req.ip || req.connection.remoteAddress;
+        await accountLockoutService.recordFailedAttempt(email, ip);
+        
+        // Log failed login attempt
+        await auditLogger.logAction({
+          userId: null,
+          userEmail: email,
+          userRole: 'client',
+          action: 'LOGIN_FAILED',
+          resource: 'authentication',
+          resourceId: userFromUsers?.id || null,
+          endpoint: '/api/auth/login',
+          method: 'POST',
+          details: { reason: 'Invalid password', role: 'client' },
+          ip: ip,
+          userAgent: req.headers['user-agent'] || 'Unknown'
+        }).catch(err => console.error('Error logging failed login:', err));
+        
         return res.status(401).json(
           errorResponse('Invalid email or password')
         );
@@ -666,10 +775,32 @@ const login = async (req, res) => {
         const isValidPassword = await comparePassword(password, oldClient.password_hash);
         
         if (isValidPassword) {
+          // Clear failed attempts on successful login
+          await accountLockoutService.clearFailedAttempts(email);
+          
           user = oldClient;
           userRole = 'client';
           clientData = oldClient;
         } else {
+          // Record failed attempt
+          const ip = req.ip || req.connection.remoteAddress;
+          await accountLockoutService.recordFailedAttempt(email, ip);
+          
+          // Log failed login attempt
+          await auditLogger.logAction({
+            userId: null,
+            userEmail: email,
+            userRole: 'client',
+            action: 'LOGIN_FAILED',
+            resource: 'authentication',
+            resourceId: oldClient?.id || null,
+            endpoint: '/api/auth/login',
+            method: 'POST',
+            details: { reason: 'Invalid password', role: 'client' },
+            ip: ip,
+            userAgent: req.headers['user-agent'] || 'Unknown'
+          }).catch(err => console.error('Error logging failed login:', err));
+          
           return res.status(401).json(
             errorResponse('Invalid email or password')
           );
@@ -682,27 +813,102 @@ const login = async (req, res) => {
           const isValidPassword = await comparePassword(password, adminUser.password_hash);
           
           if (isValidPassword) {
+            // Clear failed attempts on successful login
+            await accountLockoutService.clearFailedAttempts(email);
+            
             user = adminUser;
             userRole = adminUser.role;
           } else {
+            // Record failed attempt
+            const ip = req.ip || req.connection.remoteAddress;
+            await accountLockoutService.recordFailedAttempt(email, ip);
+            
+            // Log failed login attempt
+            await auditLogger.logAction({
+              userId: null,
+              userEmail: email,
+              userRole: adminUser?.role || 'unknown',
+              action: 'LOGIN_FAILED',
+              resource: 'authentication',
+              resourceId: adminUser?.id || null,
+              endpoint: '/api/auth/login',
+              method: 'POST',
+              details: { reason: 'Invalid password', role: adminUser?.role || 'unknown' },
+              ip: ip,
+              userAgent: req.headers['user-agent'] || 'Unknown'
+            }).catch(err => console.error('Error logging failed login:', err));
+            
             return res.status(401).json(
               errorResponse('Invalid email or password')
             );
           }
         } else {
-          // User not found - suggest signup
+          // User not found - record failed attempt (don't reveal user doesn't exist)
+          const ip = req.ip || req.connection.remoteAddress;
+          await accountLockoutService.recordFailedAttempt(email, ip);
+          
+          // Log failed login attempt (user not found)
+          await auditLogger.logAction({
+            userId: null,
+            userEmail: email,
+            userRole: 'unknown',
+            action: 'LOGIN_FAILED',
+            resource: 'authentication',
+            resourceId: null,
+            endpoint: '/api/auth/login',
+            method: 'POST',
+            details: { reason: 'User not found' },
+            ip: ip,
+            userAgent: req.headers['user-agent'] || 'Unknown'
+          }).catch(err => console.error('Error logging failed login:', err));
+          
           return res.status(401).json(
-            errorResponse('User not found. New to Little Care? Sign up first')
+            errorResponse('Invalid email or password')
           );
         }
       }
     }
 
     if (!user) {
+      // Record failed attempt (don't reveal user doesn't exist)
+      const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      await accountLockoutService.recordFailedAttempt(email, ip);
+      
+      // Log failed login attempt
+      await auditLogger.logAction({
+        userId: null,
+        userEmail: email,
+        userRole: 'unknown',
+        action: 'LOGIN_FAILED',
+        resource: 'authentication',
+        resourceId: null,
+        endpoint: '/api/auth/login',
+        method: 'POST',
+        details: { reason: 'User not found' },
+        ip: ip,
+        userAgent: req.headers['user-agent'] || 'Unknown'
+      }).catch(err => console.error('Error logging failed login:', err));
+      
       return res.status(401).json(
-        errorResponse('User not found. New to Little Care? Sign up first')
+        errorResponse('Invalid email or password')
       );
     }
+
+    // Log successful login
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    await auditLogger.logAction({
+      userId: user.id,
+      userEmail: email,
+      userRole: userRole,
+      action: 'LOGIN_SUCCESS',
+      resource: 'authentication',
+      resourceId: user.id,
+      endpoint: '/api/auth/login',
+      method: 'POST',
+      details: { role: userRole },
+      ip: ip,
+      userAgent: req.headers['user-agent'] || 'Unknown'
+    }).catch(err => console.error('Error logging successful login:', err));
 
     // Get role-specific profile
     let profile = null;
@@ -722,6 +928,9 @@ const login = async (req, res) => {
 
     // Generate JWT token - use user.id (from users table for new clients, or client.id for old clients)
     const token = generateToken(user.id, userRole);
+
+    // Create session (reuse ip variable from above)
+    await sessionManager.createSession(user.id, token, ip, req.headers['user-agent'] || 'Unknown');
 
     res.json(
       successResponse({
@@ -755,8 +964,10 @@ const getProfile = async (req, res) => {
     
     if (userRole === 'client') {
       // New system: client has user_id reference to users table
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { supabaseAdmin } = require('../config/supabase');
       // Try lookup by user_id first (new system)
-      let { data: client, error: clientError } = await supabase
+      let { data: client, error: clientError } = await supabaseAdmin
         .from('clients')
         .select('*')
         .eq('user_id', userId)
@@ -764,7 +975,7 @@ const getProfile = async (req, res) => {
 
       // If not found, try old system: lookup by id (backward compatibility)
       if (clientError || !client) {
-        ({ data: client, error: clientError } = await supabase
+        ({ data: client, error: clientError } = await supabaseAdmin
           .from('clients')
           .select('*')
           .eq('id', userId)
@@ -779,7 +990,9 @@ const getProfile = async (req, res) => {
       }
     } else if (userRole === 'psychologist') {
       // For psychologists, the profile is the user data itself
-      const { data: psychologist } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { supabaseAdmin } = require('../config/supabase');
+      const { data: psychologist } = await supabaseAdmin
         .from('psychologists')
         .select('*')
         .eq('id', userId)
@@ -819,7 +1032,9 @@ const updateProfilePicture = async (req, res) => {
       );
     }
 
-    const { data: user, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user, error } = await supabaseAdmin
       .from('users')
       .update({ 
         profile_picture_url,
@@ -862,14 +1077,18 @@ const changePassword = async (req, res) => {
       );
     }
 
-    if (newPassword.length < 6) {
+    // Validate password against policy
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.valid) {
       return res.status(400).json(
-        errorResponse('New password must be at least 6 characters long')
+        errorResponse('Password does not meet requirements', passwordValidation.errors)
       );
     }
 
     // Get current user to verify current password
-    const { data: user } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user } = await supabaseAdmin
       .from('users')
       .select('password_hash')
       .eq('id', userId)
@@ -887,7 +1106,8 @@ const changePassword = async (req, res) => {
     const hashedNewPassword = await hashPassword(newPassword);
 
     // Update password
-    const { error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { error } = await supabaseAdmin
       .from('users')
       .update({ 
         password_hash: hashedNewPassword,
@@ -926,7 +1146,9 @@ const sendPasswordResetOTP = async (req, res) => {
     }
 
     // Check if user exists (only for clients in users table)
-    const { data: user } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user } = await supabaseAdmin
       .from('users')
       .select('id, email, role')
       .eq('email', email)
@@ -977,9 +1199,11 @@ const resetPassword = async (req, res) => {
       );
     }
 
-    if (newPassword.length < 6) {
+    // Validate password against policy
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.valid) {
       return res.status(400).json(
-        errorResponse('New password must be at least 6 characters long')
+        errorResponse('Password does not meet requirements', passwordValidation.errors)
       );
     }
 
@@ -992,7 +1216,9 @@ const resetPassword = async (req, res) => {
     }
 
     // Check if user exists
-    const { data: user } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user } = await supabaseAdmin
       .from('users')
       .select('id, email, role')
       .eq('email', email)
@@ -1015,7 +1241,8 @@ const resetPassword = async (req, res) => {
     const hashedPassword = await hashPassword(newPassword);
 
     // Update password
-    const { error: updateError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { error: updateError } = await supabaseAdmin
       .from('users')
       .update({ 
         password_hash: hashedPassword,
@@ -1042,11 +1269,24 @@ const resetPassword = async (req, res) => {
   }
 };
 
-// Logout (client-side token removal)
+// Logout (revoke token)
 const logout = async (req, res) => {
   try {
-    // In a stateless JWT system, logout is handled client-side
-    // You could implement a blacklist here if needed
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    // Revoke the token
+    if (token) {
+      const tokenRevocationService = require('../utils/tokenRevocation');
+      await tokenRevocationService.revokeToken(token);
+    }
+
+    // Also revoke all user tokens if requested (for security)
+    if (req.body?.revokeAll === true && req.user?.id) {
+      const tokenRevocationService = require('../utils/tokenRevocation');
+      await tokenRevocationService.revokeUserTokens(req.user.id);
+    }
+
     res.json(
       successResponse(null, 'Logged out successfully')
     );

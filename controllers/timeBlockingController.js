@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const timeBlockingService = require('../utils/timeBlockingService');
 
@@ -64,7 +64,7 @@ const blockTimeSlots = async (req, res) => {
     }
 
     // Check if psychologist has Google Calendar connected
-    const { data: psychologist, error: psychError } = await supabase
+    const { data: psychologist, error: psychError } = await supabaseAdmin
       .from('psychologists')
       .select('google_calendar_credentials')
       .eq('id', psychologistId)

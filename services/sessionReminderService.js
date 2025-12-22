@@ -31,16 +31,6 @@ class SessionReminderService {
     });
 
     console.log('✅ Session Reminder Service scheduled (runs every hour)');
-    
-    // Also run immediately on startup (after a short delay to let server fully start)
-    setTimeout(() => {
-      console.log('🔔 Running initial reminder check on startup...');
-      if (!this.isRunning) {
-        this.checkAndSendReminders().catch(error => {
-          console.error('❌ Error in initial reminder check:', error);
-        });
-      }
-    }, 15000); // Wait 15 seconds after startup to let server fully initialize
   }
 
   /**
@@ -88,6 +78,7 @@ class SessionReminderService {
           scheduled_time,
           status,
           google_meet_link,
+          reminder_sent,
           client:clients(
             id,
             first_name,
@@ -136,9 +127,14 @@ class SessionReminderService {
         });
       }
 
-      // Filter sessions that are in the next 2 hours (0 to 2 hours from now)
+      // Filter sessions that are in the next 2 hours (0 to 2 hours from now) and haven't received reminders yet
       const reminderSessions = (sessions || []).filter(session => {
         if (!session.scheduled_time) return false;
+        
+        // Skip if reminder already sent
+        if (session.reminder_sent === true) {
+          return false;
+        }
         
         const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
         const timeDiffMinutes = sessionTime.diff(now, 'minute'); // Difference in minutes
@@ -348,6 +344,18 @@ class SessionReminderService {
 
       // Wait for both messages to complete (or fail) before moving to next session
       await Promise.all(reminderPromises);
+
+      // Mark reminder as sent in the sessions table
+      const { error: updateError } = await supabaseAdmin
+        .from('sessions')
+        .update({ reminder_sent: true })
+        .eq('id', session.id);
+
+      if (updateError) {
+        console.error(`❌ Error updating reminder_sent for session ${session.id}:`, updateError);
+      } else {
+        console.log(`✅ Marked reminder_sent=true for session ${session.id}`);
+      }
 
       // Create notification record to track that reminder was sent
       await supabaseAdmin
@@ -626,6 +634,7 @@ class SessionReminderService {
           scheduled_time,
           status,
           google_meet_link,
+          reminder_sent,
           client:clients(
             id,
             first_name,
@@ -648,6 +657,12 @@ class SessionReminderService {
 
       if (sessionError || !session) {
         console.log(`ℹ️  [PRIORITY] Session ${sessionId} not found or not in valid status`);
+        return;
+      }
+
+      // Check if reminder already sent
+      if (session.reminder_sent === true) {
+        console.log(`⏭️  [PRIORITY] Reminder already sent for session ${sessionId}, skipping...`);
         return;
       }
 

@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
@@ -29,7 +28,8 @@ const getConversations = async (req, res) => {
       
       console.log('🔍 Using client ID for conversations:', clientId);
 
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data, error } = await supabaseAdmin
         .from('conversations')
         .select(`
           *,
@@ -45,7 +45,8 @@ const getConversations = async (req, res) => {
       conversations = data;
     } else if (userRole === 'psychologist') {
       // Get psychologist conversations
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data, error } = await supabaseAdmin
         .from('conversations')
         .select(`
           *,
@@ -76,7 +77,8 @@ const getMessages = async (req, res) => {
     const userRole = req.user.role;
 
     // Verify user has access to this conversation
-    const { data: conversation, error: convError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: conversation, error: convError } = await supabaseAdmin
       .from('conversations')
       .select('*')
       .eq('id', conversationId)
@@ -118,7 +120,8 @@ const getMessages = async (req, res) => {
     }
 
     // Get messages
-    const { data: messages, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: messages, error } = await supabaseAdmin
       .from('messages')
       .select('*')
       .eq('conversation_id', conversationId)
@@ -146,7 +149,8 @@ const sendMessage = async (req, res) => {
     }
 
     // Optimized: Single query to verify access and get conversation
-    const { data: conversation, error: convError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: conversation, error: convError } = await supabaseAdmin
       .from('conversations')
       .select('id, client_id, psychologist_id')
       .eq('id', conversationId)
@@ -188,7 +192,8 @@ const sendMessage = async (req, res) => {
     }
 
     // Create message and update conversation in a single transaction
-    const { data: message, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: message, error } = await supabaseAdmin
       .from('messages')
       .insert([{
         conversation_id: conversationId,
@@ -203,7 +208,8 @@ const sendMessage = async (req, res) => {
     if (error) throw error;
 
     // Update conversation last_message_at (non-blocking)
-    supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    supabaseAdmin
       .from('conversations')
       .update({ last_message_at: new Date().toISOString() })
       .eq('id', conversationId)
@@ -225,7 +231,8 @@ const markAsRead = async (req, res) => {
     const userRole = req.user.role;
 
     // Verify user has access to this conversation
-    const { data: conversation, error: convError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: conversation, error: convError } = await supabaseAdmin
       .from('conversations')
       .select('*')
       .eq('id', conversationId)
@@ -267,7 +274,7 @@ const markAsRead = async (req, res) => {
     }
 
     // Mark messages as read
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('messages')
       .update({ is_read: true })
       .eq('conversation_id', conversationId)
@@ -299,7 +306,7 @@ const createConversation = async (req, res) => {
     }
 
     // Get session details
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('client_id, psychologist_id')
       .eq('id', sessionId)
@@ -346,7 +353,7 @@ const createConversation = async (req, res) => {
     }
 
     // Check if conversation already exists
-    const { data: existingConversation } = await supabase
+    const { data: existingConversation } = await supabaseAdmin
       .from('conversations')
       .select('id')
       .eq('client_id', session.client_id)
@@ -360,7 +367,7 @@ const createConversation = async (req, res) => {
     }
 
     // Create new conversation
-    const { data: conversation, error } = await supabase
+    const { data: conversation, error } = await supabaseAdmin
       .from('conversations')
       .insert([{
         client_id: session.client_id,

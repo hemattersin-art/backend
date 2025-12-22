@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const googleCalendarService = require('../utils/googleCalendarService');
@@ -60,7 +59,8 @@ const setAvailability = async (req, res) => {
     }
 
     // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name')
       .eq('id', psychologist_id)
@@ -84,7 +84,8 @@ const setAvailability = async (req, res) => {
     }
 
     // Check for conflicts with existing sessions
-    const { data: conflictingSessions } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: conflictingSessions } = await supabaseAdmin
       .from('sessions')
       .select('id, scheduled_time')
       .eq('psychologist_id', psychologist_id)
@@ -104,7 +105,8 @@ const setAvailability = async (req, res) => {
 
     // Check Google Calendar for external conflicts
     try {
-      const { data: psychologist } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: psychologist } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologist_id)
@@ -144,7 +146,8 @@ const setAvailability = async (req, res) => {
     }
 
     // Check if availability already exists for this date
-    const { data: existingAvailability } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingAvailability } = await supabaseAdmin
       .from('availability')
       .select('id')
       .eq('psychologist_id', psychologist_id)
@@ -154,7 +157,8 @@ const setAvailability = async (req, res) => {
     let availability;
     if (existingAvailability) {
       // Update existing availability
-      const { data: updatedAvailability, error: updateError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: updatedAvailability, error: updateError } = await supabaseAdmin
         .from('availability')
         .update({
           time_slots,
@@ -174,7 +178,8 @@ const setAvailability = async (req, res) => {
       availability = updatedAvailability;
     } else {
       // Create new availability
-      const { data: newAvailability, error: createError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: newAvailability, error: createError } = await supabaseAdmin
         .from('availability')
         .insert({
           psychologist_id,
@@ -231,7 +236,8 @@ const getAvailability = async (req, res) => {
       );
     }
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('availability')
       .select('*')
       .eq('psychologist_id', psychologist_id)
@@ -256,7 +262,7 @@ const getAvailability = async (req, res) => {
     }
 
     // Get booked sessions for the same period (exclude cancelled sessions)
-    let sessionsQuery = supabase
+    let sessionsQuery = supabaseAdmin
       .from('sessions')
       .select('scheduled_date, scheduled_time, status, id')
       .eq('psychologist_id', psychologist_id)
@@ -306,7 +312,8 @@ const getAvailability = async (req, res) => {
     // Also check Google Calendar for external events (including Google Meet sessions)
     let externalGoogleCalendarEvents = [];
     try {
-      const { data: psychologist } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: psychologist } = await supabaseAdmin
         .from('psychologists')
         .select('id, google_calendar_credentials')
         .eq('id', psychologist_id)
@@ -487,7 +494,8 @@ const getAvailableTimeSlots = async (req, res) => {
     }
 
     // Get availability for the specific date
-    const { data: availability, error: availabilityError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: availability, error: availabilityError } = await supabaseAdmin
       .from('availability')
       .select('time_slots')
       .eq('psychologist_id', psychologist_id)
@@ -502,7 +510,8 @@ const getAvailableTimeSlots = async (req, res) => {
     }
 
     // Get booked sessions for the date
-    const { data: bookedSessions } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: bookedSessions } = await supabaseAdmin
       .from('sessions')
       .select('scheduled_time')
       .eq('psychologist_id', psychologist_id)
@@ -549,7 +558,8 @@ const deleteAvailability = async (req, res) => {
     const { availabilityId } = req.params;
 
     // Check if availability exists
-    const { data: availability, error: availabilityError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: availability, error: availabilityError } = await supabaseAdmin
       .from('availability')
       .select('*')
       .eq('id', availabilityId)
@@ -562,7 +572,8 @@ const deleteAvailability = async (req, res) => {
     }
 
     // Check if there are any sessions on this date
-    const { data: sessions } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: sessions } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('psychologist_id', availability.psychologist_id)
@@ -576,7 +587,8 @@ const deleteAvailability = async (req, res) => {
     }
 
     // Delete availability
-    const { error: deleteError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error: deleteError } = await supabaseAdmin
       .from('availability')
       .delete()
       .eq('id', availabilityId);
@@ -621,7 +633,8 @@ const setBulkAvailability = async (req, res) => {
     }
 
     // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id')
       .eq('id', psychologist_id)
@@ -639,7 +652,8 @@ const setBulkAvailability = async (req, res) => {
     for (const entry of availability_data) {
       try {
         // Check for conflicts
-        const { data: conflictingSessions } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: conflictingSessions } = await supabaseAdmin
           .from('sessions')
           .select('id')
           .eq('psychologist_id', psychologist_id)
@@ -655,7 +669,8 @@ const setBulkAvailability = async (req, res) => {
         }
 
         // Set availability for this date
-        const { data: availability, error: availabilityError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: availability, error: availabilityError } = await supabaseAdmin
           .from('availability')
           .upsert({
             psychologist_id,
@@ -712,7 +727,8 @@ const syncGoogleCalendar = async (req, res) => {
     }
 
     // Get psychologist with Google Calendar credentials
-    const { data: psychologist, error: psychologistError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name, google_calendar_credentials')
       .eq('id', psychologist_id)
@@ -887,7 +903,8 @@ const syncGoogleCalendar = async (req, res) => {
         // Process each date affected by the event
         for (const dateInfo of datesToProcess) {
         // Get current availability for this date
-        const { data: availability } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: availability } = await supabaseAdmin
           .from('availability')
           .select('id, time_slots')
           .eq('psychologist_id', psychologist_id)
@@ -932,7 +949,8 @@ const syncGoogleCalendar = async (req, res) => {
           });
           
           if (slotsToBlock.length > 0) {
-            await supabase
+            // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+            await supabaseAdmin
               .from('availability')
               .update({ 
                 time_slots: updatedSlots,
@@ -994,7 +1012,8 @@ const getGoogleCalendarBusyTimes = async (req, res) => {
     }
 
     // Get psychologist with Google Calendar credentials
-    const { data: psychologist, error: psychologistError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name, google_calendar_credentials')
       .eq('id', psychologist_id)

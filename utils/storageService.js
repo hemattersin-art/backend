@@ -1,10 +1,7 @@
-const { createClient } = require('@supabase/supabase-js');
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // Use service role key for admin operations
-);
+// Use supabaseAdmin from config for consistency and RLS bypass
+const { supabaseAdmin } = require('../config/supabase');
+// Alias for storage operations (same client, just for clarity)
+const supabase = supabaseAdmin;
 
 const BLOG_IMAGES_BUCKET = 'blog-images';
 const COUNSELLING_IMAGES_BUCKET = 'counselling-images';

@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const emailService = require('./emailService');
 const { successResponse, errorResponse } = require('./helpers');
 
@@ -29,7 +29,8 @@ class EmailVerificationService {
       console.log(`📧 Sending OTP to ${email} for ${verificationType} verification`);
 
       // Check if there's an active verification for this email
-      const { data: existingVerification } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: existingVerification } = await supabaseAdmin
         .from('email_verifications')
         .select('*')
         .eq('email', email)
@@ -68,7 +69,8 @@ class EmailVerificationService {
       const expiresAt = new Date(Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000);
 
       // Clean up any expired verifications for this email
-      await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      await supabaseAdmin
         .from('email_verifications')
         .delete()
         .eq('email', email)
@@ -76,14 +78,16 @@ class EmailVerificationService {
         .lt('expires_at', new Date().toISOString());
 
       // Also clean up any other unverified verifications for this email to ensure uniqueness
-      await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      await supabaseAdmin
         .from('email_verifications')
         .delete()
         .eq('email', email)
         .eq('is_verified', false);
 
       // Store new verification record
-      const { data: verification, error: verificationError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: verification, error: verificationError } = await supabaseAdmin
         .from('email_verifications')
         .insert([{
           email,
@@ -164,7 +168,8 @@ class EmailVerificationService {
       console.log(`🔍 Verifying OTP for ${email}`);
 
       // Find active verification record
-      const { data: verification, error: verificationError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: verification, error: verificationError } = await supabaseAdmin
         .from('email_verifications')
         .select('*')
         .eq('email', email)
@@ -191,7 +196,8 @@ class EmailVerificationService {
       }
 
       // Increment attempts
-      await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      await supabaseAdmin
         .from('email_verifications')
         .update({ attempts: verification.attempts + 1 })
         .eq('id', verification.id);
@@ -207,7 +213,8 @@ class EmailVerificationService {
       }
 
       // Mark as verified
-      const { error: updateError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { error: updateError } = await supabaseAdmin
         .from('email_verifications')
         .update({ 
           is_verified: true,
@@ -250,7 +257,8 @@ class EmailVerificationService {
    */
   async isEmailVerified(email, verificationType = 'registration') {
     try {
-      const { data: verification } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: verification } = await supabaseAdmin
         .from('email_verifications')
         .select('is_verified')
         .eq('email', email)
@@ -407,7 +415,8 @@ This is an automated message. Please do not reply to this email.
    */
   async cleanupExpiredVerifications() {
     try {
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data, error } = await supabaseAdmin
         .from('email_verifications')
         .delete()
         .lt('expires_at', new Date().toISOString())

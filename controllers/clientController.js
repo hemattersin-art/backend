@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { deriveSessionCount, ensureClientPackageRecord } = require('../services/packageService');
 const { 
@@ -29,7 +28,8 @@ const getProfile = async (req, res) => {
       client = req.user;
     } else if (userRole === 'client') {
       // Try new system: lookup by user_id
-      const { data: clientByUserId, error: errorByUserId } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: clientByUserId, error: errorByUserId } = await supabaseAdmin
         .from('clients')
         .select('*')
         .eq('user_id', req.user.user_id)
@@ -39,7 +39,7 @@ const getProfile = async (req, res) => {
         client = clientByUserId;
       } else {
         // Fallback to old system: lookup by id (backward compatibility)
-        const { data: clientById, error: errorById } = await supabase
+        const { data: clientById, error: errorById } = await supabaseAdmin
           .from('clients')
           .select('*')
           .eq('id', userId)
@@ -106,7 +106,8 @@ const getPaymentCredit = async (req, res) => {
     }
 
     // In the clients table, id is the client_id used in payments
-    const { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -121,7 +122,8 @@ const getPaymentCredit = async (req, res) => {
 
     const clientId = client.id;
 
-    const { data: payment, error: paymentError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: payment, error: paymentError } = await supabaseAdmin
       .from('payments')
       .select('id, client_id, psychologist_id, amount, status, transaction_id, session_id, session_type, razorpay_payment_id')
       .eq('transaction_id', transactionId)
@@ -168,10 +170,15 @@ const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const updateData = req.body;
-
-    // Remove user_id from update data if present (shouldn't be updated)
-    delete updateData.user_id;
+    
+    // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
+    const allowedFields = ['first_name', 'last_name', 'phone_number', 'child_name', 'child_age'];
+    const updateData = {};
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
 
     // Handle optional last_name - allow clearing it
     if (updateData.last_name !== undefined) {
@@ -414,8 +421,9 @@ const getSessions = async (req, res) => {
     let clientId = req.user.client_id || userId;
 
     // Check if sessions table exists and has proper relationships
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     try {
-      let query = supabase
+      let query = supabaseAdmin
         .from('sessions')
         .select(`
           *,
@@ -608,7 +616,8 @@ const getSessions = async (req, res) => {
       if (packageIds.length > 0) {
           try {
           // Batch fetch all packages at once
-          const { data: packagesData, error: packagesError } = await supabase
+          // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+          const { data: packagesData, error: packagesError } = await supabaseAdmin
               .from('packages')
               .select('id, package_type, price, description, session_count')
             .in('id', packageIds);
@@ -621,7 +630,8 @@ const getSessions = async (req, res) => {
             }, {});
             
             // Batch count completed sessions for all packages at once
-            const { data: allPackageSessions, error: sessionsError } = await supabase
+            // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+            const { data: allPackageSessions, error: sessionsError } = await supabaseAdmin
                 .from('sessions')
               .select('package_id, status')
               .in('package_id', packageIds)
@@ -745,7 +755,8 @@ const bookSession = async (req, res) => {
     }
 
     // Get client profile from clients table
-    const { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -776,7 +787,8 @@ const bookSession = async (req, res) => {
     // Only validate package if package_id is provided and not null/undefined (and not individual)
     if (package_id && package_id !== 'null' && package_id !== 'undefined' && package_id !== 'individual') {
       console.log('📦 Validating package...');
-      const { data: packageData, error: packageError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: packageData, error: packageError } = await supabaseAdmin
         .from('packages')
         .select('*')
         .eq('id', package_id)
@@ -817,7 +829,8 @@ const bookSession = async (req, res) => {
 
     // Step 4: Get client and psychologist details for Google Calendar
     console.log('🔍 Step 4: Fetching user details for Google Calendar...');
-    const { data: clientDetails, error: clientDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
       .select(`
         first_name, 
@@ -836,7 +849,8 @@ const bookSession = async (req, res) => {
       );
     }
 
-    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email, phone')
       .eq('id', psychologist_id)
@@ -912,7 +926,8 @@ const bookSession = async (req, res) => {
       sessionData.package_id = package_id;
     }
 
-    const { data: session, error: sessionError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([sessionData])
       .select('*')
@@ -987,7 +1002,8 @@ const bookSession = async (req, res) => {
           first_session_id: session.id
         };
 
-        const { error: clientPackageError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { error: clientPackageError } = await supabaseAdmin
           .from('client_packages')
           .insert([clientPackageData]);
 
@@ -1337,7 +1353,8 @@ const cancelSession = async (req, res) => {
     const { sessionId } = req.params;
 
     // Get client ID
-    const { data: client } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: client } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -1350,7 +1367,8 @@ const cancelSession = async (req, res) => {
     }
 
     // Check if session exists and belongs to client
-    const { data: session } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1382,20 +1400,23 @@ const cancelSession = async (req, res) => {
     }
 
     // Get client and psychologist details for notifications
-    const { data: clientDetails } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: clientDetails } = await supabaseAdmin
       .from('clients')
       .select('first_name, last_name, child_name, phone_number, email')
       .eq('id', client.id)
       .single();
 
-    const { data: psychologistDetails } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologistDetails } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, phone, email')
       .eq('id', session.psychologist_id)
       .single();
 
     // Update session status
-    const { data: updatedSession, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: updatedSession, error } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'canceled',
@@ -1524,7 +1545,8 @@ const requestReschedule = async (req, res) => {
     const { sessionId } = req.params;
 
     // Get client ID
-    const { data: client } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: client } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -1537,7 +1559,8 @@ const requestReschedule = async (req, res) => {
     }
 
     // Check if session exists and belongs to client
-    const { data: session, error: sessionError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1559,7 +1582,8 @@ const requestReschedule = async (req, res) => {
 
     // For now, just change the status to indicate reschedule request
     // TODO: Add reschedule_request field to database schema
-    const { data: updatedSession, error: updateError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'reschedule_requested',
@@ -1619,7 +1643,8 @@ const getAvailablePsychologists = async (req, res) => {
   try {
     const { expertise, date } = req.query;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('psychologists')
       .select(`
         id,
@@ -1651,7 +1676,8 @@ const getAvailablePsychologists = async (req, res) => {
       const availablePsychologists = [];
       
       for (const psychologist of psychologists) {
-        const { data: availability } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: availability } = await supabaseAdmin
           .from('availability')
           .select('time_slots')
           .eq('psychologist_id', psychologist.id)
@@ -1703,7 +1729,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Get client ID (userId is from users.id, so we need to query clients.user_id)
-    const { data: client } = await supabase
+    const { data: client } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('user_id', userId)
@@ -1716,7 +1742,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Get existing session and verify ownership
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1804,13 +1830,13 @@ const rescheduleSession = async (req, res) => {
       
       try {
         // Create reschedule request notification for admin
-        const { data: clientDetails } = await supabase
+        const { data: clientDetails } = await supabaseAdmin
           .from('clients')
           .select('first_name, last_name, child_name, email')
           .eq('id', client.id)
           .single();
 
-        const { data: psychologistDetails } = await supabase
+        const { data: psychologistDetails } = await supabaseAdmin
           .from('psychologists')
           .select('first_name, last_name, email')
           .eq('id', session.psychologist_id)
@@ -1821,7 +1847,8 @@ const rescheduleSession = async (req, res) => {
 
         // Get all admin users to send notifications to
         // user_id is NOT NULL in notifications table, so we must have admin users
-        const { data: adminUsers, error: adminUsersError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: adminUsers, error: adminUsersError } = await supabaseAdmin
           .from('users')
           .select('id')
           .in('role', ['admin', 'superadmin']);
@@ -1859,7 +1886,8 @@ const rescheduleSession = async (req, res) => {
 
         // Only insert notifications if we have admin users
         if (adminNotifications.length > 0) {
-        const { error: notificationError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { error: notificationError } = await supabaseAdmin
           .from('notifications')
             .insert(adminNotifications);
 
@@ -1874,7 +1902,7 @@ const rescheduleSession = async (req, res) => {
 
         // Also create informational notification for psychologist (not for approval - admin approves)
         // Get psychologist user_id
-        const { data: psychologistUser } = await supabase
+        const { data: psychologistUser } = await supabaseAdmin
           .from('psychologists')
           .select('user_id')
           .eq('id', session.psychologist_id)
@@ -1892,7 +1920,8 @@ const rescheduleSession = async (req, res) => {
             created_at: new Date().toISOString()
           };
 
-          const { error: psychNotificationError } = await supabase
+          // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+          const { error: psychNotificationError } = await supabaseAdmin
             .from('notifications')
             .insert([psychologistNotification]);
 
@@ -1904,7 +1933,7 @@ const rescheduleSession = async (req, res) => {
         }
 
         // Update session status to indicate reschedule request
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from('sessions')
           .update({
             status: 'reschedule_requested',
@@ -1964,7 +1993,7 @@ const rescheduleSession = async (req, res) => {
     console.log('✅ Time slot is available in psychologist schedule');
 
     // Check if new time slot is already booked by another session
-    const { data: conflictingSessions } = await supabase
+    const { data: conflictingSessions } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('psychologist_id', psychologist_id)
@@ -1981,13 +2010,14 @@ const rescheduleSession = async (req, res) => {
     console.log('✅ No conflicting sessions found');
 
     // Get client and psychologist details for Meet link and notifications
-    const { data: clientDetails } = await supabase
+    const { data: clientDetails } = await supabaseAdmin
       .from('clients')
       .select('first_name, last_name, child_name, phone_number, email')
       .eq('id', client.id)
       .single();
 
-    const { data: psychologistDetails } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologistDetails } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, phone, email, google_calendar_credentials')
       .eq('id', psychologist_id)
@@ -1999,10 +2029,12 @@ const rescheduleSession = async (req, res) => {
       scheduled_time: formatTime(new_time),
       status: 'rescheduled',
       reschedule_count: (session.reschedule_count || 0) + 1,
+      reminder_sent: false, // Reset reminder flag when rescheduled
       updated_at: new Date().toISOString()
     };
 
-    const { data: updatedSession, error: updateError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update(updateData)
       .eq('id', sessionId)
@@ -2072,7 +2104,7 @@ const rescheduleSession = async (req, res) => {
         const defaultPsychologist = await ensureAssessmentPsychologist();
         
         if (defaultPsychologist?.id) {
-          const { data: assessmentPsychologist } = await supabase
+          const { data: assessmentPsychologist } = await supabaseAdmin
             .from('psychologists')
             .select('id, email, google_calendar_credentials')
             .eq('id', defaultPsychologist.id)
@@ -2152,7 +2184,7 @@ const rescheduleSession = async (req, res) => {
         console.log('✅ New Google Meet link created for rescheduled session');
             
             // Update session with new Meet link
-            await supabase
+            await supabaseAdmin
               .from('sessions')
               .update({
                 google_meet_link: meetResult.meetLink,
@@ -2216,7 +2248,7 @@ const rescheduleSession = async (req, res) => {
         
         if (oldTime12Hour) {
           // Use limit(1) instead of single() to handle cases where multiple records exist
-          const { data: oldAvailRecords } = await supabase
+          const { data: oldAvailRecords } = await supabaseAdmin
             .from('availability')
             .select('id, time_slots')
             .eq('psychologist_id', psychologist_id)
@@ -2239,7 +2271,7 @@ const rescheduleSession = async (req, res) => {
             
             if (!slotExists) {
               const updatedSlots = [...oldSlots, oldTime12Hour].sort();
-              await supabase
+              await supabaseAdmin
                 .from('availability')
                 .update({ 
                   time_slots: updatedSlots,
@@ -2274,7 +2306,7 @@ const rescheduleSession = async (req, res) => {
         const newTime = formatTime(new_time);
 
         // Add back the old slot
-        const { data: oldDateConfig } = await supabase
+        const { data: oldDateConfig } = await supabaseAdmin
           .from('free_assessment_date_configs')
           .select('time_slots')
           .eq('date', oldDate)
@@ -2285,7 +2317,7 @@ const rescheduleSession = async (req, res) => {
           if (!oldSlots.includes(oldTime)) {
             oldSlots.push(oldTime);
             oldSlots.sort();
-            await supabase
+            await supabaseAdmin
               .from('free_assessment_date_configs')
               .update({ time_slots: oldSlots })
               .eq('date', oldDate);
@@ -2294,7 +2326,7 @@ const rescheduleSession = async (req, res) => {
         }
 
         // Remove the new slot
-        const { data: newDateConfig } = await supabase
+        const { data: newDateConfig } = await supabaseAdmin
           .from('free_assessment_date_configs')
           .select('time_slots')
           .eq('date', newDate)
@@ -2305,7 +2337,7 @@ const rescheduleSession = async (req, res) => {
           const index = newSlots.indexOf(newTime);
           if (index > -1) {
             newSlots.splice(index, 1);
-            await supabase
+            await supabaseAdmin
               .from('free_assessment_date_configs')
               .update({ time_slots: newSlots })
               .eq('date', newDate);
@@ -2455,7 +2487,7 @@ const rescheduleSession = async (req, res) => {
 // Helper function to get reschedule count for a session
 const getRescheduleCount = async (sessionId) => {
   try {
-    const { data: session } = await supabase
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('reschedule_count')
       .eq('id', sessionId)
@@ -2472,7 +2504,7 @@ const getRescheduleCount = async (sessionId) => {
 const createRescheduleRequest = async (session, newDate, newTime, clientId, reason) => {
   try {
     // Get client details
-    const { data: clientDetails } = await supabase
+    const { data: clientDetails } = await supabaseAdmin
       .from('clients')
       .select('first_name, last_name, child_name')
       .eq('id', clientId)
@@ -2501,7 +2533,8 @@ const createRescheduleRequest = async (session, newDate, newTime, clientId, reas
       }
     };
 
-    const { error: notificationError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error: notificationError } = await supabaseAdmin
       .from('notifications')
       .insert([notificationData]);
 
@@ -2529,7 +2562,7 @@ const createRescheduleRequest = async (session, newDate, newTime, clientId, reas
 const createRescheduleNotification = async (originalSession, updatedSession, clientId) => {
   try {
     // Get client and psychologist details
-    const { data: clientDetails } = await supabase
+    const { data: clientDetails } = await supabaseAdmin
       .from('clients')
       .select('first_name, last_name, child_name')
       .eq('id', clientId)
@@ -2539,7 +2572,7 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
                       `${clientDetails?.first_name || 'Client'} ${clientDetails?.last_name || ''}`.trim();
 
     // Get psychologist user_id (required for notifications table)
-    const { data: psychologistUser } = await supabase
+    const { data: psychologistUser } = await supabaseAdmin
       .from('psychologists')
       .select('user_id')
       .eq('id', updatedSession.psychologist_id)
@@ -2585,7 +2618,8 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
       created_at: new Date().toISOString()
     };
 
-    const { error: notificationError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error: notificationError } = await supabaseAdmin
       .from('notifications')
       .insert([notificationData]);
 
@@ -2606,13 +2640,13 @@ const sendRescheduleEmails = async (originalSession, updatedSession, psychologis
     console.log('📧 Sending reschedule email notifications...');
     
     // Get client and psychologist details for email
-    const { data: clientDetails } = await supabase
+    const { data: clientDetails } = await supabaseAdmin
       .from('clients')
       .select('first_name, last_name, child_name, user:users(email)')
       .eq('id', originalSession.client_id)
       .single();
 
-    const { data: psychologistDetails } = await supabase
+    const { data: psychologistDetails } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email')
       .eq('id', psychologistId)
@@ -2656,8 +2690,9 @@ const getSession = async (req, res) => {
     console.log(`📋 Getting session ${sessionId} for client ${clientId} (user.id: ${req.user.id}, client_id: ${req.user.client_id})`);
 
     // Get session with psychologist details, but exclude session_notes
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     // Note: Can't join packages directly due to no FK relationship, so we'll fetch it separately
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -2685,7 +2720,8 @@ const getSession = async (req, res) => {
       try {
         console.log('📦 Fetching package for session:', session.package_id);
         // Fetch package data
-        const { data: packageData, error: packageError } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: packageData, error: packageError } = await supabaseAdmin
           .from('packages')
           .select('id, package_type, price, description, session_count')
           .eq('id', session.package_id)
@@ -2699,7 +2735,8 @@ const getSession = async (req, res) => {
           });
           
           // Count completed sessions for this package
-          const { data: packageSessions, error: sessionsError } = await supabase
+          // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+          const { data: packageSessions, error: sessionsError } = await supabaseAdmin
             .from('sessions')
             .select('id, status')
             .eq('package_id', session.package_id)
@@ -2778,7 +2815,7 @@ const getPsychologistPackages = async (req, res) => {
     console.log(`📦 Getting packages for psychologist ${psychologistId}`);
 
     // Get packages for this psychologist
-    const { data: packages, error: packagesError } = await supabase
+    const { data: packages, error: packagesError } = await supabaseAdmin
       .from('packages')
       .select('*')
       .eq('psychologist_id', psychologistId)
@@ -2828,7 +2865,8 @@ const submitSessionFeedback = async (req, res) => {
     }
 
     // Get client ID from user_id
-    const { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -2845,7 +2883,7 @@ const submitSessionFeedback = async (req, res) => {
     console.log(`📝 Client ${clientId} submitting feedback for session ${sessionId}`);
 
     // Check if session exists and belongs to this client
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('id, status, client_id')
       .eq('id', sessionId)
@@ -2867,7 +2905,8 @@ const submitSessionFeedback = async (req, res) => {
     }
 
     // Check if feedback already exists
-    const { data: existingFeedback } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingFeedback } = await supabaseAdmin
       .from('sessions')
       .select('feedback')
       .eq('id', sessionId)
@@ -2880,7 +2919,7 @@ const submitSessionFeedback = async (req, res) => {
     }
 
     // Update session with feedback
-    const { data: updatedSession, error: updateError } = await supabase
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         feedback: feedback,
@@ -2922,7 +2961,8 @@ const getClientPackages = async (req, res) => {
       clientId = req.user.client_id;
     } else {
       // Try new system: lookup by user_id
-      const { data: clientByUserId, error: errorByUserId } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: clientByUserId, error: errorByUserId } = await supabaseAdmin
         .from('clients')
         .select('id')
         .eq('user_id', userId)
@@ -2932,7 +2972,7 @@ const getClientPackages = async (req, res) => {
         clientId = clientByUserId.id;
       } else {
         // Fallback to old system: lookup by id (backward compatibility)
-        const { data: clientById, error: errorById } = await supabase
+        const { data: clientById, error: errorById } = await supabaseAdmin
           .from('clients')
           .select('id')
           .eq('id', userId)
@@ -2951,7 +2991,8 @@ const getClientPackages = async (req, res) => {
     }
 
     const fetchClientPackages = async () => {
-      return await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      return await supabaseAdmin
       .from('client_packages')
       .select(`
         *,
@@ -2986,7 +3027,7 @@ const getClientPackages = async (req, res) => {
       (clientPackages || []).map(pkg => pkg.package_id || pkg.id).filter(Boolean)
     );
 
-    const { data: packageSessions, error: packageSessionsError } = await supabase
+    const { data: packageSessions, error: packageSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('id, package_id, psychologist_id, status, scheduled_date, created_at')
       .eq('client_id', clientId)
@@ -3009,7 +3050,7 @@ const getClientPackages = async (req, res) => {
         if (existingPackageIds.has(packageId)) continue;
 
         try {
-          const { data: packageRecord } = await supabase
+          const { data: packageRecord } = await supabaseAdmin
             .from('packages')
             .select('*')
             .eq('id', packageId)
@@ -3113,7 +3154,8 @@ const bookRemainingSession = async (req, res) => {
       clientId = req.user.client_id;
     } else {
       // Try new system: lookup by user_id
-      const { data: clientByUserId, error: errorByUserId } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: clientByUserId, error: errorByUserId } = await supabaseAdmin
         .from('clients')
         .select('id')
         .eq('user_id', userId)
@@ -3123,7 +3165,8 @@ const bookRemainingSession = async (req, res) => {
         clientId = clientByUserId.id;
       } else {
         // Fallback to old system: lookup by id (backward compatibility)
-        const { data: clientById, error: errorById } = await supabase
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: clientById, error: errorById } = await supabaseAdmin
           .from('clients')
           .select('id')
           .eq('id', userId)
@@ -3142,7 +3185,7 @@ const bookRemainingSession = async (req, res) => {
     }
 
     // Get client package and verify ownership
-    const { data: clientPackage, error: packageError } = await supabase
+    const { data: clientPackage, error: packageError } = await supabaseAdmin
       .from('client_packages')
       .select(`
         *,
@@ -3188,7 +3231,7 @@ const bookRemainingSession = async (req, res) => {
     }
 
     // Get client and psychologist details for Google Calendar
-    const { data: clientDetails, error: clientDetailsError } = await supabase
+    const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
       .select(`
         first_name, 
@@ -3206,7 +3249,8 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
-    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email')
       .eq('id', psychologistId)
@@ -3275,7 +3319,7 @@ const bookRemainingSession = async (req, res) => {
       price: 0 // Free since it's from a package
     };
 
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([sessionData])
       .select('*')
@@ -3298,7 +3342,7 @@ const bookRemainingSession = async (req, res) => {
     const completedSessions = totalSessions - updatedRemaining;
 
     // Update remaining sessions in client package
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseAdmin
       .from('client_packages')
       .update({
         remaining_sessions: updatedRemaining,
@@ -3452,14 +3496,15 @@ const reserveTimeSlot = async (req, res) => {
 
     console.log('🔍 Step 1: Client validation');
     // Get client by user_id (new system); fallback to id (legacy)
-    let { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('*')
       .eq('user_id', userId)
       .single();
 
     if (clientError || !client) {
-      const fallback = await supabase
+      const fallback = await supabaseAdmin
         .from('clients')
         .select('*')
         .eq('id', userId)
@@ -3482,7 +3527,8 @@ const reserveTimeSlot = async (req, res) => {
 
     // Check if time slot is available
     console.log('🔍 Step 2: Checking time slot availability...');
-    const { data: existingSessions } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingSessions } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('psychologist_id', psychologist_id)
@@ -3503,7 +3549,7 @@ const reserveTimeSlot = async (req, res) => {
     let package = null;
     if (package_id && package_id !== 'individual') {
       console.log('🔍 Looking up package with ID:', package_id);
-      const { data: packageData, error: packageError } = await supabase
+      const { data: packageData, error: packageError } = await supabaseAdmin
         .from('packages')
         .select('*')
         .eq('id', package_id)
@@ -3543,7 +3589,7 @@ const reserveTimeSlot = async (req, res) => {
     }
 
     // Get psychologist details
-    const { data: psychologistDetails } = await supabase
+    const { data: psychologistDetails } = await supabaseAdmin
       .from('psychologists')
       .select('*')
       .eq('id', psychologist_id)
@@ -3632,7 +3678,7 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
     console.log('   - User ID:', userId);
 
     // Get client ID - userId is from users.id, so we need to query clients.user_id
-    const { data: client } = await supabase
+    const { data: client } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('user_id', userId)
@@ -3645,7 +3691,7 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
     }
 
     // Get existing session and verify ownership
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -3671,7 +3717,7 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
     endDate.setDate(currentDate.getDate() + 30);
 
     // Fetch free assessment availability for the next 30 days
-    const { data: dateConfigs, error: configError } = await supabase
+    const { data: dateConfigs, error: configError } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .select('date, time_slots')
       .gte('date', currentDate.toISOString().split('T')[0])
@@ -3713,14 +3759,14 @@ const getFreeAssessmentAvailabilityForReschedule = async (req, res) => {
       }
       
       // Get existing bookings for this date
-      const { data: bookedSessions } = await supabase
+      const { data: bookedSessions } = await supabaseAdmin
         .from('sessions')
         .select('scheduled_time')
         .eq('scheduled_date', date)
         .eq('session_type', 'free_assessment')
         .in('status', ['booked', 'rescheduled', 'confirmed']);
 
-      const { data: bookedAssessments } = await supabase
+      const { data: bookedAssessments } = await supabaseAdmin
         .from('free_assessments')
         .select('scheduled_time')
         .eq('scheduled_date', date)
@@ -3807,7 +3853,7 @@ const bookSessionWithCredit = async (req, res) => {
     }
 
     // Get client profile
-    const { data: client, error: clientError } = await supabase
+    const { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('id', userId)
@@ -3823,7 +3869,7 @@ const bookSessionWithCredit = async (req, res) => {
     const clientId = client.id;
 
     // Look up the payment credit
-    const { data: payment, error: paymentError } = await supabase
+    const { data: payment, error: paymentError } = await supabaseAdmin
       .from('payments')
       .select('*')
       .eq('transaction_id', transaction_id)
@@ -3867,7 +3913,7 @@ const bookSessionWithCredit = async (req, res) => {
     console.log('✅ Time slot is available for credit booking');
 
     // Fetch client and psychologist details for meet link
-    const { data: clientDetails, error: clientDetailsError } = await supabase
+    const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
       .select(`
         first_name, 
@@ -3886,7 +3932,8 @@ const bookSessionWithCredit = async (req, res) => {
       );
     }
 
-    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email, phone')
       .eq('id', psychologist_id)
@@ -3947,7 +3994,7 @@ const bookSessionWithCredit = async (req, res) => {
       // we only store the meet link here to keep compatibility.
     }
 
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([sessionInsert])
       .select('*')
@@ -3961,7 +4008,7 @@ const bookSessionWithCredit = async (req, res) => {
     }
 
     // Mark payment as fully used
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseAdmin
       .from('payments')
       .update({
         status: 'success',

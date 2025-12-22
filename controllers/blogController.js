@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const storageService = require('../utils/storageService');
 const { 
   processStructuredContent: processContent, 
@@ -39,7 +39,8 @@ const getAllBlogs = async (req, res) => {
     const { page = 1, limit = 10, status = 'published', search = '' } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('blogs')
       .select('*')
       .order('created_at', { ascending: false });
@@ -64,7 +65,7 @@ const getAllBlogs = async (req, res) => {
     if (error) throw error;
 
     // Get total count for pagination
-    const { count, error: countError } = await supabase
+    const { count, error: countError } = await supabaseAdmin
       .from('blogs')
       .select('*', { count: 'exact', head: true })
       .eq(status && status !== 'all' ? 'status' : 'id', status && status !== 'all' ? status : '*');
@@ -97,7 +98,8 @@ const getBlogBySlug = async (req, res) => {
   try {
     const { slug } = req.params;
 
-    const { data: blog, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: blog, error } = await supabaseAdmin
       .from('blogs')
       .select('*')
       .eq('slug', slug)
@@ -112,7 +114,7 @@ const getBlogBySlug = async (req, res) => {
     }
 
     // Increment view count
-    await supabase
+    await supabaseAdmin
       .from('blogs')
       .update({ view_count: (blog.view_count || 0) + 1 })
       .eq('id', blog.id);
@@ -133,7 +135,8 @@ const getBlogById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data: blog, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: blog, error } = await supabaseAdmin
       .from('blogs')
       .select('*')
       .eq('id', id)
@@ -180,7 +183,8 @@ const createBlog = async (req, res) => {
     let slug = generateSlug(title);
     
     // Check if slug already exists
-    const { data: existingBlog } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingBlog } = await supabaseAdmin
       .from('blogs')
       .select('slug')
       .eq('slug', slug)
@@ -191,7 +195,7 @@ const createBlog = async (req, res) => {
       let counter = 1;
       let newSlug = `${slug}-${counter}`;
       
-      while (await supabase.from('blogs').select('id').eq('slug', newSlug).single()) {
+      while (await supabaseAdmin.from('blogs').select('id').eq('slug', newSlug).single()) {
         counter++;
         newSlug = `${slug}-${counter}`;
       }
@@ -225,7 +229,8 @@ const createBlog = async (req, res) => {
       processedContentImages = content_images.filter(img => img && img.src);
     }
 
-    const { data: blog, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: blog, error } = await supabaseAdmin
       .from('blogs')
       .insert([{
         title,
@@ -278,7 +283,8 @@ const updateBlog = async (req, res) => {
     } = req.body;
 
     // Check if blog exists
-    const { data: existingBlog, error: fetchError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingBlog, error: fetchError } = await supabaseAdmin
       .from('blogs')
       .select('*')
       .eq('id', id)
@@ -338,7 +344,8 @@ const updateBlog = async (req, res) => {
     
     updateData.published_at = published_at;
 
-    const { data: blog, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: blog, error } = await supabaseAdmin
       .from('blogs')
       .update(updateData)
       .eq('id', id)
@@ -365,7 +372,8 @@ const deleteBlog = async (req, res) => {
     const { id } = req.params;
 
     // Check if blog exists
-    const { data: existingBlog, error: fetchError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingBlog, error: fetchError } = await supabaseAdmin
       .from('blogs')
       .select('*')
       .eq('id', id)
@@ -378,7 +386,8 @@ const deleteBlog = async (req, res) => {
       throw fetchError;
     }
 
-    const { error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error } = await supabaseAdmin
       .from('blogs')
       .delete()
       .eq('id', id);

@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse, addMinutesToTime, hashPassword } = require('../utils/helpers');
 const { createRealMeetLink } = require('../utils/meetEventHelper'); // Use real Meet link creation
@@ -94,7 +93,8 @@ const getFreeAssessmentStatus = async (req, res) => {
 
     // Get or create client details (auto-provision if missing)
     // Note: userId is from users.id, so we need to match clients.user_id, not clients.id
-    let { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    let { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
       .eq('user_id', userId)
@@ -102,7 +102,8 @@ const getFreeAssessmentStatus = async (req, res) => {
 
     if (clientError || !client) {
       console.warn('Client profile missing, attempting auto-provision from users table:', { userId, clientError });
-      const { data: userRow, error: userFetchError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: userRow, error: userFetchError } = await supabaseAdmin
         .from('users')
         .select('id, email, first_name, last_name')
         .eq('id', userId)
@@ -114,7 +115,8 @@ const getFreeAssessmentStatus = async (req, res) => {
         );
       }
 
-      const { data: createdClient, error: createClientError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: createdClient, error: createClientError } = await supabaseAdmin
         .from('clients')
         .insert({
           user_id: userRow.id,
@@ -136,7 +138,7 @@ const getFreeAssessmentStatus = async (req, res) => {
 
     // Get existing free assessments
     // Note: client_id in free_assessments refers to clients.id, not users.id
-    const { data: assessments, error: assessmentsError } = await supabase
+    const { data: assessments, error: assessmentsError } = await supabaseAdmin
       .from('free_assessments')
       .select(`
         id,
@@ -195,7 +197,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
     console.log('🔍 Getting free assessment availability range:', startDate, 'to', endDate);
 
     // Get all active free assessment timeslots
-    const { data: timeslots, error: timeslotsError } = await supabase
+    const { data: timeslots, error: timeslotsError } = await supabaseAdmin
       .from('free_assessment_timeslots')
       .select('time_slot, is_active, max_bookings_per_slot')
       .eq('is_active', true);
@@ -211,7 +213,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
     console.log('🔍 Sample global timeslots:', timeslots?.slice(0, 3) || []);
 
     // Get date-specific configurations for the range
-    const { data: dateConfigs, error: dateConfigsError } = await supabase
+    const { data: dateConfigs, error: dateConfigsError } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .select('date, time_slots')
       .gte('date', startDate)
@@ -322,7 +324,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
     }
 
     // Get existing bookings for the date range
-    const { data: existingBookings, error: bookingsError } = await supabase
+    const { data: existingBookings, error: bookingsError } = await supabaseAdmin
       .from('free_assessments')
       .select('scheduled_date, scheduled_time')
       .gte('scheduled_date', startDate)
@@ -573,7 +575,7 @@ const getAvailableTimeSlots = async (req, res) => {
     console.log('🔍 Getting available time slots for date:', date);
 
     // First check if there's a date-specific configuration
-    const { data: dateConfig, error: dateConfigError } = await supabase
+    const { data: dateConfig, error: dateConfigError } = await supabaseAdmin
       .from('free_assessment_date_configs')
       .select('time_slots')
       .eq('date', date)
@@ -594,7 +596,7 @@ const getAvailableTimeSlots = async (req, res) => {
       console.log('🔍 Using date-specific configuration for:', date);
       
       // Get booked free assessments for this date
-      const { data: bookedAssessments, error: assessmentsError } = await supabase
+      const { data: bookedAssessments, error: assessmentsError } = await supabaseAdmin
         .from('free_assessments')
         .select('scheduled_time')
         .eq('scheduled_date', date)
@@ -608,7 +610,7 @@ const getAvailableTimeSlots = async (req, res) => {
       }
 
       // Get booked regular sessions for this date (to account for total bookings)
-      const { data: bookedSessions, error: sessionsError } = await supabase
+      const { data: bookedSessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select('scheduled_time')
         .eq('scheduled_date', date)
@@ -675,7 +677,7 @@ const getAvailableTimeSlots = async (req, res) => {
       console.log('🔍 Using global timeslots for:', date);
       
       // Get all psychologists who have availability on this date
-      const { data: availability, error: availabilityError } = await supabase
+      const { data: availability, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select(`
           psychologist_id,
@@ -697,7 +699,7 @@ const getAvailableTimeSlots = async (req, res) => {
       }
 
       // Get booked sessions for this date
-      const { data: bookedSessions, error: sessionsError } = await supabase
+      const { data: bookedSessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select('scheduled_time, psychologist_id')
         .eq('scheduled_date', date);
@@ -710,7 +712,7 @@ const getAvailableTimeSlots = async (req, res) => {
       }
 
       // Get booked free assessments for this date
-      const { data: bookedAssessments, error: assessmentsError } = await supabase
+      const { data: bookedAssessments, error: assessmentsError } = await supabaseAdmin
         .from('free_assessments')
         .select('scheduled_time, psychologist_id')
         .eq('scheduled_date', date)
@@ -730,7 +732,7 @@ const getAvailableTimeSlots = async (req, res) => {
       ];
 
       // Get active timeslots from the timeslots table
-      const { data: timeslots, error: timeslotsError } = await supabase
+      const { data: timeslots, error: timeslotsError } = await supabaseAdmin
         .from('free_assessment_timeslots')
         .select('time_slot, max_bookings_per_slot')
         .eq('is_active', true)
@@ -807,7 +809,8 @@ const bookFreeAssessment = async (req, res) => {
 
     // Get or create client details (auto-provision if missing)
     // Note: userId is from users.id, so we need to match clients.user_id, not clients.id
-    let { data: client, error: clientError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+    let { data: client, error: clientError } = await supabaseAdmin
       .from('clients')
       .select('id, user_id, free_assessment_count, free_assessment_available')
       .eq('user_id', userId)
@@ -815,7 +818,8 @@ const bookFreeAssessment = async (req, res) => {
 
     if (clientError || !client) {
       console.warn('Client profile missing, attempting auto-provision from users table:', { userId, clientError });
-      const { data: userRow, error: userFetchError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: userRow, error: userFetchError } = await supabaseAdmin
         .from('users')
         .select('id, email, first_name, last_name')
         .eq('id', userId)
@@ -827,7 +831,8 @@ const bookFreeAssessment = async (req, res) => {
         );
       }
 
-      const { data: createdClient, error: createClientError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: createdClient, error: createClientError } = await supabaseAdmin
         .from('clients')
         .insert({
           user_id: userRow.id,
@@ -860,7 +865,7 @@ const bookFreeAssessment = async (req, res) => {
       if (!userAccountId) {
         // Try to find a users row by client email (clients table usually has email)
         if (!client.email) {
-          const { data: clientWithEmail } = await supabase
+          const { data: clientWithEmail } = await supabaseAdmin
             .from('clients')
             .select('email')
             .eq('user_id', userId)
@@ -869,7 +874,7 @@ const bookFreeAssessment = async (req, res) => {
         }
 
         if (client.email) {
-          const { data: existingUserByEmail } = await supabase
+          const { data: existingUserByEmail } = await supabaseAdmin
             .from('users')
             .select('id')
             .eq('email', client.email)
@@ -877,7 +882,7 @@ const bookFreeAssessment = async (req, res) => {
           if (existingUserByEmail) {
             userAccountId = existingUserByEmail.id;
             // Link it back to client for future
-            await supabase
+            await supabaseAdmin
               .from('clients')
               .update({ user_id: userAccountId })
               .eq('user_id', userId);
@@ -890,7 +895,7 @@ const bookFreeAssessment = async (req, res) => {
           const tempPassword = `Temp@${Math.random().toString(36).slice(-8)}`;
           const passwordHash = await hashPassword(tempPassword);
 
-          const { data: createdUser, error: createUserError } = await supabase.supabaseAdmin
+          const { data: createdUser, error: createUserError } = await supabaseAdmin
             .from('users')
             .insert({
               email: client.email || `client_${userId}@placeholder.local`,
@@ -909,7 +914,7 @@ const bookFreeAssessment = async (req, res) => {
           }
 
           userAccountId = createdUser.id;
-          await supabase
+          await supabaseAdmin
             .from('clients')
             .update({ user_id: userAccountId })
             .eq('user_id', userId);
@@ -924,7 +929,7 @@ const bookFreeAssessment = async (req, res) => {
 
     // Get the next available assessment number by checking existing assessments
     // Note: client_id in free_assessments refers to clients.id, not users.id
-    const { data: existingAssessments, error: existingError } = await supabase.supabaseAdmin
+    const { data: existingAssessments, error: existingError } = await supabaseAdmin
       .from('free_assessments')
       .select('assessment_number')
       .eq('client_id', client.id)
@@ -978,7 +983,7 @@ const bookFreeAssessment = async (req, res) => {
     // Fetch full psychologist data including Google Calendar credentials
     let defaultPsychologistWithCredentials = null;
     if (defaultPsychologistId) {
-      const { data: psychWithCreds } = await supabase
+      const { data: psychWithCreds } = await supabaseAdmin
         .from('psychologists')
         .select('id, email, first_name, last_name, google_calendar_credentials')
         .eq('id', defaultPsychologistId)
@@ -1005,7 +1010,7 @@ const bookFreeAssessment = async (req, res) => {
     }
 
     console.log('🔄 Creating free assessment record (auto-assigned)...');
-    const { data: assessment, error: assessmentError } = await supabase.supabaseAdmin
+    const { data: assessment, error: assessmentError } = await supabaseAdmin
       .from('free_assessments')
       .insert({
         // Use linked users.id (ensured above); client_id is the clients.id
@@ -1043,7 +1048,7 @@ const bookFreeAssessment = async (req, res) => {
     };
 
     // Create session first (don't wait for meet link - it will be created asynchronously)
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([sessionData])
       .select()
@@ -1053,7 +1058,7 @@ const bookFreeAssessment = async (req, res) => {
       console.error('❌ Error creating session placeholder:', sessionError);
       // proceed without session, admin can create later
     } else {
-      await supabase.supabaseAdmin
+      await supabaseAdmin
         .from('free_assessments')
         .update({ session_id: session.id })
         .eq('id', assessment.id);
@@ -1096,7 +1101,7 @@ const bookFreeAssessment = async (req, res) => {
 
           // If the client has a linked users row, try to fetch their email for attendee
           try {
-            const { data: userEmailRow } = await supabase
+            const { data: userEmailRow } = await supabaseAdmin
               .from('users')
               .select('email')
               .eq('id', userAccountId)
@@ -1166,7 +1171,7 @@ const bookFreeAssessment = async (req, res) => {
           // If tokens were refreshed, update them in the database
           if (userAuth && meetResult?.refreshedTokens) {
             try {
-              await supabase
+              await supabaseAdmin
                 .from('psychologists')
                 .update({
                   google_calendar_credentials: {
@@ -1184,7 +1189,7 @@ const bookFreeAssessment = async (req, res) => {
           
           if (meetResult?.success && meetResult.meetLink) {
             finalMeetLink = meetResult.meetLink;
-            await supabase
+            await supabaseAdmin
               .from('sessions')
               .update({
                 google_calendar_event_id: meetResult.eventId || null,
@@ -1196,7 +1201,7 @@ const bookFreeAssessment = async (req, res) => {
             console.log('✅ Meet link created asynchronously for free assessment:', finalMeetLink);
           } else {
             finalMeetLink = meetResult?.meetLink || 'https://meet.google.com/new?hs=122&authuser=0';
-            await supabase
+            await supabaseAdmin
               .from('sessions')
               .update({
                 google_meet_link: finalMeetLink,
@@ -1213,7 +1218,7 @@ const bookFreeAssessment = async (req, res) => {
             const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
             
             // Get client phone number
-            const { data: clientDetails } = await supabase
+            const { data: clientDetails } = await supabaseAdmin
               .from('clients')
               .select('phone_number, child_name, first_name, last_name')
               .eq('id', client.id)
@@ -1285,7 +1290,7 @@ const bookFreeAssessment = async (req, res) => {
             // Fetch user details for email
             let userRowForEmail = null;
             if (userAccountId) {
-              const result = await supabase
+              const result = await supabaseAdmin
                 .from('users')
                 .select('email')
                 .eq('id', userAccountId)
@@ -1294,7 +1299,7 @@ const bookFreeAssessment = async (req, res) => {
             }
 
             // Get client details for email
-            const { data: clientDetails } = await supabase
+            const { data: clientDetails } = await supabaseAdmin
               .from('clients')
               .select('child_name, first_name, last_name')
               .eq('id', client.id)
@@ -1325,7 +1330,7 @@ const bookFreeAssessment = async (req, res) => {
         } catch (e) {
           console.error('❌ Error creating meet link asynchronously:', e);
           const fallbackLink = 'https://meet.google.com/new?hs=122&authuser=0';
-          await supabase
+          await supabaseAdmin
             .from('sessions')
             .update({
               google_meet_link: fallbackLink,
@@ -1338,7 +1343,7 @@ const bookFreeAssessment = async (req, res) => {
           try {
     let userRowForEmail = null;
     if (userAccountId) {
-      const result = await supabase
+      const result = await supabaseAdmin
         .from('users')
         .select('email')
         .eq('id', userAccountId)
@@ -1366,7 +1371,7 @@ const bookFreeAssessment = async (req, res) => {
 
     // Update client's free assessment count
     // Note: Use client.id (from the client record we found) not userId
-    await supabase.supabaseAdmin
+    await supabaseAdmin
       .from('clients')
       .update({ 
         free_assessment_count: nextAssessmentNumber
@@ -1403,7 +1408,7 @@ const cancelFreeAssessment = async (req, res) => {
     console.log('🔍 Cancelling free assessment:', assessmentId, 'for user:', userId);
 
     // Get the assessment - first get client by user_id, then check assessment belongs to that client
-    const { data: clientRecord } = await supabase
+    const { data: clientRecord } = await supabaseAdmin
       .from('clients')
       .select('id')
       .eq('user_id', userId)
@@ -1415,7 +1420,7 @@ const cancelFreeAssessment = async (req, res) => {
       );
     }
 
-    const { data: assessment, error: assessmentError } = await supabase
+    const { data: assessment, error: assessmentError } = await supabaseAdmin
       .from('free_assessments')
       .select('*')
       .eq('id', assessmentId)
@@ -1435,14 +1440,14 @@ const cancelFreeAssessment = async (req, res) => {
     }
 
     // Update assessment status
-    await supabase
+    await supabaseAdmin
       .from('free_assessments')
       .update({ status: 'cancelled' })
       .eq('id', assessmentId);
 
     // Update session status if exists
     if (assessment.session_id) {
-      await supabase
+      await supabaseAdmin
         .from('sessions')
         .update({ status: 'cancelled' })
         .eq('id', assessment.session_id);
@@ -1451,7 +1456,7 @@ const cancelFreeAssessment = async (req, res) => {
     // Decrease client's free assessment count
     // client already exists from above (renamed to clientRecord)
     if (client) {
-      const { data: clientData } = await supabase
+      const { data: clientData } = await supabaseAdmin
         .from('clients')
         .select('free_assessment_count')
         .eq('id', client.id)
@@ -1459,7 +1464,7 @@ const cancelFreeAssessment = async (req, res) => {
       
       if (clientData) {
         const newCount = Math.max(0, clientData.free_assessment_count - 1);
-        await supabase
+        await supabaseAdmin
           .from('clients')
           .update({ 
             free_assessment_count: newCount
@@ -1485,7 +1490,7 @@ const adminListFreeAssessments = async (req, res) => {
   try {
     const { status } = req.query;
 
-    let query = supabase.supabaseAdmin
+    let query = supabaseAdmin
       .from('free_assessments')
       .select(`
         id,

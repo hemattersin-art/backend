@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
 // Get all counselling services (admin - includes drafts)
@@ -7,7 +7,8 @@ const getAllCounsellingServicesAdmin = async (req, res) => {
     const { page = 1, limit = 10, search = '' } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('counselling_services')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false });
@@ -46,7 +47,8 @@ const getAllCounsellingServices = async (req, res) => {
     const { page = 1, limit = 10, search = '' } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('counselling_services')
       .select('*', { count: 'exact' })
       .eq('status', 'published')
@@ -86,7 +88,8 @@ const getCounsellingServiceBySlug = async (req, res) => {
     const { slug } = req.params;
     const { preview } = req.query;
 
-    let query = supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    let query = supabaseAdmin
       .from('counselling_services')
       .select('*')
       .eq('slug', slug);
@@ -117,7 +120,8 @@ const getCounsellingServiceById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { data: service, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: service, error } = await supabaseAdmin
       .from('counselling_services')
       .select('*')
       .eq('id', id)
@@ -177,7 +181,8 @@ const createCounsellingService = async (req, res) => {
     }
 
     // Check if slug already exists
-    const { data: existingService } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingService } = await supabaseAdmin
       .from('counselling_services')
       .select('id')
       .eq('slug', slug)
@@ -195,7 +200,8 @@ const createCounsellingService = async (req, res) => {
       return arr;
     };
 
-    const { data: service, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: service, error } = await supabaseAdmin
       .from('counselling_services')
       .insert([{
         slug,
@@ -269,7 +275,8 @@ const updateCounsellingService = async (req, res) => {
     } = req.body;
 
     // Check if service exists
-    const { data: existingService, error: fetchError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingService, error: fetchError } = await supabaseAdmin
       .from('counselling_services')
       .select('*')
       .eq('id', id)
@@ -333,7 +340,8 @@ const updateCounsellingService = async (req, res) => {
       }
     });
 
-    const { data: service, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: service, error } = await supabaseAdmin
       .from('counselling_services')
       .update(updateData)
       .eq('id', id)
@@ -358,7 +366,8 @@ const deleteCounsellingService = async (req, res) => {
     const { id } = req.params;
 
     // Check if service exists
-    const { data: existingService, error: fetchError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: existingService, error: fetchError } = await supabaseAdmin
       .from('counselling_services')
       .select('id')
       .eq('id', id)
@@ -372,7 +381,8 @@ const deleteCounsellingService = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling service', fetchError.message));
     }
 
-    const { error } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { error } = await supabaseAdmin
       .from('counselling_services')
       .delete()
       .eq('id', id);

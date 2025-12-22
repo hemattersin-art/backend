@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
-const supabase = require('../config/supabase');
+const { supabaseAdmin } = require('../config/supabase');
 
 class TimeBlockingService {
   constructor() {
@@ -45,7 +45,8 @@ class TimeBlockingService {
       console.log(`🚫 Blocking time slots for psychologist ${psychologistId}:`, blockingData);
 
       // Get psychologist's Google Calendar credentials
-      const { data: psychologist, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologistId)
@@ -393,7 +394,8 @@ class TimeBlockingService {
       // Convert timeSlot from HH:MM-HH:MM format to HH:MM format for storage
       const slotToStore = timeSlot.includes('-') ? timeSlot.split('-')[0] : timeSlot;
       
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data, error } = await supabaseAdmin
         .from('availability')
         .select('id, blocked_slots')
         .eq('psychologist_id', psychologistId)
@@ -415,7 +417,8 @@ class TimeBlockingService {
         if (!existingBlock) {
           blockedSlots.push(blockedSlot);
           
-          const { error: updateError } = await supabase
+          // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+          const { error: updateError } = await supabaseAdmin
             .from('availability')
             .update({ 
               blocked_slots: blockedSlots,
@@ -444,7 +447,8 @@ class TimeBlockingService {
    */
   async removeAvailabilitySlots(psychologistId, date, results) {
     try {
-      const { data: availability, error: availabilityError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availability, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select('id, time_slots')
         .eq('psychologist_id', psychologistId)
@@ -452,7 +456,8 @@ class TimeBlockingService {
         .single();
 
       if (availability && availability.time_slots.length > 0) {
-        await supabase
+        // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+        await supabaseAdmin
           .from('availability')
           .update({ 
             time_slots: [],
@@ -487,7 +492,8 @@ class TimeBlockingService {
     try {
       console.log(`🔍 removeSpecificTimeSlot called: psychologistId=${psychologistId}, date=${date}, timeSlot=${timeSlot}`);
       
-      const { data: availability, error: availabilityError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availability, error: availabilityError } = await supabaseAdmin
         .from('availability')
         .select('id, time_slots')
         .eq('psychologist_id', psychologistId)
@@ -511,7 +517,8 @@ class TimeBlockingService {
         console.log(`🔍 Updated slots:`, updatedSlots);
         
         if (updatedSlots.length !== availability.time_slots.length) {
-          const { error: updateError } = await supabase
+          // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+          const { error: updateError } = await supabaseAdmin
             .from('availability')
             .update({ 
               time_slots: updatedSlots,
@@ -558,7 +565,8 @@ class TimeBlockingService {
       console.log(`✅ Unblocking time slots for psychologist ${psychologistId}:`, blockingData);
 
       // Get psychologist's Google Calendar credentials
-      const { data: psychologist, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('id, google_calendar_credentials')
         .eq('id', psychologistId)
@@ -619,7 +627,8 @@ class TimeBlockingService {
   async getBlockedTimeSlots(psychologistId, startDate, endDate) {
     try {
       // Get psychologist's Google Calendar credentials
-      const { data: psychologist, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('google_calendar_credentials')
         .eq('id', psychologistId)
@@ -658,7 +667,8 @@ class TimeBlockingService {
       );
 
       // Also get blocked slots from database
-      const { data: availabilityRecords, error: dbError } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
+      const { data: availabilityRecords, error: dbError } = await supabaseAdmin
         .from('availability')
         .select('date, blocked_slots')
         .eq('psychologist_id', psychologistId)

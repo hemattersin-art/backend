@@ -1,7 +1,6 @@
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const securityMonitor = require('../utils/securityMonitor');
-const advancedBotDetector = require('../utils/advancedBotDetector');
 const securityNotifications = require('../utils/securityNotifications');
 
 // Advanced Rate Limiting Strategies
@@ -222,170 +221,14 @@ const memoryMonitor = (req, res, next) => {
   next();
 };
 
-// Advanced Bot Detection Middleware
-const advancedBotDetection = (req, res, next) => {
-  try {
-    // ALWAYS allow payment endpoints to pass through - never block payment flows
-    const url = req.url || req.path || '';
-    if (url.includes('/payment/') || 
-        url.includes('/payment/success') || 
-        url.includes('/payment/failure') ||
-        url.includes('/payment/verify') ||
-        url.includes('/payment/status')) {
-      // Payment endpoints are critical - never block them
-      return next();
-    }
-
-    // Check if it's a legitimate mobile browser - always allow (especially important for international users)
-    const userAgent = req.headers['user-agent'] || '';
-    
-    // Whitelist legitimate mobile browsers (especially popular in Middle East)
-    const legitimateMobileBrowsers = [
-      /iPhone|iPad|iPod/i,
-      /Android.*Chrome/i,
-      /SamsungBrowser/i,
-      /Opera.*Mobile/i,
-      /UCBrowser/i, // Popular in Middle East
-      /Safari.*Mobile/i,
-      /Firefox.*Mobile/i,
-      /Edge.*Mobile/i,
-      /Chrome.*Mobile/i,
-      /Samsung.*Browser/i
-    ];
-    
-    const isLegitimateMobile = legitimateMobileBrowsers.some(pattern => pattern.test(userAgent));
-    if (isLegitimateMobile) {
-      // Legitimate mobile browser - always allow
-      return next();
-    }
-    
-    // Check if it's a legitimate Apple device - always allow
-    const isLegitimateApple = /iPhone|iPad|iPod|Macintosh|Safari|AppleWebKit/i.test(userAgent);
-    if (isLegitimateApple) {
-      // Legitimate Apple device - always allow
-      return next();
-    }
-
-    const detectionResult = advancedBotDetector.detectBot(req);
-    
-    // Log detection result
-    console.log(`🤖 Bot Detection for IP ${req.ip}:`, {
-      confidence: detectionResult.confidence,
-      isBot: detectionResult.isBot,
-      reasons: detectionResult.reasons,
-      fingerprint: detectionResult.fingerprint
-    });
-
-    // Track bot detection
-    if (detectionResult.isBot) {
-      securityMonitor.trackBotDetection(req, req.headers['user-agent'] || '');
-      
-      // Update IP reputation
-      advancedBotDetector.updateIPReputation(req.ip, true);
-    }
-
-    // Handle different confidence levels
-    if (detectionResult.confidence > 70) {
-      // High confidence bot - block completely
-      console.warn(`🚫 BLOCKING HIGH CONFIDENCE BOT: ${req.ip} (${detectionResult.confidence}% confidence)`);
-      
-      // Create critical security alert
-      securityNotifications.createAlert('bot_attack_blocked', 'critical', {
-        ip: req.ip,
-        userAgent: req.headers['user-agent'] || '',
-        confidence: detectionResult.confidence,
-        reasons: detectionResult.reasons,
-        url: req.url,
-        method: req.method,
-        fingerprint: detectionResult.fingerprint,
-        action: 'BLOCKED'
-      });
-      
-      return res.status(403).json({
-        error: 'Access denied',
-        message: 'Automated requests are not allowed',
-        reason: 'Bot detected',
-        confidence: detectionResult.confidence
-      });
-    } else if (detectionResult.confidence > 50) {
-      // Medium confidence bot - slow down significantly
-      console.warn(`🐌 SLOWING DOWN MEDIUM CONFIDENCE BOT: ${req.ip} (${detectionResult.confidence}% confidence)`);
-      
-      // Create high severity alert
-      securityNotifications.createAlert('bot_attack_slowed', 'high', {
-        ip: req.ip,
-        userAgent: req.headers['user-agent'] || '',
-        confidence: detectionResult.confidence,
-        reasons: detectionResult.reasons,
-        url: req.url,
-        method: req.method,
-        fingerprint: detectionResult.fingerprint,
-        action: 'SLOWED_DOWN_3S'
-      });
-      
-      setTimeout(() => {
-        next();
-      }, 3000); // 3 second delay
-    } else if (detectionResult.confidence > 30) {
-      // Low confidence bot - slow down moderately
-      console.log(`⏳ SLOWING DOWN LOW CONFIDENCE BOT: ${req.ip} (${detectionResult.confidence}% confidence)`);
-      
-      // Create medium severity alert
-      securityNotifications.createAlert('suspicious_activity', 'medium', {
-        ip: req.ip,
-        userAgent: req.headers['user-agent'] || '',
-        confidence: detectionResult.confidence,
-        reasons: detectionResult.reasons,
-        url: req.url,
-        method: req.method,
-        fingerprint: detectionResult.fingerprint,
-        action: 'SLOWED_DOWN_1S'
-      });
-      
-      setTimeout(() => {
-        next();
-      }, 1000); // 1 second delay
-    } else {
-      // Likely human - proceed normally
-      next();
-    }
-  } catch (error) {
-    console.error('Bot detection error:', error);
-    // If bot detection fails, proceed normally
-    next();
-  }
-};
-
-// IP Whitelist/Blacklist
-const ipFilter = (req, res, next) => {
-  const clientIP = req.ip || req.connection.remoteAddress;
-  
-  // Blacklisted IPs (add known malicious IPs here)
-  const blacklistedIPs = [
-    // Add malicious IPs here
-  ];
-
-  // Whitelisted IPs (add trusted IPs here)
-  const whitelistedIPs = [
-    '127.0.0.1',
-    '::1',
-    // Add trusted IPs here
-  ];
-
-  if (blacklistedIPs.includes(clientIP)) {
-    return res.status(403).json({
-      error: 'Access denied',
-      message: 'Your IP address is not allowed to access this service'
-    });
-  }
-
-  // Whitelisted IPs bypass rate limiting
-  if (whitelistedIPs.includes(clientIP)) {
-    req.isWhitelisted = true;
-  }
-
-  next();
-};
+// Note: Bot detection and IP filtering are handled by Cloudflare at the edge.
+// App-level bot detection and IP filtering have been removed to avoid:
+// - False positives blocking legitimate users
+// - Breaking privacy browsers and assistive devices
+// - Duplicating Cloudflare's superior bot management
+// - Causing issues for traveling admins
+//
+// Configure bot management and IP filtering in Cloudflare dashboard instead.
 
 // Request Validation Middleware
 const requestValidator = (req, res, next) => {
@@ -406,7 +249,5 @@ module.exports = {
   createSlowDown,
   requestSizeLimiter,
   memoryMonitor,
-  advancedBotDetection,
-  ipFilter,
   requestValidator
 };

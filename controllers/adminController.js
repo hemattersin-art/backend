@@ -1,6 +1,4 @@
-const supabaseConfig = require('../config/supabase');
-const supabase = supabaseConfig;
-const supabaseAdmin = supabaseConfig.supabaseAdmin;
+const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
@@ -45,7 +43,28 @@ const getAllUsers = async (req, res) => {
     console.log('=== getAllUsers function called ===');
     console.log('Query params:', req.query);
     
-    const { page = 1, limit = 10, role, search, sort = 'created_at', order = 'desc' } = req.query;
+    // HIGH-RISK FIX: Parameter pollution defense - normalize query params (reject arrays)
+    const normalizeParam = (param) => {
+      if (Array.isArray(param)) {
+        return null; // Reject arrays
+      }
+      return param;
+    };
+
+    const page = normalizeParam(req.query.page) || 1;
+    const limit = normalizeParam(req.query.limit) || 10;
+    const role = normalizeParam(req.query.role);
+    const search = normalizeParam(req.query.search);
+    const sort = normalizeParam(req.query.sort) || 'created_at';
+    const order = normalizeParam(req.query.order) || 'desc';
+
+    if (Array.isArray(req.query.page) || Array.isArray(req.query.limit) || 
+        Array.isArray(req.query.role) || Array.isArray(req.query.search) ||
+        Array.isArray(req.query.sort) || Array.isArray(req.query.order)) {
+      return res.status(400).json(
+        errorResponse('Invalid query parameters. Arrays not allowed.')
+      );
+    }
 
     // If fetching psychologists, get them directly from psychologists table
     if (role === 'psychologist') {
@@ -56,7 +75,8 @@ const getAllUsers = async (req, res) => {
       
       // Fetch psychologists directly from psychologists table with pagination
       const offset = (page - 1) * limit;
-      const { data: psychologists, error: psychError } = await supabase
+      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+      const { data: psychologists, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('*')
         .neq('email', assessmentEmail)
@@ -143,7 +163,8 @@ const getAllUsers = async (req, res) => {
             .filter(Boolean);
 
           if (psychologistIds.length > 0) {
-            const { data: availabilityData, error: availabilityError } = await supabase
+            // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+            const { data: availabilityData, error: availabilityError } = await supabaseAdmin
               .from('availability')
               .select('*')
               .in('psychologist_id', psychologistIds);
@@ -201,8 +222,9 @@ const getAllUsers = async (req, res) => {
 
     // For other roles, fetch from users table as before
     // Test Supabase connection first
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
     try {
-      const { data: testData, error: testError } = await supabase
+      const { data: testData, error: testError } = await supabaseAdmin
         .from('users')
         .select('count')
         .limit(1);
@@ -232,7 +254,8 @@ const getAllUsers = async (req, res) => {
       let usersError = null;
       
       try {
-        const result = await supabase
+        // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+        const result = await supabaseAdmin
           .from('users')
           .select(`
             id,
@@ -274,7 +297,8 @@ const getAllUsers = async (req, res) => {
       }
 
       // Fetch all clients without user_id entries
-      const { data: clientsWithoutUser, error: clientsError } = await supabase
+      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+      const { data: clientsWithoutUser, error: clientsError } = await supabaseAdmin
         .from('clients')
         .select('*')
         .is('user_id', null)
@@ -311,9 +335,10 @@ const getAllUsers = async (req, res) => {
       let allClientUsers = [...enrichedUsers, ...clientUsers];
 
       // Fetch client profiles for users from users table to enrich them
+      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
       const userIds = enrichedUsers.map(u => u.id);
       if (userIds.length > 0) {
-        const { data: clientProfiles, error: profileError } = await supabase
+        const { data: clientProfiles, error: profileError } = await supabaseAdmin
           .from('clients')
           .select('user_id, first_name, last_name, phone_number, child_name, child_age')
           .in('user_id', userIds);
@@ -387,7 +412,8 @@ const getAllUsers = async (req, res) => {
       );
     } else {
       // For other roles, fetch from users table only
-      let usersQuery = supabase
+      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+      let usersQuery = supabaseAdmin
         .from('users')
         .select(`
           id,
@@ -455,8 +481,10 @@ const getAllPsychologists = async (req, res) => {
     const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assesment.koott@gmail.com').toLowerCase();
 
     // Fetch psychologists directly from psychologists table with pagination
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { supabaseAdmin } = require('../config/supabase');
     const offset = (page - 1) * limit;
-    const { data: psychologists, error: psychError } = await supabase
+    const { data: psychologists, error: psychError } = await supabaseAdmin
       .from('psychologists')
       .select('*, individual_session_price')
       .neq('email', assessmentEmail)
@@ -573,7 +601,8 @@ const getAllPsychologists = async (req, res) => {
           .filter(Boolean);
 
         if (psychologistIds.length > 0) {
-          const { data: availabilityData, error: availabilityError } = await supabase
+          // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+          const { data: availabilityData, error: availabilityError } = await supabaseAdmin
             .from('availability')
             .select('*')
             .in('psychologist_id', psychologistIds);
@@ -642,7 +671,9 @@ const getUserDetails = async (req, res) => {
     const { userId } = req.params;
 
     // First check if it's a psychologist
-    const { data: psychologist, error: psychologistError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('*')
       .eq('id', userId)
@@ -666,7 +697,7 @@ const getUserDetails = async (req, res) => {
     }
 
     // If not a psychologist, check users table
-    const { data: user, error: userError } = await supabase
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', userId)
@@ -681,7 +712,7 @@ const getUserDetails = async (req, res) => {
     // Get role-specific profile
     let profile = null;
     if (user.role === 'client') {
-      const { data: client } = await supabase
+      const { data: client } = await supabaseAdmin
         .from('clients')
         .select('*')
         .eq('id', userId)
@@ -723,10 +754,25 @@ const updateUserRole = async (req, res) => {
       );
     }
 
-    // Check if user exists
-    const { data: user } = await supabase
+    // CRITICAL FIX: TOCTOU protection - Re-verify admin role from DB before operation
+    const { data: freshAdminUser } = await supabaseAdmin
       .from('users')
       .select('role')
+      .eq('id', req.user.id)
+      .single();
+
+    if (!freshAdminUser || (freshAdminUser.role !== 'admin' && freshAdminUser.role !== 'superadmin')) {
+      return res.status(403).json(
+        errorResponse('Privilege revoked. Admin access required.')
+      );
+    }
+
+    // Check if user exists
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('role, email')
       .eq('id', userId)
       .single();
 
@@ -744,7 +790,8 @@ const updateUserRole = async (req, res) => {
     }
 
     // Update user role
-    const { data: updatedUser, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { data: updatedUser, error } = await supabaseAdmin
       .from('users')
       .update({
         role: new_role,
@@ -759,6 +806,21 @@ const updateUserRole = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to update user role')
       );
+    }
+
+    // Audit log the role change
+    const auditLogger = require('../utils/auditLogger');
+    await auditLogger.logRequest(req, 'UPDATE_USER_ROLE', 'user', userId, {
+      oldRole: user.role,
+      newRole: new_role,
+      targetUserEmail: user.email
+    });
+
+    // If role is being changed to/from admin, revoke all user tokens for security
+    if (user.role === 'admin' || new_role === 'admin' || user.role === 'superadmin' || new_role === 'superadmin') {
+      const tokenRevocationService = require('../utils/tokenRevocation');
+      await tokenRevocationService.revokeUserTokens(userId);
+      console.log(`🔒 Revoked all tokens for user ${userId} due to role change`);
     }
 
     res.json(
@@ -778,11 +840,28 @@ const deactivateUser = async (req, res) => {
   try {
     const { userId } = req.params;
     const { reason } = req.body;
+    const auditLogger = require('../utils/auditLogger');
+    const tokenRevocationService = require('../utils/tokenRevocation');
 
-    // Check if user exists
-    const { data: user } = await supabase
+    // CRITICAL FIX: TOCTOU protection - Re-verify admin role from DB before operation
+    const { data: freshAdminUser } = await supabaseAdmin
       .from('users')
       .select('role')
+      .eq('id', req.user.id)
+      .single();
+
+    if (!freshAdminUser || (freshAdminUser.role !== 'admin' && freshAdminUser.role !== 'superadmin')) {
+      return res.status(403).json(
+        errorResponse('Privilege revoked. Admin access required.')
+      );
+    }
+
+    // Check if user exists
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { supabaseAdmin } = require('../config/supabase');
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('role, email')
       .eq('id', userId)
       .single();
 
@@ -799,9 +878,13 @@ const deactivateUser = async (req, res) => {
       );
     }
 
+    // Revoke all tokens for the deactivated user
+    await tokenRevocationService.revokeUserTokens(userId);
+
     // For now, we'll just update the user to indicate deactivation
     // In a real system, you might want to add a status field or move to archive table
-    const { data: updatedUser, error } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { data: updatedUser, error } = await supabaseAdmin
       .from('users')
       .update({
         updated_at: new Date().toISOString()
@@ -817,6 +900,13 @@ const deactivateUser = async (req, res) => {
         errorResponse('Failed to deactivate user')
       );
     }
+
+    // Audit log the deactivation
+    await auditLogger.logRequest(req, 'DEACTIVATE_USER', 'user', userId, {
+      reason: reason || 'No reason provided',
+      targetUserEmail: user.email,
+      targetUserRole: user.role
+    });
 
     res.json(
       successResponse(updatedUser, 'User deactivated successfully')
@@ -838,8 +928,10 @@ const getPlatformStats = async (req, res) => {
     const { start_date, end_date } = req.query;
 
     // Test database connection first
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { supabaseAdmin } = require('../config/supabase');
     try {
-      const { data: testData, error: testError } = await supabase
+      const { data: testData, error: testError } = await supabaseAdmin
         .from('users')
         .select('count')
         .limit(1);
@@ -859,7 +951,8 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get user counts by role (optimized with count queries)
-    const { count: totalUsers, error: usersError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: totalUsers, error: usersError } = await supabaseAdmin
       .from('users')
       .select('*', { count: 'exact', head: true });
 
@@ -871,7 +964,8 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get psychologist counts (optimized)
-    const { count: totalPsychologists, error: psychologistsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: totalPsychologists, error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .select('*', { count: 'exact', head: true });
 
@@ -883,7 +977,8 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get session counts (optimized with count)
-    const { count: totalSessions, error: sessionsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: totalSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true });
 
@@ -895,7 +990,8 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get client counts (optimized)
-    const { count: totalClients, error: clientsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: totalClients, error: clientsError } = await supabaseAdmin
       .from('clients')
       .select('*', { count: 'exact', head: true });
 
@@ -916,12 +1012,14 @@ const getPlatformStats = async (req, res) => {
     });
 
     // Get detailed statistics with 2GB plan (more accurate data)
-    const { data: userRoles, error: userRolesError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { data: userRoles, error: userRolesError } = await supabaseAdmin
       .from('users')
       .select('role')
       .limit(1000); // Reasonable limit for 2GB plan
 
-    const { data: sessionStatuses, error: sessionStatusError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { data: sessionStatuses, error: sessionStatusError } = await supabaseAdmin
       .from('sessions')
       .select('status, price')
       .limit(1000); // Reasonable limit for 2GB plan
@@ -968,39 +1066,95 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get payment failure statistics
-    const { count: totalPayments, error: paymentsCountError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: totalPayments, error: paymentsCountError } = await supabaseAdmin
       .from('payments')
       .select('*', { count: 'exact', head: true });
 
-    const { count: failedPayments, error: failedPaymentsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: failedPayments, error: failedPaymentsError } = await supabaseAdmin
       .from('payments')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'failed');
 
-    const { count: pendingPayments, error: pendingPaymentsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: pendingPayments, error: pendingPaymentsError } = await supabaseAdmin
       .from('payments')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'pending');
 
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    const { count: successfulPayments, error: successfulPaymentsError } = await supabaseAdmin
+      .from('payments')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'success');
+
     // Get cancelled sessions count
-    const { count: cancelledSessions, error: cancelledSessionsError } = await supabase
+    const { count: cancelledSessions, error: cancelledSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'cancelled');
 
     // Get no-show sessions count
-    const { count: noShowSessions, error: noShowSessionsError } = await supabase
+    const { count: noShowSessions, error: noShowSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'no_show');
+
+    // Get booking status metrics
+    const { count: rescheduledSessions, error: rescheduledSessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'rescheduled');
+
+    const { count: rescheduleRequestedSessions, error: rescheduleRequestedSessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'reschedule_requested');
+
+    const { count: completedSessions, error: completedSessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'completed');
+
+    // Calculate upcoming sessions (not completed/cancelled/no_show and future date)
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const { data: upcomingSessionsData, error: upcomingSessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, scheduled_date, scheduled_time, status')
+      .not('status', 'in', '(completed,cancelled,no_show,noshow)')
+      .gte('scheduled_date', today);
+    
+    // Filter upcoming sessions more accurately (check time as well)
+    let upcomingSessionsCount = 0;
+    if (upcomingSessionsData && !upcomingSessionsError) {
+      const now = new Date();
+      upcomingSessionsCount = upcomingSessionsData.filter(session => {
+        if (!session.scheduled_date || !session.scheduled_time) return false;
+        const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`);
+        const sessionEndDateTime = new Date(sessionDateTime.getTime() + 50 * 60 * 1000); // Add 50 minutes
+        return sessionEndDateTime > now;
+      }).length;
+    }
 
     // Add failure metrics to stats
     stats.failures = {
       paymentFailures: failedPayments || 0,
       pendingPayments: pendingPayments || 0,
+      successfulPayments: successfulPayments || 0,
       cancelledSessions: cancelledSessions || 0,
       noShowSessions: noShowSessions || 0,
       totalPayments: totalPayments || 0
+    };
+
+    // Add booking status metrics
+    stats.bookingStatuses = {
+      upcoming: upcomingSessionsCount || 0,
+      rescheduled: rescheduledSessions || 0,
+      rescheduleRequested: rescheduleRequestedSessions || 0,
+      completed: completedSessions || 0,
+      noShow: noShowSessions || 0,
+      cancelled: cancelledSessions || 0
     };
 
     // Calculate failure rate
@@ -1023,12 +1177,24 @@ const getPlatformStats = async (req, res) => {
 // Search users
 const searchUsers = async (req, res) => {
   try {
-    const { 
-      query: searchQuery, 
-      page = 1, 
-      limit = 10,
-      role
-    } = req.query;
+    // HIGH-RISK FIX: Parameter pollution defense - normalize query params (reject arrays)
+    const normalizeParam = (param) => {
+      if (Array.isArray(param)) {
+        return null; // Reject arrays
+      }
+      return param;
+    };
+
+    const searchQuery = normalizeParam(req.query.query);
+    const page = normalizeParam(req.query.page) || 1;
+    const limit = normalizeParam(req.query.limit) || 10;
+    const role = normalizeParam(req.query.role);
+
+    if (Array.isArray(req.query.query) || Array.isArray(req.query.role)) {
+      return res.status(400).json(
+        errorResponse('Invalid query parameters. Arrays not allowed.')
+      );
+    }
 
     if (!searchQuery) {
       return res.status(400).json(
@@ -1036,7 +1202,8 @@ const searchUsers = async (req, res) => {
       );
     }
 
-    let supabaseQuery = supabase
+    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    let supabaseQuery = supabaseAdmin
       .from('users')
       .select(`
         id,
@@ -1130,7 +1297,7 @@ const createPsychologist = async (req, res) => {
     }
 
     // Check if psychologist already exists with this email
-    const { data: existingPsychologist } = await supabase
+    const { data: existingPsychologist } = await supabaseAdmin
       .from('psychologists')
       .select('id')
       .eq('email', email)
@@ -1146,7 +1313,7 @@ const createPsychologist = async (req, res) => {
     const hashedPassword = await hashPassword(password);
 
     // Create psychologist directly in psychologists table (standalone)
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .insert([{
         email,
@@ -1207,7 +1374,7 @@ const createPsychologist = async (req, res) => {
           discount_percentage: pkg.discount_percentage || 0
         }));
 
-        const { error: packagesError } = await supabase
+        const { error: packagesError } = await supabaseAdmin
           .from('packages')
           .insert(packageData);
 
@@ -1272,7 +1439,7 @@ const createPsychologist = async (req, res) => {
         if (availabilityRecords.length > 0) {
           // Use upsert to update existing or create new
           for (const record of availabilityRecords) {
-            const { data: existing } = await supabase
+            const { data: existing } = await supabaseAdmin
             .from('availability')
               .select('id')
               .eq('psychologist_id', record.psychologist_id)
@@ -1281,7 +1448,7 @@ const createPsychologist = async (req, res) => {
 
             if (existing) {
               // Update existing
-              await supabase
+              await supabaseAdmin
                 .from('availability')
                 .update({
                   time_slots: record.time_slots,
@@ -1290,7 +1457,7 @@ const createPsychologist = async (req, res) => {
                 .eq('id', existing.id);
             } else {
               // Insert new
-              await supabase
+              await supabaseAdmin
                 .from('availability')
                 .insert(record);
             }
@@ -1338,7 +1505,7 @@ const updatePsychologist = async (req, res) => {
     }
 
     // Get psychologist profile
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('*')
       .eq('id', psychologistId)
@@ -1364,7 +1531,7 @@ const updatePsychologist = async (req, res) => {
     }
 
     // Update psychologist profile
-    const { data: updatedPsychologist, error: updateError } = await supabase
+    const { data: updatedPsychologist, error: updateError } = await supabaseAdmin
       .from('psychologists')
       .update(psychologistUpdateData)
       .eq('id', psychologistId)
@@ -1398,7 +1565,7 @@ const updatePsychologist = async (req, res) => {
             latestEmail = null;
           }
           if (latestEmail) {
-            const { data: userByEmail, error: userLookupError } = await supabase
+            const { data: userByEmail, error: userLookupError } = await supabaseAdmin
               .from('users')
               .select('id, email')
               .eq('email', latestEmail)
@@ -1407,7 +1574,7 @@ const updatePsychologist = async (req, res) => {
             if (userLookupError || !userByEmail) {
               // Create a new user for this psychologist using the provided password
               const hashedPasswordForCreate = await hashPassword(password);
-              const { data: newUser, error: createUserError } = await supabase
+              const { data: newUser, error: createUserError } = await supabaseAdmin
                 .from('users')
                 .insert([{ email: latestEmail, password_hash: hashedPasswordForCreate, role: 'psychologist' }])
                 .select('id')
@@ -1418,7 +1585,7 @@ const updatePsychologist = async (req, res) => {
               } else {
                 targetUserId = newUser.id;
                 // Backfill psychologists.user_id for future updates
-                await supabase
+                await supabaseAdmin
                   .from('psychologists')
                   .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
                   .eq('id', psychologistId);
@@ -1426,7 +1593,7 @@ const updatePsychologist = async (req, res) => {
             } else {
               targetUserId = userByEmail.id;
               // Backfill psychologists.user_id for future updates
-              await supabase
+              await supabaseAdmin
                 .from('psychologists')
                 .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
                 .eq('id', psychologistId);
@@ -1437,7 +1604,7 @@ const updatePsychologist = async (req, res) => {
         if (targetUserId) {
           const hashedPassword = await hashPassword(password);
           // Update linked user account (if present)
-          const { error: userPasswordUpdateError } = await supabase
+          const { error: userPasswordUpdateError } = await supabaseAdmin
             .from('users')
             .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
             .eq('id', targetUserId);
@@ -1447,7 +1614,7 @@ const updatePsychologist = async (req, res) => {
           }
 
           // Ensure psychologist can login with the new password as well
-          const { error: psychPwUpdateError } = await supabase
+          const { error: psychPwUpdateError } = await supabaseAdmin
             .from('psychologists')
             .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
             .eq('id', psychologistId);
@@ -1471,7 +1638,7 @@ const updatePsychologist = async (req, res) => {
       
       try {
         // Store price in the dedicated individual_session_price field (as integer)
-        const { error: priceUpdateError } = await supabase
+        const { error: priceUpdateError } = await supabaseAdmin
           .from('psychologists')
           .update({ individual_session_price: parseInt(price) })
           .eq('id', psychologistId);
@@ -1550,7 +1717,7 @@ const updatePsychologist = async (req, res) => {
             
             // Refresh existingPackages after deletion to remove deleted packages from cache
             if (deletedPackageIds.length > 0) {
-              const { data: refreshedPackages, error: refreshError } = await supabase
+              const { data: refreshedPackages, error: refreshError } = await supabaseAdmin
                 .from('packages')
                 .select('id, name, session_count')
                 .eq('psychologist_id', psychologistId);
@@ -1767,7 +1934,7 @@ const updatePsychologist = async (req, res) => {
           // Update or insert availability records (don't delete all - only update specific dates)
           // This allows doctors to remove slots from defaults without losing other dates
           for (const record of availabilityRecords) {
-            const { data: existing } = await supabase
+            const { data: existing } = await supabaseAdmin
             .from('availability')
               .select('id')
               .eq('psychologist_id', record.psychologist_id)
@@ -1776,7 +1943,7 @@ const updatePsychologist = async (req, res) => {
 
             if (existing) {
               // Update existing availability (doctor is removing slots from defaults)
-              const { error: updateError } = await supabase
+              const { error: updateError } = await supabaseAdmin
                 .from('availability')
                 .update({
                   time_slots: record.time_slots,
@@ -1792,7 +1959,7 @@ const updatePsychologist = async (req, res) => {
           }
             } else {
               // Insert new availability (for dates not in defaults)
-              const { error: insertError } = await supabase
+              const { error: insertError } = await supabaseAdmin
             .from('availability')
                 .insert({
                   ...record,
@@ -1820,7 +1987,7 @@ const updatePsychologist = async (req, res) => {
       console.log('📅 Empty availability array sent - deleting all availability');
       
       try {
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await supabaseAdmin
           .from('availability')
           .delete()
           .eq('psychologist_id', psychologistId);
@@ -1862,7 +2029,7 @@ const deletePsychologist = async (req, res) => {
     const { psychologistId } = req.params;
 
     // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id')
       .eq('id', psychologistId)
@@ -1875,7 +2042,7 @@ const deletePsychologist = async (req, res) => {
     }
 
     // Delete availability records first
-    const { error: deleteAvailabilityError } = await supabase
+    const { error: deleteAvailabilityError } = await supabaseAdmin
       .from('availability')
       .delete()
       .eq('psychologist_id', psychologistId);
@@ -1886,7 +2053,7 @@ const deletePsychologist = async (req, res) => {
     }
 
     // Delete psychologist profile
-    const { error: deleteProfileError } = await supabase
+    const { error: deleteProfileError } = await supabaseAdmin
       .from('psychologists')
       .delete()
       .eq('id', psychologistId);
@@ -1924,7 +2091,7 @@ const createUser = async (req, res) => {
     const { email, password, first_name, last_name, phone_number, child_name, child_age } = req.body;
 
     // Check if user already exists
-    const { data: existingUser } = await supabase
+    const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('email', email)
@@ -2009,10 +2176,18 @@ const createUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const updateData = req.body;
+    
+    // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
+    const allowedFields = ['first_name', 'last_name', 'phone_number', 'child_name', 'child_age'];
+    const updateData = {};
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
 
     // Get user
-    const { data: user, error: userError } = await supabase
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('*')
       .eq('id', userId)
@@ -2026,7 +2201,7 @@ const updateUser = async (req, res) => {
 
     // Update user profile based on role
     if (user.role === 'client') {
-      const { data: updatedClient, error: updateError } = await supabase
+      const { data: updatedClient, error: updateError } = await supabaseAdmin
         .from('clients')
         .update(updateData)
         .eq('id', userId)
@@ -2061,6 +2236,19 @@ const updateUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
+
+    // CRITICAL FIX: TOCTOU protection - Re-verify admin role from DB before operation
+    const { data: freshAdminUser } = await supabaseAdmin
+      .from('users')
+      .select('role')
+      .eq('id', req.user.id)
+      .single();
+
+    if (!freshAdminUser || (freshAdminUser.role !== 'admin' && freshAdminUser.role !== 'superadmin')) {
+      return res.status(403).json(
+        errorResponse('Privilege revoked. Admin access required.')
+      );
+    }
 
     // Get user
     const { data: user, error: userError } = await supabaseAdmin
@@ -2208,7 +2396,7 @@ const getRecentUsers = async (req, res) => {
     const { limit = 5 } = req.query;
 
     // Get recent users (clients and admins, not psychologists)
-    const { data: recentUsers, error: usersError } = await supabase
+    const { data: recentUsers, error: usersError } = await supabaseAdmin
       .from('users')
       .select('id, email, role, created_at')
       .neq('role', 'psychologist') // Exclude psychologists as they're in separate table
@@ -2227,7 +2415,7 @@ const getRecentUsers = async (req, res) => {
     let clientProfiles = [];
     
     if (userIds.length > 0) {
-      const { data: clients, error: clientsError } = await supabase
+      const { data: clients, error: clientsError } = await supabaseAdmin
         .from('clients')
         .select('user_id, first_name, last_name, child_name, child_age')
         .in('user_id', userIds);
@@ -2261,13 +2449,18 @@ const getRecentUsers = async (req, res) => {
   }
 };
 
-// Get recent bookings for dashboard
+// Get recent bookings for dashboard (last 24 hours)
 const getRecentBookings = async (req, res) => {
   try {
-    const { limit = 5 } = req.query;
+    const { limit = 10 } = req.query;
 
-    // Get recent sessions
-    const { data: recentSessions, error: sessionsError } = await supabase
+    // Calculate date 24 hours ago
+    const oneDayAgo = new Date();
+    oneDayAgo.setHours(oneDayAgo.getHours() - 24);
+    const oneDayAgoISO = oneDayAgo.toISOString();
+
+    // Get recent sessions from the last 24 hours
+    const { data: recentSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select(`
         id,
@@ -2288,6 +2481,7 @@ const getRecentBookings = async (req, res) => {
           last_name
         )
       `)
+      .gte('created_at', oneDayAgoISO)
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
 
@@ -2316,7 +2510,7 @@ const getRecentActivities = async (req, res) => {
     const { limit = 10 } = req.query;
 
     // Get recent users
-    const { data: recentUsers, error: usersError } = await supabase
+    const { data: recentUsers, error: usersError } = await supabaseAdmin
       .from('users')
       .select('id, email, role, created_at')
       .order('created_at', { ascending: false })
@@ -2330,7 +2524,7 @@ const getRecentActivities = async (req, res) => {
     }
 
     // Get recent psychologists
-    const { data: recentPsychologists, error: psychologistsError } = await supabase
+    const { data: recentPsychologists, error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .select('id, email, first_name, last_name, created_at')
       .order('created_at', { ascending: false })
@@ -2344,7 +2538,7 @@ const getRecentActivities = async (req, res) => {
     }
 
     // Get recent sessions
-    const { data: recentSessions, error: sessionsError } = await supabase
+    const { data: recentSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select('id, status, scheduled_date, created_at')
       .order('created_at', { ascending: false })
@@ -2432,7 +2626,7 @@ const createPsychologistPackages = async (req, res) => {
     }
 
     // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name')
       .eq('id', psychologistId)
@@ -2475,7 +2669,7 @@ const createPsychologistPackages = async (req, res) => {
       discount_percentage: pkg.discount_percentage || 0
     }))];
 
-    const { data: createdPackages, error: packagesError } = await supabase
+    const { data: createdPackages, error: packagesError } = await supabaseAdmin
       .from('packages')
       .insert(packageData)
       .select('*');
@@ -2678,7 +2872,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Get session details
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -2716,7 +2910,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Check if new time slot is available
-    const { data: conflictingSessions } = await supabase
+    const { data: conflictingSessions } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('psychologist_id', session.psychologist_id)
@@ -2737,13 +2931,14 @@ const rescheduleSession = async (req, res) => {
       time: session.scheduled_time
     };
 
-    // Update session with new date/time
-    const { data: updatedSession, error: updateError } = await supabase
+    // Update session with new date/time (reset reminder_sent since it's rescheduled)
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
         scheduled_date: formatDate(new_date),
         scheduled_time: formatTime(new_time),
         status: 'rescheduled',
+        reminder_sent: false, // Reset reminder flag when rescheduled
         updated_at: new Date().toISOString()
       })
       .eq('id', sessionId)
@@ -2799,7 +2994,7 @@ const rescheduleSession = async (req, res) => {
         
         if (meetResult.success) {
           // Update session with new Meet link
-          await supabase
+          await supabaseAdmin
             .from('sessions')
             .update({
               meet_link: meetResult.meetLink,
@@ -2819,7 +3014,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Get updated session with Meet link for notifications
-    const { data: sessionWithMeet } = await supabase
+    const { data: sessionWithMeet } = await supabaseAdmin
       .from('sessions')
       .select('google_meet_link')
       .eq('id', sessionId)
@@ -2918,7 +3113,7 @@ const rescheduleSession = async (req, res) => {
     }
 
     // Create notification for client
-    await supabase
+    await supabaseAdmin
       .from('notifications')
       .insert({
         user_id: session.clients.user_id,
@@ -2936,7 +3131,7 @@ const rescheduleSession = async (req, res) => {
       });
 
     // Create notification for psychologist
-    await supabase
+    await supabaseAdmin
       .from('notifications')
       .insert({
         user_id: session.psychologists.user_id,
@@ -2994,7 +3189,7 @@ const getPsychologistAvailabilityForReschedule = async (req, res) => {
     }
 
     // Get psychologist details
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name')
       .eq('id', psychologistId)
@@ -3007,7 +3202,7 @@ const getPsychologistAvailabilityForReschedule = async (req, res) => {
     }
 
     // Get psychologist availability
-    const { data: availability, error: availabilityError } = await supabase
+    const { data: availability, error: availabilityError } = await supabaseAdmin
       .from('availability')
       .select('*')
       .eq('psychologist_id', psychologistId)
@@ -3023,7 +3218,7 @@ const getPsychologistAvailabilityForReschedule = async (req, res) => {
     }
 
     // Get existing sessions in the date range
-    const { data: existingSessions, error: sessionsError } = await supabase
+    const { data: existingSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select('scheduled_date, scheduled_time, status')
       .eq('psychologist_id', psychologistId)
@@ -3112,7 +3307,7 @@ const getPsychologistCalendarEvents = async (req, res) => {
     }
 
     // Get psychologist details with Google Calendar credentials
-    const { data: psychologist, error: psychologistError } = await supabase
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name, email, google_calendar_credentials')
       .eq('id', psychologistId)
@@ -3125,7 +3320,7 @@ const getPsychologistCalendarEvents = async (req, res) => {
     }
 
     // Get internal sessions (Little Care sessions)
-    const { data: internalSessions, error: sessionsError } = await supabase
+    const { data: internalSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select(`
         scheduled_date,
@@ -3240,7 +3435,7 @@ const checkCalendarSyncStatus = async (req, res) => {
     const { date } = req.query; // Optional: specific date to check, defaults to tomorrow
 
     // Find psychologist
-    const { data: psychologist, error: psychError } = await supabase
+    const { data: psychologist, error: psychError } = await supabaseAdmin
       .from('psychologists')
       .select('id, first_name, last_name, email, google_calendar_credentials')
       .eq('id', psychologistId)
@@ -3294,7 +3489,7 @@ const checkCalendarSyncStatus = async (req, res) => {
     }
 
     // 2. Get availability for target date
-    const { data: availability, error: availError } = await supabase
+    const { data: availability, error: availError } = await supabaseAdmin
       .from('availability')
       .select('id, date, time_slots, is_available, updated_at')
       .eq('psychologist_id', psychologist.id)
@@ -4557,7 +4752,7 @@ const createManualBooking = async (req, res) => {
     }
 
     // Fetch the complete session with relations for response
-    const { data: completeSession, error: fetchError } = await supabase
+    const { data: completeSession, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select(`
         *,

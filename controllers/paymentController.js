@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { ensureClientPackageRecord } = require('../services/packageService');
 const { 
@@ -669,13 +668,53 @@ const createPaymentOrder = async (req, res) => {
       assessmentType
     } = req.body;
 
+    // SECURITY FIX: Always use clientId from authenticated user, ignore from request body
+    // Get client ID from client record using user_id (payments table requires clients.id, not users.id)
+    const userId = req.user.id;
+    let actualClientId = null;
+    
+    // Priority: 1) client_id (from middleware), 2) lookup by user_id, 3) fallback to id (old system)
+    if (req.user.client_id) {
+      actualClientId = req.user.client_id;
+    } else {
+      // Lookup client record by user_id (new system)
+      const { data: clientByUserId, error: errorByUserId } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (clientByUserId && !errorByUserId) {
+        actualClientId = clientByUserId.id;
+      } else {
+        // Fallback: try old system (client.id = user.id for backward compatibility)
+        const { data: clientById, error: errorById } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('id', userId)
+          .single();
+
+        if (clientById && !errorById) {
+          actualClientId = clientById.id;
+        }
+      }
+    }
+    
+    if (!actualClientId) {
+      console.error('❌ Client profile not found for user:', userId);
+      return res.status(404).json({
+        success: false,
+        message: 'Client profile not found. Please complete your profile setup.'
+      });
+    }
+    
     // Validate required fields
-    if (!scheduledDate || !scheduledTime || !psychologistId || !clientId || !amount || !clientName || !clientEmail) {
+    if (!scheduledDate || !scheduledTime || !psychologistId || !amount || !clientName || !clientEmail) {
       console.log('❌ Missing fields:', {
         scheduledDate: !!scheduledDate,
         scheduledTime: !!scheduledTime,
         psychologistId: !!psychologistId,
-        clientId: !!clientId,
+        clientId: !!actualClientId,
         amount: !!amount,
         clientName: !!clientName,
         clientEmail: !!clientEmail
@@ -683,6 +722,93 @@ const createPaymentOrder = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Missing required fields for payment'
+      });
+    }
+
+    // SECURITY FIX: Server-side price validation
+    // Validate amount against package/psychologist pricing
+    let expectedPrice = null;
+    
+    if (packageId && packageId !== 'individual' && packageId !== 'null' && packageId !== 'undefined') {
+      // Package booking - validate against package price
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: packageData, error: packageError } = await supabaseAdmin
+        .from('packages')
+        .select('price, psychologist_id')
+        .eq('id', packageId)
+        .eq('psychologist_id', psychologistId)
+        .single();
+      
+      if (packageError || !packageData) {
+        console.error('❌ Package validation failed:', packageError);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid package selected'
+        });
+      }
+      
+      expectedPrice = packageData.price;
+      console.log('💰 Package price validation:', {
+        packageId,
+        expectedPrice,
+        providedAmount: amount
+      });
+    } else {
+      // Individual session - validate against psychologist's individual session price
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: psychologistData, error: psychError } = await supabaseAdmin
+        .from('psychologists')
+        .select('individual_session_price')
+        .eq('id', psychologistId)
+        .single();
+      
+      if (psychError || !psychologistData) {
+        console.error('❌ Psychologist lookup failed:', psychError);
+        return res.status(400).json({
+          success: false,
+          message: 'Psychologist not found'
+        });
+      }
+      
+      // Use individual_session_price (column name updated, no fallback needed)
+      expectedPrice = psychologistData.individual_session_price;
+      console.log('💰 Individual session price validation:', {
+        psychologistId,
+        expectedPrice,
+        providedAmount: amount
+      });
+    }
+    
+    // Validate amount matches expected price (allow 0.01 INR tolerance for rounding)
+    if (expectedPrice && Math.abs(amount - expectedPrice) > 0.01) {
+      console.error('❌ Price mismatch detected:', {
+        expectedPrice,
+        providedAmount: amount,
+        difference: Math.abs(amount - expectedPrice),
+        packageId: packageId || 'individual'
+      });
+      
+      // Log price mismatch for audit
+      await userInteractionLogger.logInteraction({
+        userId: actualClientId,
+        userRole: req.user.role,
+        action: 'payment_price_mismatch',
+        status: 'blocked',
+        details: {
+          expectedPrice,
+          providedAmount: amount,
+          packageId: packageId || 'individual',
+          psychologistId,
+          scheduledDate,
+          scheduledTime
+        }
+      });
+      
+      return res.status(400).json({
+        success: false,
+        message: 'Payment amount does not match selected package/session price. Please refresh and try again.',
+        error: 'PRICE_MISMATCH',
+        expectedPrice: expectedPrice
       });
     }
 
@@ -719,7 +845,7 @@ const createPaymentOrder = async (req, res) => {
       notes: {
         scheduledDate: scheduledDate,
         psychologistId: psychologistId,
-        clientId: clientId,
+        clientId: actualClientId,
         packageId: packageId || '',
         scheduledTime: scheduledTime,
         assessmentSessionId: assessmentSessionId || '',
@@ -753,7 +879,7 @@ const createPaymentOrder = async (req, res) => {
       console.log('🔒 Holding slot before payment...');
       slotLockResult = await holdSlot({
         psychologistId: psychologistId,
-        clientId: clientId,
+        clientId: actualClientId, // Use actual clientId from JWT
         scheduledDate: scheduledDate,
         scheduledTime: scheduledTime,
         orderId: razorpayOrder.id
@@ -823,7 +949,7 @@ const createPaymentOrder = async (req, res) => {
       razorpay_order_id: razorpayOrder.id, // Store Razorpay order ID
       session_id: null, // Will be set after payment success
       psychologist_id: psychologistId,
-      client_id: clientId,
+      client_id: actualClientId, // Use actual clientId from JWT token
       package_id: packageId === 'individual' ? null : packageId, // Set to null for individual sessions
       amount: amount,
       session_type: sessionType,
@@ -833,7 +959,10 @@ const createPaymentOrder = async (req, res) => {
         amount: amountInPaise,
         currency: 'INR',
         receipt: txnid,
-        notes: orderOptions.notes
+        notes: {
+          ...orderOptions.notes,
+          clientId: actualClientId // Store actual clientId in notes
+        }
       },
       created_at: new Date().toISOString()
     };
@@ -849,7 +978,8 @@ const createPaymentOrder = async (req, res) => {
       razorpay_params: '[REDACTED]'
     });
     
-    const { data: paymentRecord, error: paymentError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
       .from('payments')
       .insert([paymentData])
       .select()
@@ -992,7 +1122,8 @@ const handlePaymentSuccess = async (req, res) => {
     // Use FOR UPDATE lock in PostgreSQL to prevent concurrent processing
     // Note: Supabase doesn't support FOR UPDATE directly, so we'll use atomic updates instead
     console.log('🔍 Looking up payment record for order:', razorpay_order_id);
-    const { data: paymentRecord, error: paymentError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
       .from('payments')
       .select('*')
       .eq('razorpay_order_id', razorpay_order_id)
@@ -1190,7 +1321,8 @@ const handlePaymentSuccess = async (req, res) => {
       console.log('   Payment status:', paymentRecord.status);
       
       // Re-fetch payment to get current status
-      const { data: currentPayment } = await supabase
+      // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+      const { data: currentPayment } = await supabaseAdmin
         .from('payments')
         .select('status, session_id')
         .eq('id', paymentRecord.id)
@@ -1405,7 +1537,8 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Regular therapy session booking (existing code)
     // Get client and psychologist details for session creation
-    const { data: clientDetails, error: clientDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
       .select(`
         *,
@@ -1422,7 +1555,8 @@ const handlePaymentSuccess = async (req, res) => {
       });
     }
 
-    const { data: psychologistDetails, error: psychologistDetailsError } = await supabase
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    const { data: psychologistDetails, error: psychologistDetailsError } = await supabaseAdmin
       .from('psychologists')
       .select('first_name, last_name, email, phone, google_calendar_credentials')
       .eq('id', actualPsychologistId)
@@ -1433,6 +1567,56 @@ const handlePaymentSuccess = async (req, res) => {
       return res.status(500).json({
         success: false,
         message: 'Failed to fetch psychologist details'
+      });
+    }
+
+    // SECURITY FIX: Check if slot lock expired but payment order matches
+    // This allows session creation even if lock expired during payment (prevents UX failure)
+    let allowSessionCreation = true;
+    try {
+      const { checkPaymentOrderMatchesLock } = require('../services/slotLockService');
+      const lockCheck = await checkPaymentOrderMatchesLock(razorpay_order_id, clientId);
+      
+      if (lockCheck.success && lockCheck.matches) {
+        console.log('✅ Payment order matches slot lock - allowing session creation even if expired');
+        allowSessionCreation = true;
+      } else {
+        // Check if slot is actually available (no active bookings)
+        // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+        const { data: conflictingSessions } = await supabaseAdmin
+          .from('sessions')
+          .select('id')
+          .eq('psychologist_id', actualPsychologistId)
+          .eq('scheduled_date', actualScheduledDate)
+          .eq('scheduled_time', actualScheduledTime)
+          .in('status', ['booked', 'rescheduled']);
+        
+        if (conflictingSessions && conflictingSessions.length > 0) {
+          console.error('❌ Slot already booked by another user');
+          allowSessionCreation = false;
+        }
+      }
+    } catch (lockCheckError) {
+      console.warn('⚠️ Error checking slot lock, proceeding with session creation:', lockCheckError);
+      // Continue anyway - better to allow session creation than block legitimate payment
+    }
+
+    if (!allowSessionCreation) {
+      console.error('❌ Cannot create session - slot already booked');
+      // Revert payment status but keep payment record for refund
+      await supabaseAdmin
+        .from('payments')
+        .update({
+          status: 'pending', // Keep as pending for manual review/refund
+          razorpay_payment_id: razorpay_payment_id,
+          razorpay_response: params
+        })
+        .eq('id', paymentRecord.id);
+      
+      return res.status(409).json({
+        success: false,
+        message: 'This time slot was just booked by another user. Your payment will be refunded.',
+        error: 'DOUBLE_BOOKING_AFTER_PAYMENT'
       });
     }
 
@@ -1457,7 +1641,7 @@ const handlePaymentSuccess = async (req, res) => {
     // Don't add meet data yet - will be added asynchronously
 
     // Try to insert session - if duplicate key error, another request already created it
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await supabaseAdmin
       .from('sessions')
       .insert([sessionData])
       .select('*')
@@ -1475,7 +1659,7 @@ const handlePaymentSuccess = async (req, res) => {
         console.log('⚠️ Duplicate session detected - checking if another request already created it');
 
         // Try to find the existing session that was created by another concurrent request
-        const { data: existingSession } = await supabase
+        const { data: existingSession } = await supabaseAdmin
           .from('sessions')
           .select('id, client_id, psychologist_id, scheduled_date, scheduled_time, status, payment_id')
           .eq('psychologist_id', actualPsychologistId)
@@ -1721,7 +1905,7 @@ const handlePaymentSuccess = async (req, res) => {
       console.log('   Session was created:', session.id);
       
       // Check current payment status
-      const { data: currentPayment } = await supabase
+      const { data: currentPayment } = await supabaseAdmin
         .from('payments')
         .select('status, session_id')
         .eq('id', paymentRecord.id)
@@ -1815,7 +1999,7 @@ const handlePaymentSuccess = async (req, res) => {
       // First, verify that payment is still in 'success' status before proceeding
       // This prevents async processes from running if payment was reverted due to double booking
       try {
-        const { data: currentPaymentStatus } = await supabase
+        const { data: currentPaymentStatus } = await supabaseAdmin
           .from('payments')
           .select('status, session_id')
           .eq('id', paymentRecord.id)
@@ -1904,7 +2088,7 @@ const handlePaymentSuccess = async (req, res) => {
             });
             
             // Update session with meet link
-            await supabase
+            await supabaseAdmin
               .from('sessions')
               .update({
                 google_calendar_event_id: meetData.eventId,
@@ -2309,7 +2493,7 @@ const handlePaymentSuccess = async (req, res) => {
       (async () => {
       try {
           console.log('📦 Creating client package record (async)...');
-        const { data: packageData } = await supabase
+        const { data: packageData } = await supabaseAdmin
           .from('packages')
           .select('*')
           .eq('id', actualPackageId)
@@ -2366,7 +2550,7 @@ const handlePaymentSuccess = async (req, res) => {
       const razorpay_order_id = params.razorpay_order_id || 'Unknown';
       
       // Try to get payment record for logging
-      const { data: paymentRecord } = await supabase
+      const { data: paymentRecord } = await supabaseAdmin
         .from('payments')
         .select('id, status, client_id, session_id')
         .eq('razorpay_order_id', razorpay_order_id)
@@ -2447,7 +2631,7 @@ const handlePaymentFailure = async (req, res) => {
     }
 
     // Find payment record by Razorpay order ID
-    const { data: paymentRecord, error: paymentError } = await supabase
+    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
       .from('payments')
       .select('*')
       .eq('razorpay_order_id', razorpay_order_id)
@@ -2462,7 +2646,7 @@ const handlePaymentFailure = async (req, res) => {
     }
 
     // Update payment status to failed
-    const { error: paymentFailedUpdateError } = await supabase
+    const { error: paymentFailedUpdateError } = await supabaseAdmin
       .from('payments')
       .update({
         status: 'failed',
@@ -2491,7 +2675,7 @@ const handlePaymentFailure = async (req, res) => {
 
     // Release session slot if exists
     if (paymentRecord.session_id) {
-    const { error: sessionError } = await supabase
+    const { error: sessionError } = await supabaseAdmin
       .from('sessions')
       .update({
         status: 'available',
@@ -2529,7 +2713,7 @@ const getPaymentStatus = async (req, res) => {
   try {
     const { transactionId } = req.params;
 
-    const { data: paymentRecord, error } = await supabase
+    const { data: paymentRecord, error } = await supabaseAdmin
       .from('payments')
       .select('*')
       .eq('transaction_id', transactionId)

@@ -1,4 +1,3 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
@@ -59,7 +58,7 @@ const getProfile = async (req, res) => {
 
     // Check if psychologist profile exists in psychologists table
     try {
-      const { data: psychologist, error } = await supabase
+      const { data: psychologist, error } = await supabaseAdmin
         .from('psychologists')
         .select('*')
         .eq('id', psychologistId)
@@ -157,17 +156,25 @@ const getProfile = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const psychologistId = req.user.id;
-    const updateData = req.body;
+    
+    // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
+    const allowedFields = [
+      'first_name', 'last_name', 'phone', 'ug_college', 'pg_college', 'phd_college',
+      'area_of_expertise', 'description', 'experience_years', 'cover_image_url',
+      'personality_traits', 'display_order', 'faq_question_1', 'faq_answer_1',
+      'faq_question_2', 'faq_answer_2', 'faq_question_3', 'faq_answer_3'
+    ];
+    const updateData = {};
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
+    updateData.updated_at = new Date().toISOString();
 
-    // Remove user_id from update data if present
-    delete updateData.user_id;
-
-    const { data: psychologist, error } = await supabase
+    const { data: psychologist, error } = await supabaseAdmin
       .from('psychologists')
-      .update({
-        ...updateData,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', psychologistId)
       .select('*')
       .single();
@@ -198,8 +205,9 @@ const getSessions = async (req, res) => {
     const { page = 1, limit = 10, status, date } = req.query;
 
     // Check if sessions table exists and has proper relationships
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     try {
-      let query = supabase
+      let query = supabaseAdmin
         .from('sessions')
         .select(`
           *,
@@ -513,8 +521,11 @@ const updateSession = async (req, res) => {
     const { sessionId } = req.params;
     const updateData = req.body;
 
+    // SECURITY FIX: Define allowed statuses to prevent invalid status values
+    const ALLOWED_STATUSES = ['booked', 'rescheduled', 'completed', 'no_show', 'cancelled'];
+
     // Check if session exists and belongs to psychologist
-    const { data: session } = await supabase
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -525,6 +536,22 @@ const updateSession = async (req, res) => {
       return res.status(404).json(
         errorResponse('Session not found')
       );
+    }
+
+    // SECURITY FIX: Validate status if provided
+    if (updateData.status !== undefined) {
+      if (!ALLOWED_STATUSES.includes(updateData.status)) {
+        return res.status(400).json(
+          errorResponse(`Invalid session status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`)
+        );
+      }
+
+      // SECURITY FIX: Require session summary when marking as completed
+      if (updateData.status === 'completed' && !updateData.session_summary) {
+        return res.status(400).json(
+          errorResponse('Session summary is required to mark session as completed')
+        );
+      }
     }
 
     // Only allow updating certain fields
@@ -539,7 +566,7 @@ const updateSession = async (req, res) => {
       allowedUpdates[key] === undefined && delete allowedUpdates[key]
     );
 
-    const { data: updatedSession, error } = await supabase
+    const { data: updatedSession, error } = await supabaseAdmin
       .from('sessions')
       .update({
         ...allowedUpdates,
@@ -571,12 +598,15 @@ const updateSession = async (req, res) => {
 // Get availability
 const getAvailability = async (req, res) => {
   try {
-    const { date, start_date, end_date, psychologist_id, target_psychologist_id } = req.query;
-    const psychologistId = psychologist_id || target_psychologist_id || req.user.id;
+    // SECURITY FIX: Always use authenticated psychologist's ID, ignore query parameters
+    // This prevents IDOR vulnerability where psychologists could view other psychologists' availability
+    const psychologistId = req.user.id;
+    const { date, start_date, end_date } = req.query;
 
     // Check if availability table exists and has proper relationships
+    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     try {
-      let query = supabase
+      let query = supabaseAdmin
         .from('availability')
         .select('*')
         .eq('psychologist_id', psychologistId);
@@ -754,7 +784,7 @@ const getAvailability = async (req, res) => {
       });
 
       // Get psychologist's Google Calendar credentials to check for blocked slots
-      const { data: psychologist, error: psychError } = await supabase
+      const { data: psychologist, error: psychError } = await supabaseAdmin
         .from('psychologists')
         .select('google_calendar_credentials')
         .eq('id', psychologistId)
@@ -961,7 +991,7 @@ const updateAvailability = async (req, res) => {
     let blockedSlots = [];
     
     try {
-      const { data: psychologist } = await supabase
+      const { data: psychologist } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologistId)
@@ -1004,7 +1034,7 @@ const updateAvailability = async (req, res) => {
     }
 
     // Check if availability already exists for this date
-    const { data: existingAvailability } = await supabase
+    const { data: existingAvailability } = await supabaseAdmin
       .from('availability')
       .select('id')
       .eq('psychologist_id', psychologistId)
@@ -1014,7 +1044,7 @@ const updateAvailability = async (req, res) => {
     let result;
     if (existingAvailability) {
       // Update existing availability with filtered slots
-      const { data: updatedAvailability, error } = await supabase
+      const { data: updatedAvailability, error } = await supabaseAdmin
         .from('availability')
         .update({
           time_slots: filteredTimeSlots,
@@ -1033,7 +1063,7 @@ const updateAvailability = async (req, res) => {
       result = updatedAvailability;
     } else {
       // Create new availability with filtered slots
-      const { data: newAvailability, error } = await supabase
+      const { data: newAvailability, error } = await supabaseAdmin
         .from('availability')
         .insert([{
           psychologist_id: psychologistId,
@@ -1086,7 +1116,7 @@ const addAvailability = async (req, res) => {
     }
 
     // Check if availability already exists for this date
-    const { data: existingAvailability } = await supabase
+    const { data: existingAvailability } = await supabaseAdmin
       .from('availability')
       .select('id')
       .eq('psychologist_id', psychologistId)
@@ -1104,7 +1134,7 @@ const addAvailability = async (req, res) => {
     let blockedSlots = [];
     
     try {
-      const { data: psychologist } = await supabase
+      const { data: psychologist } = await supabaseAdmin
         .from('psychologists')
         .select('id, first_name, last_name, google_calendar_credentials')
         .eq('id', psychologistId)
@@ -1147,7 +1177,7 @@ const addAvailability = async (req, res) => {
     }
 
     // Create new availability with filtered slots
-    const { data: newAvailability, error } = await supabase
+    const { data: newAvailability, error } = await supabaseAdmin
       .from('availability')
       .insert([{
         psychologist_id: psychologistId,
@@ -1194,7 +1224,7 @@ const deleteAvailability = async (req, res) => {
     const availabilityId = req.params.availabilityId;
 
     // Check if availability exists and belongs to this psychologist
-    const { data: existingAvailability, error: checkError } = await supabase
+    const { data: existingAvailability, error: checkError } = await supabaseAdmin
       .from('availability')
       .select('id')
       .eq('id', availabilityId)
@@ -1208,7 +1238,7 @@ const deleteAvailability = async (req, res) => {
     }
 
     // Delete the availability
-    const { error: deleteError } = await supabase
+    const { error: deleteError } = await supabaseAdmin
       .from('availability')
       .delete()
       .eq('id', availabilityId);
@@ -1239,7 +1269,7 @@ const getPackages = async (req, res) => {
 
     // Check if packages table exists and has proper relationships
     try {
-      const { data: packages, error } = await supabase
+      const { data: packages, error } = await supabaseAdmin
         .from('packages')
         .select('*')
         .eq('psychologist_id', psychologistId);
@@ -1285,7 +1315,7 @@ const createPackage = async (req, res) => {
     const psychologistId = req.user.id;
     const { package_type, price, description } = req.body;
 
-    const { data: package, error } = await supabase
+    const { data: package, error } = await supabaseAdmin
       .from('packages')
       .insert([{
         psychologist_id: psychologistId,
@@ -1322,8 +1352,17 @@ const updatePackage = async (req, res) => {
     const { packageId } = req.params;
     const updateData = req.body;
 
+    // SECURITY FIX: Validate price is positive if provided
+    if (updateData.price !== undefined) {
+      if (typeof updateData.price !== 'number' || updateData.price <= 0) {
+        return res.status(400).json(
+          errorResponse('Price must be a positive number greater than zero')
+        );
+      }
+    }
+
     // Check if package exists and belongs to psychologist
-    const { data: package } = await supabase
+    const { data: package } = await supabaseAdmin
       .from('packages')
       .select('*')
       .eq('id', packageId)
@@ -1336,7 +1375,7 @@ const updatePackage = async (req, res) => {
       );
     }
 
-    const { data: updatedPackage, error } = await supabase
+    const { data: updatedPackage, error } = await supabaseAdmin
       .from('packages')
       .update({
         ...updateData,
@@ -1372,7 +1411,7 @@ const deletePackage = async (req, res) => {
     const { packageId } = req.params;
 
     // Check if package exists and belongs to psychologist
-    const { data: package } = await supabase
+    const { data: package } = await supabaseAdmin
       .from('packages')
       .select('*')
       .eq('id', packageId)
@@ -1386,7 +1425,7 @@ const deletePackage = async (req, res) => {
     }
 
     // Check if package is being used in any sessions
-    const { data: sessions } = await supabase
+    const { data: sessions } = await supabaseAdmin
       .from('sessions')
       .select('id')
       .eq('package_id', packageId)
@@ -1398,7 +1437,7 @@ const deletePackage = async (req, res) => {
       );
     }
 
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('packages')
       .delete()
       .eq('id', packageId);
@@ -1449,7 +1488,7 @@ const completeSession = async (req, res) => {
     }
 
     // First, try to find it as a regular session
-    const { data: regularSession } = await supabase
+    const { data: regularSession } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1458,7 +1497,7 @@ const completeSession = async (req, res) => {
 
     if (regularSession) {
       // Update regular session
-      const { data: updatedSession, error } = await supabase
+      const { data: updatedSession, error } = await supabaseAdmin
         .from('sessions')
         .update(updateData)
         .eq('id', sessionId)
@@ -1530,7 +1569,7 @@ const respondToRescheduleRequest = async (req, res) => {
     const { action, newDate, newTime, reason } = req.body; // action: 'approve' or 'reject'
 
     // Check if session exists and belongs to psychologist
-    const { data: session } = await supabase
+    const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('*')
       .eq('id', sessionId)
@@ -1577,7 +1616,7 @@ const respondToRescheduleRequest = async (req, res) => {
     }
 
     // Update session
-    const { data: updatedSession, error } = await supabase
+    const { data: updatedSession, error } = await supabaseAdmin
       .from('sessions')
       .update(updateData)
       .eq('id', sessionId)
@@ -1608,7 +1647,8 @@ const scheduleAssessmentSession = async (req, res) => {
   try {
     const psychologistId = req.user.id;
     const { assessmentSessionId } = req.params;
-    const { scheduled_date, scheduled_time, target_psychologist_id } = req.body;
+    // SECURITY FIX: Remove target_psychologist_id from request body - force self-assignment
+    const { scheduled_date, scheduled_time } = req.body;
 
     if (!scheduled_date || !scheduled_time) {
       return res.status(400).json(
@@ -1636,16 +1676,9 @@ const scheduleAssessmentSession = async (req, res) => {
       );
     }
 
-    // Require target_psychologist_id to be provided (cannot be null)
-    // This ensures the session is assigned to a specific psychologist
-    if (!target_psychologist_id) {
-      return res.status(400).json(
-        errorResponse('target_psychologist_id is required to schedule this session')
-      );
-    }
-
-    // Use the provided target psychologist ID (any psychologist from the system)
-    const targetPsychologistId = target_psychologist_id;
+    // SECURITY FIX: Force self-assignment to prevent arbitrary reassignment
+    // Psychologists can only schedule sessions for themselves
+    const targetPsychologistId = psychologistId;
 
     // Check conflicts for TARGET psychologist
     const { data: conflictingAssessmentSessions } = await supabaseAdmin
@@ -1752,7 +1785,7 @@ const deleteSession = async (req, res) => {
     const psychologistId = req.user.id;
     const { sessionId } = req.params;
 
-    const { data: existing, error: fetchError } = await supabase
+    const { data: existing, error: fetchError } = await supabaseAdmin
       .from('sessions')
       .select('id, payment_id')
       .eq('id', sessionId)
@@ -1767,7 +1800,7 @@ const deleteSession = async (req, res) => {
 
     // Delete related payment records (if any)
     try {
-      await supabase
+      await supabaseAdmin
         .from('payments')
         .delete()
         .eq('session_id', sessionId);
@@ -1775,7 +1808,7 @@ const deleteSession = async (req, res) => {
       console.warn('⚠️  Failed to delete related payments for session:', sessionId, payErr?.message);
     }
 
-    const { error: delError } = await supabase
+    const { error: delError } = await supabaseAdmin
       .from('sessions')
       .delete()
       .eq('id', sessionId);
@@ -1831,7 +1864,7 @@ const deleteAssessmentSession = async (req, res) => {
 
     // Delete related payment records (if any)
     try {
-      await supabase
+      await supabaseAdmin
         .from('payments')
         .delete()
         .eq('assessment_session_id', assessmentSessionId);

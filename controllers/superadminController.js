@@ -1,15 +1,16 @@
-const supabase = require('../config/supabase');
 const { supabaseAdmin } = require('../config/supabase');
 const { 
   successResponse, 
   errorResponse,
   hashPassword
 } = require('../utils/helpers');
+const { validatePassword } = require('../utils/passwordPolicy');
+const auditLogger = require('../utils/auditLogger');
 
 // Create admin user
 const createAdmin = async (req, res) => {
   try {
-    const { email, password, first_name, last_name } = req.body;
+    let { email, password, first_name, last_name } = req.body;
 
     if (!email || !password || !first_name || !last_name) {
       return res.status(400).json(
@@ -17,8 +18,24 @@ const createAdmin = async (req, res) => {
       );
     }
 
-    // Check if user already exists
-    const { data: existingUser } = await supabase
+    // SECURITY FIX: Validate and normalize email
+    email = email.trim().toLowerCase();
+    if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      return res.status(400).json(
+        errorResponse('Valid email address is required')
+      );
+    }
+
+    // SECURITY FIX: Validate password policy BEFORE hashing
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return res.status(400).json(
+        errorResponse('Password does not meet requirements', passwordValidation.errors)
+      );
+    }
+
+    // Check if user already exists (use normalized email)
+    const { data: existingUser } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('email', email)
@@ -30,11 +47,11 @@ const createAdmin = async (req, res) => {
       );
     }
 
-    // Hash password
+    // Hash password (after validation)
     const hashedPassword = await hashPassword(password);
 
     // Create admin user
-    const { data: user, error: userError } = await supabase
+    const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .insert([{
         email,
@@ -50,6 +67,17 @@ const createAdmin = async (req, res) => {
         errorResponse('Failed to create admin user')
       );
     }
+
+    // SECURITY FIX: Audit log admin creation (with error handling for resilience)
+    auditLogger.logRequest(req, 'CREATE_ADMIN', 'user', user.id, {
+      target_user_email: user.email,
+      target_user_role: user.role,
+      created_by: req.user.id,
+      created_by_email: req.user.email
+    }).catch(err => {
+      console.error('Failed to log CREATE_ADMIN audit:', err);
+      // Don't throw - audit logging failure shouldn't break the request
+    });
 
     res.status(201).json(
       successResponse(user, 'Admin user created successfully')
@@ -68,10 +96,23 @@ const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Check if user exists
+    // CRITICAL FIX: TOCTOU protection - Re-verify superadmin role from DB before operation
+    const { data: freshSuperAdminUser } = await supabaseAdmin
+      .from('users')
+      .select('role')
+      .eq('id', req.user.id)
+      .single();
+
+    if (!freshSuperAdminUser || freshSuperAdminUser.role !== 'superadmin') {
+      return res.status(403).json(
+        errorResponse('Privilege revoked. Superadmin access required.')
+      );
+    }
+
+    // Check if user exists - store role and email for audit log
     const { data: user } = await supabaseAdmin
       .from('users')
-      .select('id, role')
+      .select('id, role, email')
       .eq('id', userId)
       .single();
 
@@ -87,6 +128,10 @@ const deleteUser = async (req, res) => {
         errorResponse('Cannot delete superadmin user')
       );
     }
+
+    // Store user info for audit log before deletion
+    const deletedUserRole = user.role;
+    const deletedUserEmail = user.email;
 
     // If client, delete all related data first
     if (user.role === 'client') {
@@ -196,6 +241,17 @@ const deleteUser = async (req, res) => {
 
     console.log(`   ✅ Deleted user account`);
 
+    // SECURITY FIX: Audit log user deletion (with error handling for resilience)
+    auditLogger.logRequest(req, 'DELETE_USER', 'user', userId, {
+      target_user_email: deletedUserEmail,
+      target_user_role: deletedUserRole,
+      deleted_by: req.user.id,
+      deleted_by_email: req.user.email
+    }).catch(err => {
+      console.error('Failed to log DELETE_USER audit:', err);
+      // Don't throw - audit logging failure shouldn't break the request
+    });
+
     res.json(
       successResponse(null, 'User and all related data deleted successfully')
     );
@@ -211,19 +267,85 @@ const deleteUser = async (req, res) => {
 // Get comprehensive platform analytics
 const getPlatformAnalytics = async (req, res) => {
   try {
-    const { start_date, end_date } = req.query;
+    // SECURITY FIX: Add pagination and date filtering
+    const { start_date, end_date, limit, offset } = req.query;
+    
+    // Validate and set pagination defaults
+    const queryLimit = Math.min(parseInt(limit) || 1000, 10000); // Default 1000, max 10000
+    const queryOffset = parseInt(offset) || 0;
+
+    if (queryLimit > 10000) {
+      return res.status(400).json(
+        errorResponse('Limit cannot exceed 10000')
+      );
+    }
+
+    // SECURITY FIX: Validate date inputs to prevent silent query errors
+    if (start_date) {
+      const startDateObj = new Date(start_date);
+      if (isNaN(startDateObj.getTime())) {
+        return res.status(400).json(
+          errorResponse('Invalid start_date format. Use ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)')
+        );
+      }
+    }
+    if (end_date) {
+      const endDateObj = new Date(end_date);
+      if (isNaN(endDateObj.getTime())) {
+        return res.status(400).json(
+          errorResponse('Invalid end_date format. Use ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)')
+        );
+      }
+    }
+    // Validate date range (end_date should be after start_date if both provided)
+    if (start_date && end_date) {
+      const startDateObj = new Date(start_date);
+      const endDateObj = new Date(end_date);
+      if (endDateObj < startDateObj) {
+        return res.status(400).json(
+          errorResponse('end_date must be after or equal to start_date')
+        );
+      }
+    }
+
+    // Build queries with date filtering and pagination
+    // Use supabaseAdmin to bypass RLS (superadmin endpoint, proper auth already checked)
+    let usersQuery = supabaseAdmin.from('users').select('role, created_at', { count: 'exact' });
+    let sessionsQuery = supabaseAdmin.from('sessions').select('status, scheduled_date, price, created_at', { count: 'exact' });
+    let psychologistsQuery = supabaseAdmin.from('psychologists').select('area_of_expertise, created_at', { count: 'exact' });
+    let clientsQuery = supabaseAdmin.from('clients').select('child_age, created_at', { count: 'exact' });
+
+    // Apply date filtering if provided
+    if (start_date) {
+      usersQuery = usersQuery.gte('created_at', start_date);
+      sessionsQuery = sessionsQuery.gte('scheduled_date', start_date);
+      psychologistsQuery = psychologistsQuery.gte('created_at', start_date);
+      clientsQuery = clientsQuery.gte('created_at', start_date);
+    }
+    if (end_date) {
+      usersQuery = usersQuery.lte('created_at', end_date);
+      sessionsQuery = sessionsQuery.lte('scheduled_date', end_date);
+      psychologistsQuery = psychologistsQuery.lte('created_at', end_date);
+      clientsQuery = clientsQuery.lte('created_at', end_date);
+    }
+
+    // Apply pagination
+    usersQuery = usersQuery.range(queryOffset, queryOffset + queryLimit - 1);
+    sessionsQuery = sessionsQuery.range(queryOffset, queryOffset + queryLimit - 1);
+    psychologistsQuery = psychologistsQuery.range(queryOffset, queryOffset + queryLimit - 1);
+    clientsQuery = clientsQuery.range(queryOffset, queryOffset + queryLimit - 1);
 
     // Get comprehensive statistics
     const [
-      { data: users, error: usersError },
-      { data: sessions, error: sessionsError },
-      { data: psychologists, error: psychologistsError },
-      { data: clients, error: clientsError }
+      { data: users, error: usersError, count: usersCount },
+      { data: sessions, error: sessionsError, count: sessionsCount },
+      { data: psychologists, error: psychologistsError, count: psychologistsCount },
+      { data: clients, error: clientsError, count: clientsCount }
     ] = await Promise.all([
-      supabase.from('users').select('role, created_at'),
-      supabase.from('sessions').select('status, scheduled_date, price, created_at'),
-      supabase.from('psychologists').select('area_of_expertise, created_at'),
-      supabase.from('clients').select('child_age, created_at')
+      usersQuery,
+      sessionsQuery,
+      psychologistsQuery,
+      clientsQuery
     ]);
 
     if (usersError || sessionsError || psychologistsError || clientsError) {
@@ -236,9 +358,17 @@ const getPlatformAnalytics = async (req, res) => {
     // Calculate comprehensive analytics
     const analytics = {
       overview: {
-        total_users: users.length,
-        total_sessions: sessions.length,
-        total_revenue: sessions.reduce((sum, session) => sum + parseFloat(session.price || 0), 0)
+        total_users: usersCount || users?.length || 0,
+        total_sessions: sessionsCount || sessions?.length || 0,
+        total_revenue: (sessions || []).reduce((sum, session) => sum + parseFloat(session.price || 0), 0),
+        pagination: {
+          limit: queryLimit,
+          offset: queryOffset,
+          users_returned: users?.length || 0,
+          sessions_returned: sessions?.length || 0,
+          psychologists_returned: psychologists?.length || 0,
+          clients_returned: clients?.length || 0
+        }
       },
       users: {
         by_role: {},
@@ -254,7 +384,7 @@ const getPlatformAnalytics = async (req, res) => {
         revenue_trends: {}
       },
       psychologists: {
-        total: psychologists.length,
+        total: psychologistsCount || psychologists?.length || 0,
         expertise_distribution: {},
         performance_metrics: {}
       },
@@ -275,7 +405,7 @@ const getPlatformAnalytics = async (req, res) => {
     const currentQuarter = Math.floor(currentMonth / 3);
 
     // User analytics
-    users.forEach(user => {
+    (users || []).forEach(user => {
       analytics.users.by_role[user.role] = (analytics.users.by_role[user.role] || 0) + 1;
       
       const userDate = new Date(user.created_at);
@@ -291,7 +421,7 @@ const getPlatformAnalytics = async (req, res) => {
     });
 
     // Session analytics
-    sessions.forEach(session => {
+    (sessions || []).forEach(session => {
       analytics.sessions.by_status[session.status] = (analytics.sessions.by_status[session.status] || 0) + 1;
       
       const sessionDate = new Date(session.scheduled_date);
@@ -303,14 +433,14 @@ const getPlatformAnalytics = async (req, res) => {
     });
 
     // Psychologist analytics
-    psychologists.forEach(psychologist => {
+    (psychologists || []).forEach(psychologist => {
       psychologist.area_of_expertise?.forEach(expertise => {
         analytics.psychologists.expertise_distribution[expertise] = (analytics.psychologists.expertise_distribution[expertise] || 0) + 1;
       });
     });
 
     // Client analytics
-    clients.forEach(client => {
+    (clients || []).forEach(client => {
       const ageGroup = client.child_age <= 5 ? '0-5' : 
                       client.child_age <= 12 ? '6-12' : '13-18';
       analytics.clients.age_distribution[ageGroup] = (analytics.clients.age_distribution[ageGroup] || 0) + 1;
@@ -343,11 +473,26 @@ const getPlatformAnalytics = async (req, res) => {
 // System maintenance functions
 const systemMaintenance = async (req, res) => {
   try {
-    const { action, target } = req.body;
+    const { action, confirm } = req.body;
 
-    if (!action || !target) {
+    if (!action) {
       return res.status(400).json(
-        errorResponse('Action and target are required')
+        errorResponse('Action is required')
+      );
+    }
+
+    // SECURITY FIX: Require explicit confirmation for destructive actions
+    if (confirm !== true) {
+      return res.status(400).json(
+        errorResponse('Confirmation required. Set confirm: true for destructive operations')
+      );
+    }
+
+    // SECURITY FIX: Explicit allowlist of safe actions
+    const ALLOWED_ACTIONS = ['cleanup_old_sessions', 'recalculate_stats'];
+    if (!ALLOWED_ACTIONS.includes(action)) {
+      return res.status(400).json(
+        errorResponse(`Invalid action specified. Allowed actions: ${ALLOWED_ACTIONS.join(', ')}`)
       );
     }
 
@@ -358,7 +503,8 @@ const systemMaintenance = async (req, res) => {
         const oneYearAgo = new Date();
         oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
         
-        const { data: oldSessions, error: cleanupError } = await supabase
+        // SECURITY FIX: Use supabaseAdmin for delete operations (bypasses RLS)
+        const { error: cleanupError } = await supabaseAdmin
           .from('sessions')
           .delete()
           .lt('scheduled_date', oneYearAgo.toISOString().split('T')[0])
@@ -380,10 +526,22 @@ const systemMaintenance = async (req, res) => {
         break;
 
       default:
+        // This should not be reached due to allowlist check above, but keep for safety
         return res.status(400).json(
           errorResponse('Invalid action specified')
         );
     }
+
+    // SECURITY FIX: Audit log maintenance operations (with error handling for resilience)
+    auditLogger.logRequest(req, 'SYSTEM_MAINTENANCE', 'system', null, {
+      maintenance_action: action,
+      performed_by: req.user.id,
+      performed_by_email: req.user.email,
+      result: result
+    }).catch(err => {
+      console.error('Failed to log SYSTEM_MAINTENANCE audit:', err);
+      // Don't throw - audit logging failure shouldn't break the request
+    });
 
     res.json(
       successResponse(result, 'System maintenance completed successfully')
