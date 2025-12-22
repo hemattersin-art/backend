@@ -23,17 +23,48 @@ const generateReceiptPDF = async (receiptDetails) => {
     const fs = require('fs').promises;
     const path = require('path');
 
-    // Load the template PDF from frontend/public folder
-    // Path is relative to backend/controllers/, so go up two levels then into frontend/public
-    const templatePath = path.join(__dirname, '../../frontend/public/template.pdf');
+    // Load the template PDF - try multiple locations for production compatibility
+    // Priority: 1) backend/templates (production), 2) frontend/public (local), 3) env var
+    const templatePathBackend = path.join(__dirname, '../templates/template.pdf');
+    const templatePathFrontend = path.join(__dirname, '../../frontend/public/template.pdf');
+    const templatePathEnv = process.env.RECEIPT_TEMPLATE_PATH;
     
-    // Check if template exists, if not use fallback
+    let templatePath = null;
+    
+    // Try backend/templates first (most reliable in production)
     try {
-      await fs.access(templatePath);
+      await fs.access(templatePathBackend);
+      templatePath = templatePathBackend;
+      console.log('✅ Using template from backend/templates/template.pdf');
     } catch (err) {
-      console.log('⚠️ Template PDF not found at:', templatePath);
-      console.log('⚠️ Using fallback PDF generation method');
-      return generateReceiptPDFFallback(receiptDetails);
+      // Try frontend/public (for local development)
+      try {
+        await fs.access(templatePathFrontend);
+        templatePath = templatePathFrontend;
+        console.log('✅ Using template from frontend/public/template.pdf');
+      } catch (err2) {
+        // Try environment variable path
+        if (templatePathEnv) {
+          try {
+            await fs.access(templatePathEnv);
+            templatePath = templatePathEnv;
+            console.log('✅ Using template from RECEIPT_TEMPLATE_PATH:', templatePathEnv);
+          } catch (err3) {
+            console.log('⚠️ Template PDF not found in any location');
+            console.log('⚠️ Tried:', templatePathBackend);
+            console.log('⚠️ Tried:', templatePathFrontend);
+            console.log('⚠️ Tried:', templatePathEnv);
+            console.log('⚠️ Using fallback PDF generation method');
+            return generateReceiptPDFFallback(receiptDetails);
+          }
+        } else {
+          console.log('⚠️ Template PDF not found in any location');
+          console.log('⚠️ Tried:', templatePathBackend);
+          console.log('⚠️ Tried:', templatePathFrontend);
+          console.log('⚠️ Using fallback PDF generation method');
+          return generateReceiptPDFFallback(receiptDetails);
+        }
+      }
     }
     
     const templateBytes = await fs.readFile(templatePath);
