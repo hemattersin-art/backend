@@ -2975,6 +2975,39 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
+    // Update receipt with new session date and time
+    try {
+      const { data: receipt, error: receiptError } = await supabaseAdmin
+        .from('receipts')
+        .select('id, receipt_details')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+
+      if (!receiptError && receipt) {
+        // Update receipt_details JSON with new session date and time
+        const updatedReceiptDetails = {
+          ...receipt.receipt_details,
+          session_date: formatDate(new_date),
+          session_time: formatTime(new_time)
+        };
+
+        await supabaseAdmin
+          .from('receipts')
+          .update({
+            receipt_details: updatedReceiptDetails,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', receipt.id);
+
+        console.log('✅ Receipt updated with new session date and time');
+      } else if (receiptError && receiptError.code !== 'PGRST116') {
+        console.error('Error fetching receipt:', receiptError);
+      }
+    } catch (receiptUpdateError) {
+      console.error('Error updating receipt:', receiptUpdateError);
+      // Continue even if receipt update fails
+    }
+
     // Update Meet link if session has one
     if (session.meet_link && session.meet_link !== 'https://meet.google.com/new?hs=122&authuser=0') {
       try {
@@ -3797,6 +3830,39 @@ const handleRescheduleRequest = async (req, res) => {
         return res.status(500).json(
           errorResponse('Failed to reschedule session')
         );
+      }
+
+      // Update receipt with new session date and time
+      try {
+        const { data: receipt, error: receiptError } = await supabaseAdmin
+          .from('receipts')
+          .select('id, receipt_details')
+          .eq('session_id', session.id)
+          .maybeSingle();
+
+        if (!receiptError && receipt) {
+          // Update receipt_details JSON with new session date and time
+          const updatedReceiptDetails = {
+            ...receipt.receipt_details,
+            session_date: formatDate(newDate),
+            session_time: formatTime(newTime)
+          };
+
+          await supabaseAdmin
+            .from('receipts')
+            .update({
+              receipt_details: updatedReceiptDetails,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', receipt.id);
+
+          console.log('✅ Receipt updated with new session date and time');
+        } else if (receiptError && receiptError.code !== 'PGRST116') {
+          console.error('Error fetching receipt:', receiptError);
+        }
+      } catch (receiptUpdateError) {
+        console.error('Error updating receipt:', receiptUpdateError);
+        // Continue even if receipt update fails
       }
 
       // Get client user_id for notification - use supabaseAdmin

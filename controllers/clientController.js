@@ -437,10 +437,11 @@ const getSessions = async (req, res) => {
         `)
         .eq('client_id', clientId);
 
-      // Handle "upcoming" status specially (requires date/time filtering)
+      // Handle "upcoming" and "pending" status specially (requires date/time filtering)
       const isUpcomingFilter = status === 'upcoming';
+      const isPendingFilter = status === 'pending';
       
-      if (status && !isUpcomingFilter) {
+      if (status && !isUpcomingFilter && !isPendingFilter) {
         // Regular status filter
         query = query.eq('status', status);
       } else if (isUpcomingFilter) {
@@ -449,6 +450,10 @@ const getSessions = async (req, res) => {
         // Also filter by date: only sessions from today onwards
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
         query = query.gte('scheduled_date', today);
+      } else if (isPendingFilter) {
+        // For pending: sessions that are expired but not marked as completed/cancelled/no_show
+        // Include booked, scheduled, rescheduled, reschedule_requested statuses
+        query = query.in('status', ['booked', 'scheduled', 'rescheduled', 'reschedule_requested']);
       }
 
       // Ordering: upcoming sessions by nearest first, others by most recent first
@@ -459,10 +464,10 @@ const getSessions = async (req, res) => {
         query = query.order('scheduled_date', { ascending: false });
       }
 
-      // For upcoming, fetch a larger batch to filter properly, then paginate client-side
+      // For upcoming and pending, fetch a larger batch to filter properly, then paginate client-side
       // For regular queries, use standard pagination
       let sessions, upcomingTotalCount, sessionsCount = 0;
-      if (isUpcomingFilter) {
+      if (isUpcomingFilter || isPendingFilter) {
         // Fetch larger batch for upcoming (enough to get all upcoming sessions)
         const fetchLimit = 100;
         const { data: allSessions, error, count } = await query.limit(fetchLimit);
@@ -479,7 +484,7 @@ const getSessions = async (req, res) => {
         dayjs.extend(timezone);
 
         const now = dayjs().tz('Asia/Kolkata');
-        const filteredUpcoming = (allSessions || []).filter(session => {
+        const filteredSessions = (allSessions || []).filter(session => {
           if (!session.scheduled_date || !session.scheduled_time) {
             return false;
           }
@@ -490,29 +495,50 @@ const getSessions = async (req, res) => {
           const sessionDateTime = dayjs(`${session.scheduled_date}T${timeOnly}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
           const sessionEndDateTime = sessionDateTime.add(50, 'minute');
           
-          // Only include if session hasn't ended yet
-          return sessionEndDateTime.isAfter(now);
+          if (isUpcomingFilter) {
+            // For upcoming: only include if session hasn't ended yet
+            return sessionEndDateTime.isAfter(now);
+          } else if (isPendingFilter) {
+            // For pending: only include if session has ended (expired) but not marked as completed
+            return sessionEndDateTime.isBefore(now);
+          }
+          return false;
         });
         
-        // Sort by nearest first
-        filteredUpcoming.sort((a, b) => {
-          const timeA = a.scheduled_time || '00:00:00';
-          const timeOnlyA = timeA.split(' ')[0];
-          const dateA = dayjs(`${a.scheduled_date}T${timeOnlyA}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
-          
-          const timeB = b.scheduled_time || '00:00:00';
-          const timeOnlyB = timeB.split(' ')[0];
-          const dateB = dayjs(`${b.scheduled_date}T${timeOnlyB}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
-          
-          return dateA - dateB;
-        });
+        // Sort: upcoming by nearest first, pending by most recent first
+        if (isUpcomingFilter) {
+          filteredSessions.sort((a, b) => {
+            const timeA = a.scheduled_time || '00:00:00';
+            const timeOnlyA = timeA.split(' ')[0];
+            const dateA = dayjs(`${a.scheduled_date}T${timeOnlyA}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+            
+            const timeB = b.scheduled_time || '00:00:00';
+            const timeOnlyB = timeB.split(' ')[0];
+            const dateB = dayjs(`${b.scheduled_date}T${timeOnlyB}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+            
+            return dateA - dateB;
+          });
+        } else if (isPendingFilter) {
+          // Sort pending by most recent first (oldest expired sessions first)
+          filteredSessions.sort((a, b) => {
+            const timeA = a.scheduled_time || '00:00:00';
+            const timeOnlyA = timeA.split(' ')[0];
+            const dateA = dayjs(`${a.scheduled_date}T${timeOnlyA}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+            
+            const timeB = b.scheduled_time || '00:00:00';
+            const timeOnlyB = timeB.split(' ')[0];
+            const dateB = dayjs(`${b.scheduled_date}T${timeOnlyB}`, 'YYYY-MM-DDTHH:mm:ss').tz('Asia/Kolkata');
+            
+            return dateB - dateA; // Most recent first
+          });
+        }
         
         // Store total count for pagination
-        upcomingTotalCount = filteredUpcoming.length;
+        upcomingTotalCount = filteredSessions.length;
         
         // Apply pagination after filtering
         const offset = (page - 1) * limit;
-        sessions = filteredUpcoming.slice(offset, offset + limit);
+        sessions = filteredSessions.slice(offset, offset + limit);
       } else {
         // Regular pagination for non-upcoming
         // First get total count for pagination
@@ -540,7 +566,7 @@ const getSessions = async (req, res) => {
       // Also fetch assessment sessions (run in parallel with package fetching for better performance)
       // Only fetch if status filter allows (to reduce unnecessary queries)
       let assessmentSessions = [];
-      const shouldFetchAssessments = !status || ['upcoming', 'completed', 'cancelled', 'rescheduled'].includes(status);
+      const shouldFetchAssessments = !status || ['upcoming', 'completed', 'cancelled', 'rescheduled', 'pending'].includes(status);
       
       if (shouldFetchAssessments) {
       try {
@@ -2094,6 +2120,39 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
+    // Update receipt with new session date and time
+    try {
+      const { data: receipt, error: receiptError } = await supabaseAdmin
+        .from('receipts')
+        .select('id, receipt_details')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+
+      if (!receiptError && receipt) {
+        // Update receipt_details JSON with new session date and time
+        const updatedReceiptDetails = {
+          ...receipt.receipt_details,
+          session_date: formatDate(new_date),
+          session_time: formatTime(new_time)
+        };
+
+        await supabaseAdmin
+          .from('receipts')
+          .update({
+            receipt_details: updatedReceiptDetails,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', receipt.id);
+
+        console.log('✅ Receipt updated with new session date and time');
+      } else if (receiptError && receiptError.code !== 'PGRST116') {
+        console.error('Error fetching receipt:', receiptError);
+      }
+    } catch (receiptUpdateError) {
+      console.error('Error updating receipt:', receiptUpdateError);
+      // Continue even if receipt update fails
+    }
+
     // CRITICAL: Return response IMMEDIATELY after session update
     // All heavy operations (Meet link, emails, WhatsApp, availability) will run async
     res.json(
@@ -3411,8 +3470,17 @@ const bookRemainingSession = async (req, res) => {
       : Math.max(totalSessions - 1, 0);
     const updatedRemaining = Math.max(currentRemaining - 1, 0);
 
-    // Calculate completed sessions (total - remaining after this booking)
-    const completedSessions = totalSessions - updatedRemaining;
+    // Calculate completed sessions by counting actual completed sessions from database
+    // This ensures accuracy regardless of package size (3, 6, 8, etc.)
+    const { data: packageSessions, error: sessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, status')
+      .eq('package_id', clientPackage.package.id)
+      .eq('client_id', clientId);
+
+    const completedSessions = (!sessionsError && packageSessions)
+      ? packageSessions.filter(s => s.status === 'completed').length
+      : 0;
 
     // Update remaining sessions in client package
     const { error: updateError } = await supabaseAdmin
