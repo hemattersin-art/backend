@@ -648,8 +648,11 @@ const getSessions = async (req, res) => {
                 .eq('client_id', clientId);
               
             if (!sessionsError && allPackageSessions) {
-              // Count completed sessions per package
+              // Count ONLY completed sessions per package (exclude booked/scheduled/etc)
+              // This ensures the count only reflects truly completed sessions, not booked ones
               const completedCounts = allPackageSessions.reduce((acc, s) => {
+                // STRICTLY only count sessions with status === 'completed'
+                // Do not count 'booked', 'scheduled', 'rescheduled', or any other status
                 if (s.status === 'completed' && s.package_id) {
                   acc[s.package_id] = (acc[s.package_id] || 0) + 1;
                 }
@@ -664,6 +667,21 @@ const getSessions = async (req, res) => {
                 pkg.completed_sessions = completedSessions;
                 pkg.total_sessions = totalSessions;
                 pkg.remaining_sessions = Math.max(totalSessions - completedSessions, 0);
+                
+                // Debug log for package progress
+                if (process.env.NODE_ENV !== 'production') {
+                  console.log(`📦 Package ${pkgId} progress: ${completedSessions}/${totalSessions} completed, ${pkg.remaining_sessions} remaining`);
+                }
+              });
+            } else if (sessionsError) {
+              console.error('❌ Error fetching package sessions for progress:', sessionsError);
+              // Set default values if fetch fails
+              Object.keys(packagesMap).forEach(pkgId => {
+                const pkg = packagesMap[pkgId];
+                const totalSessions = pkg.session_count || 0;
+                pkg.completed_sessions = 0;
+                pkg.total_sessions = totalSessions;
+                pkg.remaining_sessions = totalSessions;
               });
             }
             }
@@ -3035,7 +3053,8 @@ const getClientPackages = async (req, res) => {
           id,
           first_name,
           last_name,
-          area_of_expertise
+          area_of_expertise,
+          cover_image_url
         )
       `)
       .eq('client_id', clientId)
@@ -3127,18 +3146,45 @@ const getClientPackages = async (req, res) => {
       }
     }
 
+    // Fetch all package sessions to calculate completed_sessions accurately
+    const { data: allPackageSessionsForCount, error: packageSessionsCountError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, package_id, status')
+      .eq('client_id', clientId)
+      .not('package_id', 'is', null);
+
+    // Group sessions by package_id and count completed ones
+    const completedCountsByPackage = {};
+    if (!packageSessionsCountError && allPackageSessionsForCount) {
+      allPackageSessionsForCount.forEach(session => {
+        if (session.package_id && session.status === 'completed') {
+          completedCountsByPackage[session.package_id] = (completedCountsByPackage[session.package_id] || 0) + 1;
+        }
+      });
+    }
+
     const normalizedPackages = (clientPackages || []).map(pkg => {
       const totalSessions = deriveSessionCount(pkg);
-
-      const remainingSessions = Number.isFinite(pkg.remaining_sessions) && pkg.remaining_sessions >= 0
+      
+      // Calculate completed_sessions by counting actual completed sessions
+      const completedSessions = completedCountsByPackage[pkg.package_id] || 0;
+      
+      // Calculate remaining_sessions for display: total - completed (sessions left to complete)
+      // This is different from the database remaining_sessions which tracks sessions left to book
+      const remainingSessionsForDisplay = Math.max(totalSessions - completedSessions, 0);
+      
+      // Keep the database remaining_sessions for booking logic (sessions left to book)
+      const remainingSessionsForBooking = Number.isFinite(pkg.remaining_sessions) && pkg.remaining_sessions >= 0
         ? pkg.remaining_sessions
         : Math.max(totalSessions - 1, 0);
 
       return {
         ...pkg,
         total_sessions: totalSessions,
-        remaining_sessions: remainingSessions,
-        status: remainingSessions === 0 ? 'completed' : (pkg.status || 'active')
+        completed_sessions: completedSessions,
+        remaining_sessions: remainingSessionsForDisplay, // For display: sessions left to complete
+        remaining_sessions_for_booking: remainingSessionsForBooking, // For booking logic: sessions left to book
+        status: remainingSessionsForDisplay === 0 ? 'completed' : (pkg.status || 'active')
       };
     });
 
@@ -3258,6 +3304,32 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
+    // Double-check: Verify slot isn't already booked in sessions table (race condition protection)
+    const formattedDate = formatDate(scheduled_date);
+    const formattedTime = formatTime(scheduled_time);
+    const { data: existingSession, error: checkError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, status')
+      .eq('psychologist_id', psychologistId)
+      .eq('scheduled_date', formattedDate)
+      .eq('scheduled_time', formattedTime)
+      .in('status', ['booked', 'scheduled', 'reschedule_requested', 'rescheduled'])
+      .maybeSingle();
+
+    if (checkError) {
+      console.error('Error checking existing session:', checkError);
+      return res.status(500).json(
+        errorResponse('Error verifying slot availability')
+      );
+    }
+
+    if (existingSession) {
+      console.log('⚠️ Slot already booked - race condition detected');
+      return res.status(409).json(
+        errorResponse('This time slot was just booked by another user. Please select another time.')
+      );
+    }
+
     // Get client and psychologist details for Google Calendar
     const { data: clientDetails, error: clientDetailsError } = await supabaseAdmin
       .from('clients')
@@ -3265,6 +3337,7 @@ const bookRemainingSession = async (req, res) => {
         first_name, 
         last_name, 
         child_name,
+        phone_number,
         user:users(email)
       `)
       .eq('id', clientId)
@@ -3291,49 +3364,10 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
-    // Create Google Calendar event with real Meet link
-    let meetData = null;
-    try {
-      console.log('🔄 Creating real Google Meet link for package session...');
-      
-      const sessionData = {
-        summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
-        description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
-        startDate: scheduled_date,
-        startTime: scheduled_time,
-        endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
-      };
-
-      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
-      
-      if (meetResult.success) {
-        meetData = {
-          meetLink: meetResult.meetLink,
-          eventId: meetResult.eventId,
-          calendarLink: meetResult.eventLink || null,
-          method: meetResult.method
-        };
-        console.log('✅ Real Meet link created successfully:', meetResult);
-      } else {
-        meetData = {
-          meetLink: meetResult.meetLink, // Fallback link
-          eventId: null,
-          calendarLink: null,
-          method: 'fallback'
-        };
-        console.log('⚠️ Using fallback Meet link:', meetResult.meetLink);
-      }
-    } catch (meetError) {
-      console.error('❌ Meet link creation failed:', meetError);
-      meetData = {
-        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
-        eventId: null,
-        calendarLink: null,
-        method: 'error'
-      };
-    }
-
-    // Create session record
+    // Create session record first (use fallback Meet link initially to prevent timeout)
+    // Meet link will be created asynchronously after response is sent
+    const fallbackMeetLink = 'https://meet.google.com/new?hs=122&authuser=0';
+    
     const sessionData = {
       client_id: clientId,
       psychologist_id: psychologistId,
@@ -3341,9 +3375,9 @@ const bookRemainingSession = async (req, res) => {
       scheduled_date: formatDate(scheduled_date),
       scheduled_time: formatTime(scheduled_time),
       status: 'booked',
-      google_calendar_event_id: meetData.eventId,
-      google_meet_link: meetData.meetLink,
-      google_calendar_link: meetData.calendarLink,
+      google_calendar_event_id: null, // Will be updated async
+      google_meet_link: fallbackMeetLink, // Fallback initially, will be updated async
+      google_calendar_link: null, // Will be updated async
       price: 0 // Free since it's from a package
     };
 
@@ -3355,8 +3389,19 @@ const bookRemainingSession = async (req, res) => {
 
     if (sessionError) {
       console.error('Session creation failed:', sessionError);
+      
+      // Check if it's a duplicate key violation (double booking)
+      if (sessionError.code === '23505' || 
+          sessionError.message?.includes('unique') || 
+          sessionError.message?.includes('duplicate')) {
+        console.log('⚠️ Double booking detected - slot was just booked by another user');
+        return res.status(409).json(
+          errorResponse('This time slot was just booked by another user. Please select another time.')
+        );
+      }
+      
       return res.status(500).json(
-        errorResponse('Failed to create session')
+        errorResponse('Failed to create session', { error: sessionError.message })
       );
     }
 
@@ -3396,117 +3441,189 @@ const bookRemainingSession = async (req, res) => {
       packageType: clientPackage.package?.package_type || null
     };
 
-    // Send email notifications
-    try {
-      const emailService = require('../utils/emailService');
-
-      await emailService.sendSessionConfirmation({
-        clientEmail: clientDetails.email || 'client@placeholder.com',
-        psychologistEmail: psychologistDetails?.email || 'psychologist@placeholder.com',
-        clientName,
-        psychologistName,
-        sessionId: session.id,
-        scheduledDate: scheduled_date,
-        scheduledTime: scheduled_time,
-        meetLink: meetData.meetLink,
-        price: 0,
-        packageInfo: packageInfo
-      });
-      console.log('✅ Email notifications sent successfully');
-    } catch (emailError) {
-      console.error('❌ Error sending email notifications:', emailError);
-      // Continue even if email fails
-    }
-
-    // Send WhatsApp messages to client and psychologist via UltraMsg
-    try {
-      console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
-      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-
-      // Send WhatsApp to client
-      const clientPhone = clientDetails.phone_number || null;
-      if (clientPhone && meetData?.meetLink) {
-        // Only include childName if child_name exists and is not empty/null/'Pending'
-        const childName = clientDetails.child_name && 
-          clientDetails.child_name.trim() !== '' && 
-          clientDetails.child_name.toLowerCase() !== 'pending'
-          ? clientDetails.child_name 
-          : null;
-        
-        const clientDetails_wa = {
-          childName: childName,
-          date: scheduled_date,
-          time: scheduled_time,
-          meetLink: meetData.meetLink,
-          psychologistName: psychologistName, // Add psychologist name to WhatsApp message
-          packageInfo: packageInfo
-        };
-        const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
-        if (clientWaResult?.success) {
-          console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
-        } else if (clientWaResult?.skipped) {
-          console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
-        } else {
-          console.warn('⚠️ Client WhatsApp send failed');
-        }
-      } else {
-        console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
-      }
-
-      // Send WhatsApp to psychologist
-      const psychologistPhone = psychologistDetails.phone || null;
-      if (psychologistPhone && meetData?.meetLink) {
-        let psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\n`;
-        
-        // Add package information if it's a package session
-        if (packageInfo && packageInfo.totalSessions) {
-          psychologistMessage += `📦 Package Session: ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} completed, ${packageInfo.remainingSessions || 0} remaining\n\n`;
-        }
-        
-        psychologistMessage += `Join via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
-        
-        const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
-        if (psychologistWaResult?.success) {
-          console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
-        } else if (psychologistWaResult?.skipped) {
-          console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
-        } else {
-          console.warn('⚠️ Psychologist WhatsApp send failed');
-        }
-      } else {
-        console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
-      }
-      
-      console.log('✅ WhatsApp messages sent successfully via UltraMsg');
-    } catch (waError) {
-      console.error('❌ Error sending WhatsApp messages:', waError);
-      // Continue even if WhatsApp sending fails
-    }
-
-    console.log('✅ Remaining session booked successfully');
-    
-    // PRIORITY: Check and send reminder immediately if remaining session booking is 2 hours away
-    // This gives new bookings priority over batch reminder processing
-    try {
-      const sessionReminderService = require('../services/sessionReminderService');
-      // Run asynchronously to not block the response
-      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
-        console.error('❌ Error in priority reminder check:', err);
-        // Don't block response - reminder will be sent in next hourly check
-      });
-    } catch (reminderError) {
-      console.error('❌ Error initiating priority reminder check:', reminderError);
-      // Don't block response
-    }
-    
-    res.status(201).json(
+    // Send response immediately (don't wait for Meet link or notifications)
+    res.json(
       successResponse({
         session,
-        meetLink: meetData.meetLink,
-        calendarLink: meetData.calendarLink,
-        remaining_sessions: clientPackage.remaining_sessions - 1
-      }, 'Session booked successfully from package')
+        message: 'Session booked successfully',
+        packageInfo: {
+          totalSessions,
+          completedSessions,
+          remainingSessions: updatedRemaining
+        }
+      })
     );
+    
+    // All remaining code runs asynchronously (after response is sent)
+    // Use setImmediate to ensure response is sent first
+    setImmediate(async () => {
+      try {
+        // Create Meet link asynchronously (after response is sent - doesn't block user)
+        console.log('🔄 Creating real Google Meet link for package session (async)...');
+        
+        const meetSessionData = {
+          summary: `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
+          description: `Therapy session between ${clientDetails?.child_name || clientDetails?.first_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'} ${psychologistDetails?.last_name || ''}`,
+          startDate: scheduled_date,
+          startTime: scheduled_time,
+          endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
+        };
+
+        // Try to get psychologist OAuth tokens for better Meet link creation
+        let userAuth = null;
+        const { data: psychologistWithAuth } = await supabaseAdmin
+          .from('psychologists')
+          .select('google_calendar_credentials')
+          .eq('id', psychologistId)
+          .single();
+
+        if (psychologistWithAuth?.google_calendar_credentials) {
+          const credentials = psychologistWithAuth.google_calendar_credentials;
+          userAuth = {
+            access_token: credentials.access_token,
+            refresh_token: credentials.refresh_token,
+            expiry_date: credentials.expiry_date
+          };
+          console.log('✅ Using psychologist OAuth tokens for Meet link creation');
+        }
+
+        const meetResult = await meetLinkService.generateSessionMeetLink(meetSessionData, userAuth);
+        
+        if (meetResult.success) {
+          const meetData = {
+            meetLink: meetResult.meetLink,
+            eventId: meetResult.eventId,
+            calendarLink: meetResult.eventLink || null,
+            method: meetResult.method
+          };
+          console.log('✅ Real Meet link created successfully (async):', meetResult);
+          
+          // Update session with real Meet link
+          await supabaseAdmin
+            .from('sessions')
+            .update({
+              google_calendar_event_id: meetData.eventId,
+              google_meet_link: meetData.meetLink,
+              google_meet_join_url: meetData.meetLink,
+              google_meet_start_url: meetData.meetLink,
+              google_calendar_link: meetData.calendarLink,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', session.id);
+          
+          console.log('✅ Session updated with real Meet link');
+        } else {
+          console.log('⚠️ Meet link creation failed (async), keeping fallback');
+        }
+
+        // Send email notifications (use fallback link initially)
+        try {
+          const emailService = require('../utils/emailService');
+
+          await emailService.sendSessionConfirmation({
+            clientEmail: clientDetails.user?.email || clientDetails.email || 'client@placeholder.com',
+            psychologistEmail: psychologistDetails?.email || 'psychologist@placeholder.com',
+            clientName,
+            psychologistName,
+            sessionId: session.id,
+            scheduledDate: scheduled_date,
+            scheduledTime: scheduled_time,
+            meetLink: fallbackMeetLink, // Will be updated async if real link is created
+            price: 0,
+            status: 'booked',
+            psychologistId: psychologistId,
+            clientId: clientId,
+            packageInfo: packageInfo
+          });
+          console.log('✅ Email notifications sent successfully');
+        } catch (emailError) {
+          console.error('❌ Error sending email notifications:', emailError);
+          // Continue even if email fails
+        }
+
+        // Send WhatsApp messages to client and psychologist via UltraMsg
+        try {
+          console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
+          const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+
+          // Send WhatsApp to client
+          const clientPhone = clientDetails.phone_number || null;
+          if (clientPhone && fallbackMeetLink) {
+            // Only include childName if child_name exists and is not empty/null/'Pending'
+            const childName = clientDetails.child_name && 
+              clientDetails.child_name.trim() !== '' && 
+              clientDetails.child_name.toLowerCase() !== 'pending'
+              ? clientDetails.child_name 
+              : null;
+            
+            const clientDetails_wa = {
+              childName: childName,
+              date: scheduled_date,
+              time: scheduled_time,
+              meetLink: fallbackMeetLink, // Will be updated async if real link is created
+              psychologistName: psychologistName,
+              packageInfo: packageInfo
+            };
+            const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
+            if (clientWaResult?.success) {
+              console.log('✅ WhatsApp confirmation sent to client via UltraMsg');
+            } else if (clientWaResult?.skipped) {
+              console.log('ℹ️ Client WhatsApp skipped:', clientWaResult.reason);
+            } else {
+              console.warn('⚠️ Client WhatsApp send failed');
+            }
+          } else {
+            console.log('ℹ️ No client phone or meet link; skipping client WhatsApp');
+          }
+
+          // Send WhatsApp to psychologist
+          const psychologistPhone = psychologistDetails.phone || null;
+          if (psychologistPhone && fallbackMeetLink) {
+            let psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\n`;
+            
+            // Add package information if it's a package session
+            if (packageInfo && packageInfo.totalSessions) {
+              psychologistMessage += `📦 Package Session: ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} completed, ${packageInfo.remainingSessions || 0} remaining\n\n`;
+            }
+            
+            psychologistMessage += `Join via Google Meet: ${fallbackMeetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+            
+            const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+            if (psychologistWaResult?.success) {
+              console.log('✅ WhatsApp notification sent to psychologist via UltraMsg');
+            } else if (psychologistWaResult?.skipped) {
+              console.log('ℹ️ Psychologist WhatsApp skipped:', psychologistWaResult.reason);
+            } else {
+              console.warn('⚠️ Psychologist WhatsApp send failed');
+            }
+          } else {
+            console.log('ℹ️ No psychologist phone or meet link; skipping psychologist WhatsApp');
+          }
+          
+          console.log('✅ WhatsApp messages sent successfully via UltraMsg');
+        } catch (waError) {
+          console.error('❌ Error sending WhatsApp messages:', waError);
+          // Continue even if WhatsApp sending fails
+        }
+
+        console.log('✅ Remaining session booked successfully');
+        // PRIORITY: Check and send reminder immediately if remaining session booking is 2 hours away
+        // This gives new bookings priority over batch reminder processing
+        try {
+          const sessionReminderService = require('../services/sessionReminderService');
+          // Run asynchronously to not block the response
+          sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+            console.error('❌ Error in priority reminder check:', err);
+            // Don't block response - reminder will be sent in next hourly check
+          });
+        } catch (reminderError) {
+          console.error('❌ Error initiating priority reminder check:', reminderError);
+          // Don't block response
+        }
+      } catch (asyncError) {
+        console.error('❌ Error in async post-booking operations:', asyncError);
+      }
+    });
 
   } catch (error) {
     console.error('Error booking remaining session:', error);
