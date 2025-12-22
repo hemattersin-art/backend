@@ -263,18 +263,58 @@ const processPaymentCaptured = async (payload, eventId, skipSignatureCheck = fal
       }
     }
 
-    // Update slot lock to PAYMENT_SUCCESS
-    const updateResult = await updateSlotLockStatus(orderId, 'PAYMENT_SUCCESS', {
-      paymentId,
-      signature: payment.signature || null
-    });
+    // EDGE CASE HANDLING: Payment succeeds after slot lock expired/failed
+    // If slot lock is FAILED or EXPIRED, check if slot is still available
+    let slotLockUpdated = false;
+    if (slotLock.status === 'FAILED' || slotLock.status === 'EXPIRED') {
+      console.log('⚠️ Slot lock is FAILED/EXPIRED but payment succeeded - checking slot availability');
+      
+      // Check if slot is still available (no conflicting sessions)
+      const { data: conflictingSessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('psychologist_id', slotLock.psychologist_id)
+        .eq('scheduled_date', slotLock.scheduled_date)
+        .eq('scheduled_time', slotLock.scheduled_time)
+        .in('status', ['booked', 'upcoming', 'rescheduled']);
+      
+      if (conflictingSessions && conflictingSessions.length > 0) {
+        console.error('❌ Slot already booked by another user - cannot create session');
+        return {
+          success: false,
+          message: 'This time slot was just booked by another user. Your payment will be refunded.',
+          error: 'SLOT_ALREADY_BOOKED'
+        };
+      }
+      
+      console.log('✅ Slot is still available - proceeding with session creation');
+      // Update slot lock to PAYMENT_SUCCESS to proceed
+      const updateResult = await updateSlotLockStatus(orderId, 'PAYMENT_SUCCESS', {
+        paymentId,
+        signature: payment.signature || null
+      });
+      
+      if (updateResult.success) {
+        slotLockUpdated = true;
+        slotLock.status = 'PAYMENT_SUCCESS'; // Update local reference
+      } else {
+        console.warn('⚠️ Failed to update FAILED slot lock to PAYMENT_SUCCESS, but continuing');
+      }
+    }
+    
+    // Update slot lock to PAYMENT_SUCCESS (if not already updated above)
+    if (!slotLockUpdated) {
+      const updateResult = await updateSlotLockStatus(orderId, 'PAYMENT_SUCCESS', {
+        paymentId,
+        signature: payment.signature || null
+      });
 
-    if (!updateResult.success) {
-      console.error('❌ Failed to update slot lock status');
-      return {
-        success: false,
-        message: 'Failed to update slot lock'
-      };
+      if (!updateResult.success) {
+        console.error('❌ Failed to update slot lock status');
+        // Don't return error - try to proceed with session creation anyway
+        // The session creation will fail if slot is not available
+        console.warn('⚠️ Continuing with session creation despite slot lock update failure');
+      }
     }
 
     // Verify payment amount matches expected amount

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/adminController');
 const assessmentBookingController = require('../controllers/assessmentBookingController');
+const sessionController = require('../controllers/sessionController');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { createRateLimiters } = require('../middleware/security');
 const { requireRequestSignature } = require('../middleware/requestSigning');
@@ -80,6 +81,9 @@ router.get('/debug/stuck-slot-locks', adminController.getStuckSlotLocks);
 router.post('/users', requireRequestSignature, adminController.createUser);
 router.put('/users/:userId', adminController.updateUser);
 router.delete('/users/:userId', requireRequestSignature, adminController.deleteUser);
+
+// Session management
+router.get('/sessions/all', sessionController.getAllSessions);
 
 // Session rescheduling
 router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession);

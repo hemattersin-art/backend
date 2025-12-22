@@ -2677,18 +2677,38 @@ const handlePaymentFailure = async (req, res) => {
     }
 
     // Update payment status to failed
+    // Note: error_message column may not exist in all schemas, so we only update if column exists
+    const updateData = {
+      status: 'failed',
+      razorpay_response: params,
+      failed_at: new Date().toISOString()
+    };
+    
+    // Only include error_message if it exists (will be stored in razorpay_response anyway)
+    // Remove error_message field to avoid schema errors
+    
     const { error: paymentFailedUpdateError } = await supabaseAdmin
       .from('payments')
-      .update({
-        status: 'failed',
-        razorpay_response: params,
-        error_message: error?.description || error?.reason || 'Payment failed',
-        failed_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', paymentRecord.id);
 
     if (paymentFailedUpdateError) {
       console.error('Error updating payment status to failed:', paymentFailedUpdateError);
+      // If update fails due to missing column, try without optional fields
+      if (paymentFailedUpdateError.message?.includes('error_message')) {
+        console.log('⚠️ Retrying without error_message column');
+        const { error: retryError } = await supabaseAdmin
+          .from('payments')
+          .update({
+            status: 'failed',
+            razorpay_response: params,
+            failed_at: new Date().toISOString()
+          })
+          .eq('id', paymentRecord.id);
+        if (retryError) {
+          console.error('Error on retry:', retryError);
+        }
+      }
     }
 
     // Release slot lock if it exists
