@@ -26,9 +26,9 @@ function validatePassword(password) {
     return { valid: false, errors: ['Password is required'] };
   }
 
-  // Minimum length: 12 characters
-  if (password.length < 12) {
-    errors.push('Password must be at least 12 characters long');
+  // Minimum length: 8 characters
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters long');
   }
 
   // Maximum length: 128 characters (prevent DoS)
@@ -89,9 +89,9 @@ function getPasswordStrength(password) {
   let score = 0;
 
   // Length bonus (max 25 points)
+  if (password.length >= 8) score += 10;
   if (password.length >= 12) score += 10;
-  if (password.length >= 16) score += 10;
-  if (password.length >= 20) score += 5;
+  if (password.length >= 16) score += 5;
 
   // Character variety (max 40 points)
   if (/[a-z]/.test(password)) score += 10;
