@@ -461,7 +461,7 @@ const getSessions = async (req, res) => {
 
       // For upcoming, fetch a larger batch to filter properly, then paginate client-side
       // For regular queries, use standard pagination
-      let sessions, upcomingTotalCount;
+      let sessions, upcomingTotalCount, sessionsCount = 0;
       if (isUpcomingFilter) {
         // Fetch larger batch for upcoming (enough to get all upcoming sessions)
         const fetchLimit = 100;
@@ -515,9 +515,19 @@ const getSessions = async (req, res) => {
         sessions = filteredUpcoming.slice(offset, offset + limit);
       } else {
         // Regular pagination for non-upcoming
+        // First get total count for pagination
+        const countQuery = supabaseAdmin
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .eq('client_id', clientId)
+          .eq('status', status);
+        const { count: totalSessionsCount } = await countQuery;
+        sessionsCount = totalSessionsCount || 0;
+        
+        // Then get paginated results
         const offset = (page - 1) * limit;
         query = query.range(offset, offset + limit - 1);
-        const { data: fetchedSessions, error, count } = await query;
+        const { data: fetchedSessions, error } = await query;
         
         if (error) {
           throw error;
@@ -534,7 +544,7 @@ const getSessions = async (req, res) => {
       
       if (shouldFetchAssessments) {
       try {
-        const assessQuery = supabaseAdmin
+        let assessQuery = supabaseAdmin
           .from('assessment_sessions')
           .select(`
             id,
@@ -565,12 +575,12 @@ const getSessions = async (req, res) => {
         
           if (status && status !== 'upcoming') {
             // For non-upcoming, apply status filter directly
-          assessQuery.eq('status', status);
+            assessQuery = assessQuery.eq('status', status);
           } else if (status === 'upcoming') {
             // For upcoming, exclude completed/cancelled
-            assessQuery.not('status', 'in', '(completed,cancelled,no_show,noshow)');
+            assessQuery = assessQuery.not('status', 'in', '(completed,cancelled,no_show,noshow)');
             const today = new Date().toISOString().split('T')[0];
-            assessQuery.gte('scheduled_date', today);
+            assessQuery = assessQuery.gte('scheduled_date', today);
         }
         
         const { data: assessData } = await assessQuery.order('scheduled_date', { ascending: false });
@@ -679,9 +689,27 @@ const getSessions = async (req, res) => {
 
       // Calculate total count for pagination
       // Assessment sessions are already filtered for upcoming, so just use length
+      // For non-upcoming, get assessment count separately
+      let assessmentCount = 0;
+      if (!isUpcomingFilter && status && shouldFetchAssessments) {
+        try {
+          const { count: assessCount } = await supabaseAdmin
+            .from('assessment_sessions')
+            .select('*', { count: 'exact', head: true })
+            .eq('client_id', clientId)
+            .eq('status', status);
+          assessmentCount = assessCount || 0;
+        } catch (countError) {
+          // If count query fails, use length of fetched assessment sessions as fallback
+          assessmentCount = assessmentSessions.length;
+        }
+      } else {
+        assessmentCount = assessmentSessions.length;
+      }
+      
       const totalCount = isUpcomingFilter 
         ? (upcomingTotalCount || 0) + assessmentSessions.length
-        : ((count || 0) + assessmentSessions.length);
+        : (sessionsCount + assessmentCount);
 
       res.json(
         successResponse({

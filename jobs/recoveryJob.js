@@ -25,7 +25,10 @@ const userInteractionLogger = require('../utils/userInteractionLogger');
  */
 const runRecoveryJob = async () => {
   try {
-    console.log('🔄 Starting recovery job...');
+    // Only log in non-production to reduce log noise
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🔄 Starting recovery job...');
+    }
     const startTime = Date.now();
 
     // Find slot locks that have PAYMENT_SUCCESS but no session created
@@ -52,7 +55,10 @@ const runRecoveryJob = async () => {
     }
 
     if (!slotLocks || slotLocks.length === 0) {
-      console.log('✅ No slot locks need recovery');
+      // Only log in non-production to reduce log noise
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('✅ No slot locks need recovery');
+      }
       return {
         success: true,
         processed: 0,
@@ -185,7 +191,10 @@ const runRecoveryJob = async () => {
     }
 
     const duration = Date.now() - startTime;
-    console.log(`✅ Recovery job completed: ${processed} processed, ${errors} errors (${duration}ms)`);
+    // Only log if there's work done or errors, or in non-production
+    if (processed > 0 || errors > 0 || process.env.NODE_ENV !== 'production') {
+      console.log(`✅ Recovery job completed: ${processed} processed, ${errors} errors (${duration}ms)`);
+    }
 
     return {
       success: true,
@@ -213,7 +222,10 @@ const runRecoveryJob = async () => {
  * @param {number} intervalMinutes - Interval in minutes (default: 5)
  */
 const startRecoveryScheduler = (intervalMinutes = 5) => {
-  console.log(`⏰ Starting recovery job scheduler (every ${intervalMinutes} minutes)`);
+  // Only log startup in non-production
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`⏰ Starting recovery job scheduler (every ${intervalMinutes} minutes)`);
+  }
 
   // Run immediately on start
   runRecoveryJob().catch(err => {

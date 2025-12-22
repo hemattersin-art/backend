@@ -15,6 +15,7 @@ const { errorResponse } = require('../utils/helpers');
 
 const SLOT_HOLD_DURATION_MINUTES = 5; // 5 minutes to complete payment
 const SLOT_EXTENDED_DURATION_MINUTES = 15; // Extended duration after payment initiation (total 15 min)
+const MAX_RETRIES = 3; // Maximum retries to prevent infinite loops
 
 /**
  * Hold a slot for booking (called before payment initiation)
@@ -27,13 +28,23 @@ const SLOT_EXTENDED_DURATION_MINUTES = 15; // Extended duration after payment in
  * @param {string} params.orderId - Razorpay order_id
  * @returns {Promise<Object>} { success: boolean, data?: slotLock, error?: string }
  */
-const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime, orderId }) => {
+const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime, orderId }, retryCount = 0) => {
   try {
+    // Prevent infinite retry loops
+    if (retryCount > MAX_RETRIES) {
+      console.error('❌ Max retries exceeded for slot lock - aborting to prevent infinite loop');
+      return {
+        success: false,
+        error: 'Failed to reserve slot after multiple attempts. Please try again.'
+      };
+    }
+
     console.log('🔒 Attempting to hold slot:', {
       psychologistId,
       scheduledDate,
       scheduledTime,
-      orderId: orderId?.substring(0, 10) + '...'
+      orderId: orderId?.substring(0, 10) + '...',
+      retryCount
     });
 
     // Calculate expiry time (5 minutes from now)
@@ -116,8 +127,55 @@ const holdSlot = async ({ psychologistId, clientId, scheduledDate, scheduledTime
       // Check if it's a unique constraint violation (race condition)
       if (insertError.code === '23505' || insertError.message?.includes('unique')) {
         console.log('⚠️ Race condition detected - slot was just locked by another request');
-        // Retry check
-        return holdSlot({ psychologistId, clientId, scheduledDate, scheduledTime, orderId });
+        
+        // Re-check existing locks to see if it's a different order or same order (idempotent)
+        const { data: raceConditionLocks, error: recheckError } = await supabaseAdmin
+          .from('slot_locks')
+          .select('id, status, order_id, slot_expires_at, client_id')
+          .eq('psychologist_id', psychologistId)
+          .eq('scheduled_date', scheduledDate)
+          .eq('scheduled_time', scheduledTime)
+          .in('status', ['SLOT_HELD', 'PAYMENT_PENDING', 'PAYMENT_SUCCESS', 'SESSION_CREATED']);
+
+        if (!recheckError && raceConditionLocks && raceConditionLocks.length > 0) {
+          const raceLock = raceConditionLocks[0];
+          const raceLockExpiresAt = new Date(raceLock.slot_expires_at);
+          
+          // Check if lock is still active
+          if (raceLockExpiresAt > now) {
+            // If it's the same client and order, allow (idempotent retry)
+            if (raceLock.client_id === clientId && raceLock.order_id === orderId) {
+              console.log('✅ Same client and order after race condition - allowing idempotent retry');
+              return {
+                success: true,
+                data: raceLock,
+                isExisting: true
+              };
+            } else {
+              // Different order - real conflict
+              console.log('❌ Slot locked by different order after race condition');
+              return {
+                success: false,
+                error: 'This time slot is already booked by another user. Please select another time.',
+                conflict: true
+              };
+            }
+          }
+        }
+        
+        // If no active lock found, retry with backoff (with retry limit)
+        if (retryCount < MAX_RETRIES) {
+          // Small delay before retry to allow transaction to commit
+          await new Promise(resolve => setTimeout(resolve, 50 * (retryCount + 1)));
+          return holdSlot({ psychologistId, clientId, scheduledDate, scheduledTime, orderId }, retryCount + 1);
+        } else {
+          console.error('❌ Max retries reached after race condition');
+          return {
+            success: false,
+            error: 'Failed to reserve slot after multiple attempts. Please try again.',
+            conflict: true
+          };
+        }
       }
 
       console.error('❌ Error creating slot lock:', insertError);

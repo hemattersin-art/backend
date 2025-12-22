@@ -122,7 +122,7 @@ const getClientReceipts = async (req, res) => {
           id: r.id, // Use receipt ID instead of session ID for proper download
           receipt_id: r.id,
           session_id: session.id,
-          receipt_number: r.receipt_number,
+          receipt_number: r.short_receipt_number || r.receipt_number, // Use short_receipt_number if available
           session_date: session.scheduled_date,
           session_time: session.scheduled_time,
           psychologist_name: psych ? `${psych.first_name} ${psych.last_name}` : 'Unknown',

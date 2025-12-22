@@ -143,8 +143,6 @@ router.post('/trigger-calendar-conflict-check', async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // File uploads (admin only)
 // Store in Supabase Storage bucket 'psychologists' and return public URL
 const memoryStorage = multer.memoryStorage();
@@ -211,3 +209,5 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
     return res.status(500).json({ success: false, error: 'Failed to upload file' });
   }
 });
+
+module.exports = router;

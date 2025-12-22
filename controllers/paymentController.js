@@ -141,9 +141,10 @@ const generateReceiptPDF = async (receiptDetails) => {
       
       // Field positions with alignment (exact coordinates from demo PDF)
       fields: {
-        receiptNumberLabel: { x: 435, y: 666, alignment: 'left' },
-        receiptNumberValue: { x: 435, y: 651, alignment: 'left' },
-        receiptDate: { x: 485, y: 691, alignment: 'left' },
+        receiptNumberLabel: { x: 435, y: 671, alignment: 'left' }, // Moved down by 5px (was 676)
+        receiptNumberValue: { x: 435, y: 671, alignment: 'right' }, // Same Y as label
+        receiptDateLabel: { x: 435, y: 686, alignment: 'left' }, // Moved down by 10px (was 696), reduced gap to 15px
+        receiptDate: { x: 480, y: 686, alignment: 'left' }, // Same Y as label
         clientName: { x: 60, y: 665, alignment: 'left' },
         clientEmail: { x: 60, y: 648, alignment: 'left' },
         clientPhone: { x: 60, y: 631, alignment: 'left' },
@@ -265,29 +266,49 @@ const generateReceiptPDF = async (receiptDetails) => {
       config.fields.receiptNumberLabel.alignment
     );
     
-    // Receipt Number Value (10px below label, left aligned, bold)
-    // Wrap text if too long (max width ~150px to fit within page bounds at x:435)
-    const receiptNumberMaxWidth = 150;
+    // Calculate position for receipt number value: right after the colon with a small gap
+    const receiptNumberLabelText = 'Receipt No:';
+    const receiptNumberLabelWidth = helveticaFont.widthOfTextAtSize(receiptNumberLabelText, config.fontSizes.label);
+    const receiptNumberValueIndent = config.fields.receiptNumberLabel.x + receiptNumberLabelWidth + 3; // 3px gap after colon
+    
+    // Receipt Number Value (right after colon, same Y position, bold)
     drawText(
       receiptDetails.receipt_number, 
-      config.fields.receiptNumberValue.x, 
+      receiptNumberValueIndent, 
       config.fields.receiptNumberValue.y, 
       config.fontSizes.value,
       true, // bold
-      config.fields.receiptNumberValue.alignment,
-      receiptNumberMaxWidth,
+      'left', // left-aligned from receiptNumberValueIndent
+      null, // no max width
       config.fontSizes.lineHeight
     );
 
-    // Receipt Date (top right, below receipt number, left aligned)
+    // Receipt Date Label (below receipt number, left aligned, same font as receipt label)
+    drawText(
+      'Date:', 
+      config.fields.receiptDateLabel.x, 
+      config.fields.receiptDateLabel.y, 
+      config.fontSizes.label,
+      false,
+      config.fields.receiptDateLabel.alignment
+    );
+    
+    // Calculate position for date value: right after the colon with a small gap
+    const dateLabelText = 'Date:';
+    const dateLabelWidth = helveticaFont.widthOfTextAtSize(dateLabelText, config.fontSizes.label);
+    const dateValueIndent = config.fields.receiptDateLabel.x + dateLabelWidth + 3; // 3px gap after colon
+    
+    // Receipt Date Value (right after colon, same Y as date label)
     const receiptDateStr = new Date(receiptDetails.payment_date || new Date()).toLocaleDateString('en-IN');
     drawText(
       receiptDateStr, 
-      config.fields.receiptDate.x, 
+      dateValueIndent, // Small gap after colon
       config.fields.receiptDate.y, 
       config.fontSizes.value,
       false,
-      config.fields.receiptDate.alignment
+      'left', // left-aligned
+      null,
+      config.fontSizes.lineHeight
     );
 
     // Client Name (left side, left aligned, bold) - moved up
@@ -528,6 +549,71 @@ const generateReceiptPDFFallback = async (receiptDetails) => {
 };
 
 /**
+ * Generate next sequential short receipt number in format RCP-000001, RCP-000002, etc.
+ * Queries the receipts table to find the highest existing number and increments it.
+ * 
+ * @returns {Promise<string>} Next receipt number in format RCP-XXXXXX (6 digits)
+ */
+const generateNextShortReceiptNumber = async (retryCount = 0) => {
+  const maxRetries = 3;
+  
+  try {
+    // Query for the maximum short_receipt_number
+    const { data: receipts, error } = await supabaseAdmin
+      .from('receipts')
+      .select('short_receipt_number')
+      .not('short_receipt_number', 'is', null)
+      .order('short_receipt_number', { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error('❌ Error fetching receipts for short receipt number generation:', error);
+      // Fallback: use timestamp-based number if query fails
+      const timestamp = Date.now();
+      return `RCP-${(timestamp % 1000000).toString().padStart(6, '0')}`;
+    }
+
+    let maxNumber = 0;
+
+    if (receipts && receipts.length > 0 && receipts[0].short_receipt_number) {
+      // Extract numeric part from RCP-XXXXXX format
+      const receiptNumber = receipts[0].short_receipt_number;
+      const match = receiptNumber.match(/^RCP-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNumber) {
+          maxNumber = num;
+        }
+      }
+    }
+
+    // Increment and format (start from 1 if no receipts found)
+    const nextNumber = maxNumber + 1;
+    const shortReceiptNumber = `RCP-${nextNumber.toString().padStart(6, '0')}`;
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`✅ Generated next short receipt number: ${shortReceiptNumber} (previous max: ${maxNumber || 'none'})`);
+    }
+    return shortReceiptNumber;
+  } catch (error) {
+    console.error('❌ Error generating short receipt number:', error);
+    
+    // Retry on certain errors
+    if (retryCount < maxRetries && error.code !== '23505') { // 23505 is unique violation
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`⚠️ Retrying short receipt number generation (attempt ${retryCount + 1}/${maxRetries})`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1))); // Exponential backoff
+      return generateNextShortReceiptNumber(retryCount + 1);
+    }
+    
+    // Fallback: use timestamp-based number if generation fails after retries
+    const timestamp = Date.now();
+    return `RCP-${(timestamp % 1000000).toString().padStart(6, '0')}`;
+  }
+};
+
+/**
  * Generate receipt PDF and store receipt details in database (without storing PDF file)
  * PDF is generated, sent via email/WhatsApp, then discarded
  */
@@ -535,6 +621,15 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
   try {
     // Generate unique receipt number (shorter format: R-XXXX instead of RCP-XXXXXX)
     const receiptNumber = `R-${sessionData.id.toString().padStart(4, '0')}`;
+    
+    // Generate short receipt number using last 6 digits extracted from session ID (UUID)
+    // Extract all numeric digits from session ID and take the last 6
+    const sessionIdStr = sessionData.id.toString();
+    // Remove hyphens and extract only numeric digits (0-9)
+    const numericDigits = sessionIdStr.replace(/-/g, '').replace(/[^0-9]/g, '');
+    // Take last 6 digits, or pad with zeros if less than 6 digits
+    const last6Digits = numericDigits.slice(-6).padStart(6, '0');
+    const shortReceiptNumber = `RCP-${last6Digits}`;
     
     // Determine if it's a package or individual session
     const isPackage = paymentData.package_id && 
@@ -600,7 +695,8 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     
     // Prepare receipt details to store in database (as JSON/text)
     const receiptDetails = {
-      receipt_number: receiptNumber,
+      receipt_number: shortReceiptNumber, // Use short receipt number for display
+      receipt_number_long: receiptNumber, // Keep original for reference
       session_date: sessionData.scheduled_date,
       session_time: sessionData.scheduled_time,
       session_status: sessionData.status || 'booked',
@@ -630,7 +726,8 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     const receiptData = {
       session_id: sessionData.id,
       payment_id: paymentData.id,
-      receipt_number: receiptNumber,
+      receipt_number: receiptNumber, // Keep original receipt_number column for backward compatibility
+      short_receipt_number: shortReceiptNumber, // New short receipt number (RCP-000001 format)
       receipt_details: receiptDetails, // Store as JSON/text
       file_path: null, // Legacy: PDFs are not stored anymore
       file_url: null, // Legacy: PDFs are not stored anymore
@@ -667,7 +764,8 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     // Return receipt info with PDF buffer (PDF will be sent then discarded)
     return { 
       success: true, 
-      receiptNumber, 
+      receiptNumber: shortReceiptNumber, // Return short receipt number as primary
+      receiptNumberLong: receiptNumber, // Keep original for reference
       pdfBuffer: pdfBuffer, // PDF buffer for email/WhatsApp (will be discarded after sending)
       receiptDetails: receiptDetails // Receipt details stored in database
     };
@@ -1044,9 +1142,10 @@ const createPaymentOrder = async (req, res) => {
       });
     }
 
-    console.log('✅ Payment record created successfully:', paymentRecord.id);
-    
-    console.log('📤 Sending payment response to frontend...');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('✅ Payment record created successfully:', paymentRecord.id);
+      console.log('📤 Sending payment response to frontend...');
+    }
     
     // Prepare response data
     const responseData = {
@@ -1076,7 +1175,9 @@ const createPaymentOrder = async (req, res) => {
     // Send response - ensure it completes
     try {
       res.json(responseData);
-      console.log('✅ Payment response sent successfully');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('✅ Payment response sent successfully');
+      }
     } catch (responseError) {
       console.error('❌ Error sending payment response:', responseError);
       // Try to send error response if json() failed

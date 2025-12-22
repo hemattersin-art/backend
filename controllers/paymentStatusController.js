@@ -35,7 +35,9 @@ const getBookingStatusByOrderId = async (req, res) => {
       });
     }
 
-    console.log('🔍 Checking booking status for order:', orderId?.substring(0, 10) + '...');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🔍 Checking booking status for order:', orderId?.substring(0, 10) + '...');
+    }
 
     // Get payment record first (always check this)
     const { data: paymentRecord } = await supabaseAdmin
@@ -185,16 +187,18 @@ const getBookingStatusByOrderId = async (req, res) => {
         ? 'processing' // Session exists but meet link not yet created (async process)
         : 'none';
     
-    console.log('📊 Session lookup result:', {
-      hasSession: !!session,
-      sessionId: session?.id || null,
-      paymentSessionId: paymentRecord?.session_id || null,
-      slotLockStatus: slotLock?.status || null,
-      sessionStatus: session?.status || null,
-      meetLinkStatus: meetLinkStatus,
-      hasMeetLink: !!session?.google_meet_link,
-      meetLink: session?.google_meet_link ? session.google_meet_link.substring(0, 30) + '...' : null
-    });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('📊 Session lookup result:', {
+        hasSession: !!session,
+        sessionId: session?.id || null,
+        paymentSessionId: paymentRecord?.session_id || null,
+        slotLockStatus: slotLock?.status || null,
+        sessionStatus: session?.status || null,
+        meetLinkStatus: meetLinkStatus,
+        hasMeetLink: !!session?.google_meet_link,
+        meetLink: session?.google_meet_link ? session.google_meet_link.substring(0, 30) + '...' : null
+      });
+    }
 
     // CRITICAL: If slot is SLOT_HELD and payment is pending for > 30 seconds,
     // check Razorpay directly (webhook might not have fired in test mode)

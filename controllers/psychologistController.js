@@ -1466,10 +1466,23 @@ const completeSession = async (req, res) => {
   try {
     const psychologistId = req.user.id;
     const { sessionId } = req.params;
-    const { session_summary, session_notes, status = 'completed' } = req.body;
+    // Accept both frontend format (summary, report, summary_notes) and backend format (session_summary, session_notes)
+    const { 
+      summary, 
+      report, 
+      summary_notes,
+      session_summary, 
+      session_notes, 
+      status = 'completed' 
+    } = req.body;
+
+    // Use frontend format if provided, otherwise fall back to backend format
+    const finalSummary = summary || session_summary;
+    const finalNotes = summary_notes || session_notes;
+    const finalReport = report || ''; // Report is optional
 
     // Validate required fields
-    if (!session_summary || session_summary.trim().length === 0) {
+    if (!finalSummary || finalSummary.trim().length === 0) {
       return res.status(400).json(
         errorResponse('Session summary is required')
       );
@@ -1478,13 +1491,21 @@ const completeSession = async (req, res) => {
     // Prepare update data
     const updateData = {
       status: status,
-      session_summary: session_summary.trim(),
+      session_summary: finalSummary.trim(),
       updated_at: new Date().toISOString()
     };
 
     // Add session notes if provided (optional)
-    if (session_notes && session_notes.trim().length > 0) {
-      updateData.session_notes = session_notes.trim();
+    if (finalNotes && finalNotes.trim().length > 0) {
+      updateData.session_notes = finalNotes.trim();
+    }
+
+    // Add report if provided (stored in summary_notes or as a separate field if the schema supports it)
+    // For now, append report to summary_notes if report is provided separately
+    if (finalReport && finalReport.trim().length > 0) {
+      updateData.session_notes = (updateData.session_notes || '') + 
+        (updateData.session_notes ? '\n\n--- Report ---\n' : '') + 
+        finalReport.trim();
     }
 
     // First, try to find it as a regular session
