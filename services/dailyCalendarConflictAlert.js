@@ -103,14 +103,14 @@ class CalendarConflictMonitorService {
    * Format time to HH:MM
    */
   formatTime(date) {
-    return dayjs(date).tz('Asia/Kolkata').format('HH:mm');
+    return dayjs(date).utc().tz('Asia/Kolkata').format('HH:mm');
   }
 
   /**
    * Format date to YYYY-MM-DD
    */
   formatDate(date) {
-    return dayjs(date).tz('Asia/Kolkata').format('YYYY-MM-DD');
+    return dayjs(date).utc().tz('Asia/Kolkata').format('YYYY-MM-DD');
   }
 
   /**
@@ -121,16 +121,16 @@ class CalendarConflictMonitorService {
     if (!time24Hour) return false;
     
     const [hours, minutes] = time24Hour.split(':').map(Number);
-    const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
+    // Parse the slot time directly in IST timezone (not convert to IST)
+    const slotStart = dayjs.tz(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`, 'Asia/Kolkata');
     const slotEnd = slotStart.add(60, 'minutes');
 
     return calendarEvents.some(event => {
       // event.start and event.end are Date objects from getBusyTimeSlots
       // Date objects are stored internally as UTC milliseconds
-      // dayjs will automatically parse them correctly, then we convert to IST
-      // Don't use .utc() first - let dayjs handle the Date object directly
-      const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-      const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+      // Parse as UTC first, then convert to IST for accurate timezone handling
+      const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+      const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
       
       // Check for actual overlap
       return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
@@ -209,8 +209,8 @@ class CalendarConflictMonitorService {
         
         // Get calendar events for this date (convert to IST first for accurate date comparison)
         const dayEvents = activeEvents.filter(event => {
-          // Date objects are already in correct format, just convert to IST for date comparison
-          const eventStartIST = dayjs(event.start).tz('Asia/Kolkata');
+          // Parse as UTC first, then convert to IST for accurate timezone handling
+          const eventStartIST = dayjs(event.start).utc().tz('Asia/Kolkata');
           const eventDate = eventStartIST.format('YYYY-MM-DD');
           return eventDate === dateStr;
         });
@@ -224,17 +224,19 @@ class CalendarConflictMonitorService {
             const time24Hour = this.convertTo24Hour(slotTime);
             if (!time24Hour) continue; // Skip invalid times
             const [hours, minutes] = time24Hour.split(':').map(Number);
-            const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
+            // Parse the slot time directly in IST timezone (not convert to IST)
+            const slotStart = dayjs.tz(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`, 'Asia/Kolkata');
             const slotEnd = slotStart.add(60, 'minutes');
             
             const conflictingEvents = dayEvents.filter(event => {
-              const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-              const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+              // Parse as UTC first, then convert to IST for accurate timezone handling
+              const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+              const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
               return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);
             }).map(e => ({
               title: e.title,
-              start: dayjs(e.start).tz('Asia/Kolkata').format('HH:mm'),
-              end: dayjs(e.end).tz('Asia/Kolkata').format('HH:mm'),
+              start: dayjs(e.start).utc().tz('Asia/Kolkata').format('HH:mm'),
+              end: dayjs(e.end).utc().tz('Asia/Kolkata').format('HH:mm'),
               status: e.status || 'confirmed'
             }));
             
@@ -258,8 +260,9 @@ class CalendarConflictMonitorService {
           if (event.status === 'cancelled') continue;
           if (excludedEventTitles.some(excluded => event.title && event.title.includes(excluded))) continue;
           
-          const eventStart = dayjs(event.start).tz('Asia/Kolkata');
-          const eventEnd = dayjs(event.end).tz('Asia/Kolkata');
+          // Parse as UTC first, then convert to IST for accurate timezone handling
+          const eventStart = dayjs(event.start).utc().tz('Asia/Kolkata');
+          const eventEnd = dayjs(event.end).utc().tz('Asia/Kolkata');
           const eventStartTime = eventStart.format('HH:mm');
           const eventEndTime = eventEnd.format('HH:mm');
           
@@ -270,7 +273,8 @@ class CalendarConflictMonitorService {
             if (!time24Hour) return false;
             
             const [hours, minutes] = time24Hour.split(':').map(Number);
-            const slotStart = dayjs(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`).tz('Asia/Kolkata');
+            // Parse the slot time directly in IST timezone (not convert to IST)
+            const slotStart = dayjs.tz(`${dateStr} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`, 'Asia/Kolkata');
             const slotEnd = slotStart.add(60, 'minutes');
             
             return slotStart.isBefore(eventEnd) && slotEnd.isAfter(eventStart);

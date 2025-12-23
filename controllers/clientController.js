@@ -3243,7 +3243,8 @@ const getClientPackages = async (req, res) => {
         completed_sessions: completedSessions,
         remaining_sessions: remainingSessionsForDisplay, // For display: sessions left to complete
         remaining_sessions_for_booking: remainingSessionsForBooking, // For booking logic: sessions left to book
-        status: remainingSessionsForDisplay === 0 ? 'completed' : (pkg.status || 'active')
+        status: remainingSessionsForDisplay === 0 ? 'completed' : (pkg.status || 'active'),
+        currency: pkg.currency || 'INR' // Default to INR (can be enhanced to fetch from payment later)
       };
     });
 
