@@ -131,9 +131,34 @@ class TokenRevocationService {
               console.warn('⚠️ revoked_tokens table not found. Using cache/memory only.');
               return false;
             }
-            // For other errors, fail secure (reject token)
-            console.error('❌ Database error checking token revocation:', error);
-            return true; // Fail secure: reject token if check fails
+            
+            // Check if it's a timeout/connection error (Cloudflare 522, network issues)
+            const errorMessage = error.message || '';
+            const isTimeoutError = errorMessage.includes('522') || 
+                                  errorMessage.includes('Connection timed out') ||
+                                  errorMessage.includes('timeout') ||
+                                  errorMessage.includes('ETIMEDOUT') ||
+                                  errorMessage.includes('ECONNREFUSED') ||
+                                  errorMessage.includes('ENOTFOUND') ||
+                                  errorMessage.includes('<!DOCTYPE html>'); // HTML error page (Cloudflare)
+            
+            if (isTimeoutError) {
+              // Network/timeout error - fail-open (allow token) for availability
+              // Cache/memory checks above provide protection if available
+              console.warn('⚠️ Database timeout checking token revocation (allowing token):', 
+                errorMessage.substring(0, 100) + (errorMessage.length > 100 ? '...' : ''));
+              return false; // Fail-open: Allow token if database check fails due to timeout
+            }
+            
+            // For other database errors, log cleanly and fail-open
+            console.error('❌ Database error checking token revocation (allowing token):', {
+              message: error.message?.substring(0, 200) || 'Unknown error',
+              code: error.code,
+              details: error.details,
+              hint: error.hint
+            });
+            // Fail-open: Allow token if database check fails (cache/memory still provides protection)
+            return false;
           }
 
           if (data) {
@@ -149,9 +174,27 @@ class TokenRevocationService {
             return true;
           }
         } catch (dbError) {
-          // Database error - fail secure (reject token)
-          console.error('❌ Error checking token revocation in database:', dbError);
-          return true; // Fail secure: reject token if check fails
+          // Check if it's a timeout/connection error
+          const errorMessage = dbError.message || String(dbError);
+          const isTimeoutError = errorMessage.includes('522') || 
+                                errorMessage.includes('Connection timed out') ||
+                                errorMessage.includes('timeout') ||
+                                errorMessage.includes('ETIMEDOUT') ||
+                                errorMessage.includes('ECONNREFUSED') ||
+                                errorMessage.includes('ENOTFOUND') ||
+                                errorMessage.includes('<!DOCTYPE html>'); // HTML error page (Cloudflare)
+          
+          if (isTimeoutError) {
+            // Network/timeout error - fail-open (allow token) for availability
+            console.warn('⚠️ Database timeout checking token revocation (allowing token):', 
+              errorMessage.substring(0, 100) + (errorMessage.length > 100 ? '...' : ''));
+          } else {
+            // Other errors - log cleanly
+            console.error('❌ Error checking token revocation in database (allowing token):', 
+              errorMessage.substring(0, 200) + (errorMessage.length > 200 ? '...' : ''));
+          }
+          // Fail-open: Allow token if check fails (cache/memory still provides protection)
+          return false;
         }
       }
 
