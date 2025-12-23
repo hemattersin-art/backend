@@ -369,7 +369,25 @@ const generateReceiptPDF = async (receiptDetails) => {
     }
 
     // Item Description (Individual Therapy or Package Session, left aligned)
-    const itemDescription = receiptDetails.item_description || 'Therapy Session';
+    // Use item_description from receiptDetails, but also check is_package flag as fallback
+    let itemDescription = receiptDetails.item_description;
+    
+    // Fallback: if item_description is missing or is the old default, check is_package flag
+    if (!itemDescription || itemDescription === 'Therapy Session' || itemDescription === 'Individual Therapy') {
+      if (receiptDetails.is_package === true || receiptDetails.is_package === 'true') {
+        itemDescription = 'Package';
+      } else if (!itemDescription) {
+        itemDescription = 'Individual Therapy';
+      }
+    }
+    
+    console.log('🔍 PDF Generation - Item Description:', {
+      item_description: receiptDetails.item_description,
+      is_package: receiptDetails.is_package,
+      final_itemDescription: itemDescription,
+      quantity: receiptDetails.quantity
+    });
+    
     drawText(
       itemDescription, 
       config.fields.itemDescription.x, 
@@ -401,7 +419,24 @@ const generateReceiptPDF = async (receiptDetails) => {
     );
 
     // Quantity (center aligned) - dynamic based on package or individual
-    const quantity = receiptDetails.quantity || '1';
+    // For packages: shows package total (3, 6, etc.), for individual: shows 1
+    let quantity = receiptDetails.quantity;
+    
+    // Fallback: if quantity is missing or is '1' but it's a package, try to determine from is_package flag
+    if (!quantity || (quantity === '1' && (receiptDetails.is_package === true || receiptDetails.is_package === 'true'))) {
+      // If it's a package but quantity is 1, we can't determine the actual count from receipt_details alone
+      // So we'll use what's stored, but log a warning
+      if (receiptDetails.is_package === true || receiptDetails.is_package === 'true') {
+        console.warn('⚠️ PDF Generation - Package detected but quantity is 1, using stored value:', quantity);
+      }
+      quantity = quantity || '1';
+    }
+    
+    console.log('🔍 PDF Generation - Quantity:', {
+      stored_quantity: receiptDetails.quantity,
+      is_package: receiptDetails.is_package,
+      final_quantity: quantity
+    });
     drawText(
       quantity, 
       config.fields.quantity.x, 
@@ -632,27 +667,65 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     const shortReceiptNumber = `RCP-${last6Digits}`;
     
     // Determine if it's a package or individual session
-    const isPackage = paymentData.package_id && 
-                      paymentData.package_id !== 'null' && 
-                      paymentData.package_id !== 'undefined' && 
-                      paymentData.package_id !== 'individual';
+    // Try multiple sources for package_id: paymentData, sessionData
+    let packageId = paymentData.package_id;
+    
+    // Fallback: check sessionData if paymentData doesn't have package_id
+    if (!packageId && sessionData && sessionData.package_id) {
+      packageId = sessionData.package_id;
+      console.log('🔍 Using package_id from sessionData:', packageId);
+    }
+    
+    // Log package_id for debugging
+    console.log('🔍 Receipt generation - Checking package_id:', {
+      paymentData_package_id: paymentData.package_id,
+      sessionData_package_id: sessionData?.package_id,
+      final_package_id: packageId,
+      package_id_type: typeof packageId,
+      package_id_null: packageId === null,
+      package_id_undefined: packageId === undefined
+    });
+    
+    const isPackage = packageId && 
+                      packageId !== null &&
+                      packageId !== undefined &&
+                      String(packageId).toLowerCase() !== 'null' && 
+                      String(packageId).toLowerCase() !== 'undefined' && 
+                      String(packageId).toLowerCase() !== 'individual';
+    
+    console.log('🔍 Receipt generation - isPackage:', isPackage);
     
     // Get package data if it's a package
     let packageSessionCount = 1; // Default to 1 for individual sessions
-    if (isPackage) {
+    if (isPackage && packageId) {
       try {
+        console.log('🔍 Fetching package data for package_id:', packageId);
         const { data: packageData, error: packageError } = await supabaseAdmin
           .from('packages')
           .select('session_count')
-          .eq('id', paymentData.package_id)
+          .eq('id', packageId)
           .single();
+        
+        console.log('🔍 Package data fetch result:', {
+          packageData,
+          packageError,
+          session_count: packageData?.session_count
+        });
         
         if (!packageError && packageData && packageData.session_count) {
           packageSessionCount = packageData.session_count;
+          console.log('✅ Package session count set to:', packageSessionCount);
+        } else {
+          console.warn('⚠️ Could not get package session_count:', {
+            error: packageError,
+            data: packageData
+          });
         }
       } catch (err) {
-        console.warn('⚠️ Error fetching package session_count, using default:', err);
+        console.error('❌ Error fetching package session_count:', err);
       }
+    } else {
+      console.log('ℹ️ Not a package, using default session count: 1');
     }
     
     // Get payment method from Razorpay response or payment data
@@ -690,10 +763,22 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
                     paymentData.razorpay_params?.currency || 
                     'INR';
     
-    // Determine item description
-    const itemDescription = isPackage ? 'Package Session' : 'Individual Therapy';
+    // Determine item description and quantity
+    // For packages: show "Package", quantity shows the package total (3, 6, etc.)
+    // For individual: show "Individual Therapy", quantity is 1
+    const itemDescription = isPackage ? 'Package' : 'Individual Therapy';
+    const quantity = isPackage ? packageSessionCount.toString() : '1';
+    
+    console.log('🔍 Receipt details being set:', {
+      isPackage,
+      itemDescription,
+      quantity,
+      packageSessionCount,
+      package_id: paymentData.package_id
+    });
     
     // Prepare receipt details to store in database (as JSON/text)
+    // Ensure item_description and quantity are explicitly set (no fallbacks here)
     const receiptDetails = {
       receipt_number: shortReceiptNumber, // Use short receipt number for display
       receipt_number_long: receiptNumber, // Keep original for reference
@@ -711,10 +796,18 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
       payment_date: paymentData.completed_at || new Date().toISOString(),
       payment_method: paymentModeText,
       currency: currency,
-      item_description: itemDescription,
-      quantity: packageSessionCount.toString(),
-      is_package: isPackage
+      item_description: itemDescription, // Explicitly set: 'Package' or 'Individual Therapy'
+      quantity: quantity, // Explicitly set: package count or '1'
+      is_package: isPackage, // Explicitly set: true or false
+      package_id: packageId || null // Store package_id for reference (from paymentData or sessionData)
     };
+    
+    console.log('✅ Final receiptDetails to store:', {
+      item_description: receiptDetails.item_description,
+      quantity: receiptDetails.quantity,
+      is_package: receiptDetails.is_package,
+      package_id: receiptDetails.package_id
+    });
 
     // Generate PDF buffer for sending (will be discarded after sending)
     const pdfBuffer = await generateReceiptPDF(receiptDetails);
@@ -2056,11 +2149,22 @@ const handlePaymentSuccess = async (req, res) => {
 
     // Generate and store PDF receipt IMMEDIATELY
     console.log('📄 Generating and storing PDF receipt...');
+    // Use updatedPayment if available (has latest data), otherwise use paymentRecord
+    const paymentDataForReceipt = updatedPayment || paymentRecord;
+    console.log('🔍 Payment data for receipt:', {
+      using: updatedPayment ? 'updatedPayment' : 'paymentRecord',
+      package_id: paymentDataForReceipt?.package_id,
+      payment_id: paymentDataForReceipt?.id
+    });
+    
     let receiptResult = null;
     try {
       receiptResult = await generateAndStoreReceipt(
         session,
-        { ...paymentRecord, completed_at: new Date().toISOString() },
+        { 
+          ...paymentDataForReceipt, 
+          completed_at: paymentDataForReceipt?.completed_at || new Date().toISOString() 
+        },
         clientDetails,
         psychologistDetails
       );

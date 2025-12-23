@@ -366,12 +366,17 @@ const createSessionFromSlotLock = async (slotLock) => {
         try {
           const { generateAndStoreReceipt } = require('../controllers/paymentController');
           
-          // Fetch full payment record with transaction_id
+          // Fetch full payment record with transaction_id and package_id
           const { data: fullPaymentRecord } = await supabaseAdmin
             .from('payments')
-            .select('id, amount, transaction_id, completed_at, razorpay_payment_id')
+            .select('id, amount, transaction_id, completed_at, razorpay_payment_id, package_id')
             .eq('id', paymentRecord.id)
             .single();
+          
+          console.log('🔍 sessionCreationService - Payment data for receipt:', {
+            payment_id: fullPaymentRecord?.id,
+            package_id: fullPaymentRecord?.package_id
+          });
           
           receiptResult = await generateAndStoreReceipt(
             session,
