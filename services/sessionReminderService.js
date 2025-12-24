@@ -118,7 +118,8 @@ class SessionReminderService {
         console.log('📋 Sessions found:');
         sessions.forEach((session, index) => {
           if (session.scheduled_time) {
-            const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+            // Parse directly in IST timezone to avoid UTC conversion issues
+            const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
             const timeDiffMinutes = sessionTime.diff(now, 'minute');
             console.log(`   ${index + 1}. Session ${session.id}: ${session.scheduled_date} ${session.scheduled_time} (${timeDiffMinutes} minutes from now)`);
           } else {
@@ -136,7 +137,8 @@ class SessionReminderService {
           return false;
         }
         
-        const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+        // Parse directly in IST timezone to avoid UTC conversion issues
+        const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
         const timeDiffMinutes = sessionTime.diff(now, 'minute'); // Difference in minutes
         
         // Check if session is between 0 and 120 minutes from now (next 2 hours)
@@ -149,7 +151,8 @@ class SessionReminderService {
       if (reminderSessions.length > 0) {
         console.log('🔔 Sessions receiving reminders:');
         reminderSessions.forEach((session, index) => {
-          const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+          // Parse directly in IST timezone to avoid UTC conversion issues
+          const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
           const timeDiffMinutes = sessionTime.diff(now, 'minute');
           const clientName = session.client?.child_name || `${session.client?.first_name || ''} ${session.client?.last_name || ''}`.trim() || 'Unknown';
           console.log(`   ${index + 1}. Session ${session.id} for ${clientName}: ${session.scheduled_date} ${session.scheduled_time} (${timeDiffMinutes} minutes from now)`);
@@ -202,7 +205,8 @@ class SessionReminderService {
       const reminderFreeAssessments = (freeAssessments || []).filter(assessment => {
         if (!assessment.scheduled_time) return false;
         
-        const assessmentTime = dayjs(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+        // Parse directly in IST timezone to avoid UTC conversion issues
+        const assessmentTime = dayjs.tz(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
         const timeDiffMinutes = assessmentTime.diff(now, 'minute');
         
         // Check if assessment is between 0 and 120 minutes from now (next 2 hours)
@@ -280,7 +284,8 @@ class SessionReminderService {
       }
 
       // Format session date and time
-      const sessionDateTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+      // Parse directly in IST timezone to avoid UTC conversion issues
+      const sessionDateTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
       const formattedDate = sessionDateTime.format('DD MMMM YYYY');
       const formattedTime = sessionDateTime.format('hh:mm A');
 
@@ -414,7 +419,8 @@ class SessionReminderService {
       }
 
       // Format assessment date and time
-      const assessmentDateTime = dayjs(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+      // Parse directly in IST timezone to avoid UTC conversion issues
+      const assessmentDateTime = dayjs.tz(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
       const formattedDate = assessmentDateTime.format('DD MMMM YYYY');
       const formattedTime = assessmentDateTime.format('hh:mm A');
 
@@ -587,7 +593,8 @@ class SessionReminderService {
       const newReminderSessions = newSessions.filter(session => {
         if (!session.scheduled_time) return false;
         
-        const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+        // Parse directly in IST timezone to avoid UTC conversion issues
+        const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
         const timeDiffMinutes = sessionTime.diff(now, 'minute');
         
         return timeDiffMinutes >= 0 && timeDiffMinutes <= 120;
@@ -672,7 +679,8 @@ class SessionReminderService {
         return;
       }
 
-      const sessionTime = dayjs(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss').tz('Asia/Kolkata');
+      // Parse directly in IST timezone to avoid UTC conversion issues
+      const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
       const timeDiffMinutes = sessionTime.diff(now, 'minute');
 
       // Check if session is between 0 and 120 minutes from now (next 2 hours)
