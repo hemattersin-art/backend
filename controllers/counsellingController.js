@@ -156,6 +156,15 @@ const createCounsellingService = async (req, res) => {
       category,
       menu_order,
       seo_title,
+      seo_description,
+      seo_keywords,
+      og_title,
+      og_description,
+      og_image,
+      canonical_url,
+      robots,
+      schema_enabled,
+      schema_service_type,
       hero_title,
       hero_subtext,
       therapists_heading,
@@ -209,6 +218,15 @@ const createCounsellingService = async (req, res) => {
         category,
         menu_order: menu_order || 0,
         seo_title,
+        seo_description,
+        seo_keywords,
+        og_title,
+        og_description,
+        og_image,
+        canonical_url,
+        robots,
+        schema_enabled,
+        schema_service_type,
         hero_title,
         hero_subtext,
         therapists_heading,
@@ -254,6 +272,15 @@ const updateCounsellingService = async (req, res) => {
       category,
       menu_order,
       seo_title,
+      seo_description,
+      seo_keywords,
+      og_title,
+      og_description,
+      og_image,
+      canonical_url,
+      robots,
+      schema_enabled,
+      schema_service_type,
       hero_title,
       hero_subtext,
       therapists_heading,
@@ -312,6 +339,15 @@ const updateCounsellingService = async (req, res) => {
     if (category !== undefined) updateData.category = category;
     if (menu_order !== undefined) updateData.menu_order = menu_order;
     if (seo_title !== undefined) updateData.seo_title = seo_title;
+    if (seo_description !== undefined) updateData.seo_description = seo_description;
+    if (seo_keywords !== undefined) updateData.seo_keywords = seo_keywords;
+    if (og_title !== undefined) updateData.og_title = og_title;
+    if (og_description !== undefined) updateData.og_description = og_description;
+    if (og_image !== undefined) updateData.og_image = og_image;
+    if (canonical_url !== undefined) updateData.canonical_url = canonical_url;
+    if (robots !== undefined) updateData.robots = robots;
+    if (schema_enabled !== undefined) updateData.schema_enabled = schema_enabled;
+    if (schema_service_type !== undefined) updateData.schema_service_type = schema_service_type;
     if (hero_title !== undefined) updateData.hero_title = hero_title;
     if (hero_subtext !== undefined) updateData.hero_subtext = hero_subtext;
     if (therapists_heading !== undefined) updateData.therapists_heading = therapists_heading;
