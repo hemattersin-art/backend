@@ -31,6 +31,24 @@ class EmailService {
     this.initializeTransporter();
   }
 
+  /**
+   * Add standard email headers and reply-to for better deliverability
+   * @param {Object} mailOptions - The mail options object
+   * @returns {Object} Enhanced mail options with headers
+   */
+  addEmailHeaders(mailOptions) {
+    return {
+      ...mailOptions,
+      replyTo: process.env.EMAIL_REPLY_TO || process.env.EMAIL_FROM || 'support@littlecare.com',
+      headers: {
+        'Message-ID': `<${Date.now()}-${Math.random().toString(36).substring(7)}@little.care>`,
+        'X-Mailer': 'LittleCare Platform',
+        'List-Unsubscribe': process.env.EMAIL_UNSUBSCRIBE_URL || `<mailto:unsubscribe@littlecare.com>`,
+        ...(mailOptions.headers || {})
+      }
+    };
+  }
+
   async initializeTransporter() {
     try {
       const emailUser = process.env.EMAIL_USER;
@@ -1013,7 +1031,7 @@ The Little Care Team
         text: text
       };
 
-      return await this.transporter.sendMail(mailOptions);
+      return await this.transporter.sendMail(this.addEmailHeaders(mailOptions));
     } catch (error) {
       console.error('Error sending email:', error);
       throw error;
