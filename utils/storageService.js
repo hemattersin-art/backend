@@ -59,18 +59,43 @@ async function deleteBlogImage(filePath) {
 }
 
 /**
- * Get public URL for blog image
- * @param {this} filePath - File path in bucket
- * @returns {string} Public URL
+ * Get secure URL for blog image (uses proxy with signed URLs)
+ * Since buckets are now private, we always use proxy URLs which generate signed URLs on-the-fly
+ * @param {string} filePath - File path in bucket
+ * @returns {string} Proxy URL (which will generate signed URL when accessed)
  */
 function getBlogImageUrl(filePath) {
   if (!filePath) return null;
   
-  const { data } = supabase.storage
-    .from(BLOG_IMAGES_BUCKET)
-    .getPublicUrl(filePath);
+  // Always use relative proxy URL (works in both development and production)
+  // This avoids issues with localhost vs production URLs
+  return `/api/images/${BLOG_IMAGES_BUCKET}/${filePath}`;
+}
+
+/**
+ * Generate signed URL for blog image (for direct access if needed)
+ * @param {string} filePath - File path in bucket
+ * @param {number} expiresIn - Expiration time in seconds (default: 1 hour)
+ * @returns {Promise<{success: boolean, url?: string, error?: string}>}
+ */
+async function getBlogImageSignedUrl(filePath, expiresIn = 3600) {
+  if (!filePath) return { success: false, error: 'File path is required' };
+  
+  try {
+    const { data, error } = await supabase.storage
+      .from(BLOG_IMAGES_BUCKET)
+      .createSignedUrl(filePath, expiresIn);
     
-  return data.publicUrl;
+    if (error) {
+      console.error('Error creating signed URL:', error);
+      return { success: false, error: error.message };
+    }
+    
+    return { success: true, url: data.signedUrl };
+  } catch (error) {
+    console.error('Error generating signed URL:', error);
+    return { success: false, error: error.message };
+  }
 }
 
 /**
@@ -168,18 +193,43 @@ async function deleteCounsellingImage(filePath) {
 }
 
 /**
- * Get public URL for counselling image
+ * Get secure URL for counselling image (uses proxy with signed URLs)
+ * Since buckets are now private, we always use proxy URLs which generate signed URLs on-the-fly
  * @param {string} filePath - File path in bucket
- * @returns {string} Public URL
+ * @returns {string} Proxy URL (which will generate signed URL when accessed)
  */
 function getCounsellingImageUrl(filePath) {
   if (!filePath) return null;
   
-  const { data } = supabase.storage
-    .from(COUNSELLING_IMAGES_BUCKET)
-    .getPublicUrl(filePath);
+  // Always use relative proxy URL (works in both development and production)
+  // This avoids issues with localhost vs production URLs
+  return `/api/images/${COUNSELLING_IMAGES_BUCKET}/${filePath}`;
+}
+
+/**
+ * Generate signed URL for counselling image (for direct access if needed)
+ * @param {string} filePath - File path in bucket
+ * @param {number} expiresIn - Expiration time in seconds (default: 1 hour)
+ * @returns {Promise<{success: boolean, url?: string, error?: string}>}
+ */
+async function getCounsellingImageSignedUrl(filePath, expiresIn = 3600) {
+  if (!filePath) return { success: false, error: 'File path is required' };
+  
+  try {
+    const { data, error } = await supabase.storage
+      .from(COUNSELLING_IMAGES_BUCKET)
+      .createSignedUrl(filePath, expiresIn);
     
-  return data.publicUrl;
+    if (error) {
+      console.error('Error creating signed URL:', error);
+      return { success: false, error: error.message };
+    }
+    
+    return { success: true, url: data.signedUrl };
+  } catch (error) {
+    console.error('Error generating signed URL:', error);
+    return { success: false, error: error.message };
+  }
 }
 
 /**

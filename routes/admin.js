@@ -193,12 +193,9 @@ router.post('/upload/image', upload.single('file'), async (req, res) => {
       return res.status(500).json({ success: false, error: 'Failed to upload to storage' });
     }
 
-    // Get public URL (assumes bucket has public policy)
-    const { data: publicData } = supabaseAdmin.storage
-      .from(bucket)
-      .getPublicUrl(objectPath);
-
-    const publicUrl = publicData?.publicUrl;
+    // Generate secure relative proxy URL (works in both dev and production)
+    // Profile pictures use proxy URL for consistency and security
+    const publicUrl = `/api/images/${bucket}/${objectPath}`;
 
     return res.json({
       success: true,
