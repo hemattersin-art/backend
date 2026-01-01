@@ -2119,11 +2119,11 @@ const handlePaymentSuccess = async (req, res) => {
     // Only update if status is still 'pending' (prevents race conditions)
     // This ensures only one request can successfully update the payment
     const updateData = {
-      status: 'success',
-      razorpay_payment_id: razorpay_payment_id,
-      razorpay_response: params,
-      session_id: session.id,
-      completed_at: new Date().toISOString()
+        status: 'success',
+        razorpay_payment_id: razorpay_payment_id,
+        razorpay_response: params,
+        session_id: session.id,
+        completed_at: new Date().toISOString()
     };
     
     // Add payment_method if available

@@ -601,11 +601,26 @@ const getAvailability = async (req, res) => {
     // SECURITY FIX: Always use authenticated psychologist's ID, ignore query parameters
     // This prevents IDOR vulnerability where psychologists could view other psychologists' availability
     const psychologistId = req.user.id;
-    const { date, start_date, end_date } = req.query;
+    const { date, start_date, end_date, page = 1, limit = 10 } = req.query;
 
     // Check if availability table exists and has proper relationships
     // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     try {
+      // First get total count for pagination
+      let countQuery = supabaseAdmin
+        .from('availability')
+        .select('*', { count: 'exact', head: true })
+        .eq('psychologist_id', psychologistId);
+
+      if (date) {
+        countQuery = countQuery.eq('date', date);
+      } else if (start_date && end_date) {
+        countQuery = countQuery.gte('date', start_date).lte('date', end_date);
+      }
+
+      const { count, error: countError } = await countQuery;
+
+      // Build main query with pagination
       let query = supabaseAdmin
         .from('availability')
         .select('*')
@@ -617,6 +632,15 @@ const getAvailability = async (req, res) => {
         query = query.gte('date', start_date).lte('date', end_date);
       }
 
+      // Order by date ascending
+      query = query.order('date', { ascending: true });
+
+      // Apply pagination
+      const pageNum = parseInt(page) || 1;
+      const limitNum = parseInt(limit) || 10;
+      const offset = (pageNum - 1) * limitNum;
+      query = query.range(offset, offset + limitNum - 1);
+
       const { data: availability, error } = await query;
 
       if (error) {
@@ -624,7 +648,15 @@ const getAvailability = async (req, res) => {
         if (error.code === 'PGRST200' || error.message.includes('relationship') || error.message.includes('schema cache')) {
           console.log('Database relationships not fully established, returning empty availability for psychologist');
           return res.json(
-            successResponse([])
+            successResponse({
+              availability: [],
+              pagination: {
+                page: parseInt(page) || 1,
+                limit: parseInt(limit) || 10,
+                total: 0,
+                totalPages: 0
+              }
+            })
           );
         }
         
@@ -633,6 +665,9 @@ const getAvailability = async (req, res) => {
           errorResponse('Failed to fetch availability')
         );
       }
+
+      // Calculate pagination info
+      const totalPages = count ? Math.ceil(count / limitNum) : 0;
 
       // Get booked sessions to filter out from availability
       let bookedSessionsQuery = supabaseAdmin
@@ -792,8 +827,17 @@ const getAvailability = async (req, res) => {
 
       if (psychError || !psychologist) {
         console.log('Psychologist not found or no Google Calendar credentials');
+        const totalPages = count ? Math.ceil(count / limitNum) : 0;
         return res.json(
-          successResponse(availability || [])
+          successResponse({
+            availability: filteredAvailability || [],
+            pagination: {
+              page: pageNum,
+              limit: limitNum,
+              total: count || 0,
+              totalPages: totalPages
+            }
+          })
         );
       }
 
@@ -947,21 +991,48 @@ const getAvailability = async (req, res) => {
             };
           });
 
+          const totalPages = count ? Math.ceil(count / limitNum) : 0;
           res.json(
-            successResponse(processedAvailability)
+            successResponse({
+              availability: processedAvailability,
+              pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: count || 0,
+                totalPages: totalPages
+              }
+            })
           );
 
         } catch (calendarError) {
           console.error('Error checking Google Calendar for blocked slots:', calendarError);
           // Return filtered availability (booked sessions already removed) without Google Calendar data if it fails
+          const totalPages = count ? Math.ceil(count / limitNum) : 0;
           res.json(
-            successResponse(filteredAvailability || [])
+            successResponse({
+              availability: filteredAvailability || [],
+              pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: count || 0,
+                totalPages: totalPages
+              }
+            })
           );
         }
       } else {
         // No Google Calendar connected, return filtered availability (booked sessions already removed)
+        const totalPages = count ? Math.ceil(count / limitNum) : 0;
         res.json(
-          successResponse(filteredAvailability || [])
+          successResponse({
+            availability: filteredAvailability || [],
+            pagination: {
+              page: pageNum,
+              limit: limitNum,
+              total: count || 0,
+              totalPages: totalPages
+            }
+          })
         );
       }
 
@@ -969,7 +1040,15 @@ const getAvailability = async (req, res) => {
       // If there's any database error, return empty availability
       console.log('Database error in availability query, returning empty availability for psychologist:', dbError.message);
       return res.json(
-        successResponse([])
+        successResponse({
+          availability: [],
+          pagination: {
+            page: parseInt(page) || 1,
+            limit: parseInt(limit) || 10,
+            total: 0,
+            totalPages: 0
+          }
+        })
       );
       }
   } catch (error) {
@@ -1262,205 +1341,6 @@ const deleteAvailability = async (req, res) => {
   }
 };
 
-// Get packages
-const getPackages = async (req, res) => {
-  try {
-    const psychologistId = req.user.id;
-
-    // Check if packages table exists and has proper relationships
-    try {
-      const { data: packages, error } = await supabaseAdmin
-        .from('packages')
-        .select('*')
-        .eq('psychologist_id', psychologistId);
-
-      if (error) {
-        // If there's a database relationship error, return empty packages
-        if (error.code === 'PGRST200' || error.message.includes('relationship') || error.message.includes('schema cache')) {
-          console.log('Database relationships not fully established, returning empty packages for psychologist');
-          return res.json(
-            successResponse([])
-          );
-        }
-        
-        console.error('Get packages error:', error);
-        return res.status(500).json(
-          errorResponse('Failed to fetch packages')
-        );
-      }
-
-      res.json(
-        successResponse(packages || [])
-      );
-
-    } catch (dbError) {
-      // If there's any database error, return empty packages
-      console.log('Database error in packages query, returning empty packages for psychologist:', dbError.message);
-      return res.json(
-        successResponse([])
-      );
-    }
-
-  } catch (error) {
-    console.error('Get packages error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching packages')
-    );
-  }
-};
-
-// Create package
-const createPackage = async (req, res) => {
-  try {
-    const psychologistId = req.user.id;
-    const { package_type, price, description } = req.body;
-
-    const { data: package, error } = await supabaseAdmin
-      .from('packages')
-      .insert([{
-        psychologist_id: psychologistId,
-        package_type,
-        price,
-        description
-      }])
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Create package error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to create package')
-      );
-    }
-
-    res.status(201).json(
-      successResponse(package, 'Package created successfully')
-    );
-
-  } catch (error) {
-    console.error('Create package error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while creating package')
-    );
-  }
-};
-
-// Update package
-const updatePackage = async (req, res) => {
-  try {
-    const psychologistId = req.user.id;
-    const { packageId } = req.params;
-    const updateData = req.body;
-
-    // SECURITY FIX: Validate price is positive if provided
-    if (updateData.price !== undefined) {
-      if (typeof updateData.price !== 'number' || updateData.price <= 0) {
-        return res.status(400).json(
-          errorResponse('Price must be a positive number greater than zero')
-        );
-      }
-    }
-
-    // Check if package exists and belongs to psychologist
-    const { data: package } = await supabaseAdmin
-      .from('packages')
-      .select('*')
-      .eq('id', packageId)
-      .eq('psychologist_id', psychologistId)
-      .single();
-
-    if (!package) {
-      return res.status(404).json(
-        errorResponse('Package not found')
-      );
-    }
-
-    const { data: updatedPackage, error } = await supabaseAdmin
-      .from('packages')
-      .update({
-        ...updateData,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', packageId)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Update package error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to update package')
-      );
-    }
-
-    res.json(
-      successResponse(updatedPackage, 'Package updated successfully')
-    );
-
-  } catch (error) {
-    console.error('Update package error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while updating package')
-    );
-  }
-};
-
-// Delete package
-const deletePackage = async (req, res) => {
-  try {
-    const psychologistId = req.user.id;
-    const { packageId } = req.params;
-
-    // Check if package exists and belongs to psychologist
-    const { data: package } = await supabaseAdmin
-      .from('packages')
-      .select('*')
-      .eq('id', packageId)
-      .eq('psychologist_id', psychologistId)
-      .single();
-
-    if (!package) {
-      return res.status(404).json(
-        errorResponse('Package not found')
-      );
-    }
-
-    // Check if package is being used in any sessions
-    const { data: sessions } = await supabaseAdmin
-      .from('sessions')
-      .select('id')
-      .eq('package_id', packageId)
-      .limit(1);
-
-    if (sessions && sessions.length > 0) {
-      return res.status(400).json(
-        errorResponse('Cannot delete package that is being used in sessions')
-      );
-    }
-
-    const { error } = await supabaseAdmin
-      .from('packages')
-      .delete()
-      .eq('id', packageId);
-
-    if (error) {
-      console.error('Delete package error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to delete package')
-      );
-    }
-
-    res.json(
-      successResponse(null, 'Package deleted successfully')
-    );
-
-  } catch (error) {
-    console.error('Delete package error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while deleting package')
-    );
-  }
-};
-
 // Complete session with summary and notes
 const completeSession = async (req, res) => {
   try {
@@ -1578,87 +1458,6 @@ const completeSession = async (req, res) => {
     console.error('Complete session error:', error);
     res.status(500).json(
       errorResponse('Internal server error while completing session')
-    );
-  }
-};
-
-// Respond to reschedule request
-const respondToRescheduleRequest = async (req, res) => {
-  try {
-    const psychologistId = req.user.id;
-    const { sessionId } = req.params;
-    const { action, newDate, newTime, reason } = req.body; // action: 'approve' or 'reject'
-
-    // Check if session exists and belongs to psychologist
-    const { data: session } = await supabaseAdmin
-      .from('sessions')
-      .select('*')
-      .eq('id', sessionId)
-      .eq('psychologist_id', psychologistId)
-      .single();
-
-    if (!session) {
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
-    // Check if session has reschedule request
-    if (session.status !== 'reschedule_requested') {
-      return res.status(400).json(
-        errorResponse('No reschedule request found for this session')
-      );
-    }
-
-    let updateData = {
-      updated_at: new Date().toISOString()
-    };
-
-    if (action === 'approve') {
-      // Validate new date and time
-      if (!newDate || !newTime) {
-        return res.status(400).json(
-          errorResponse('New date and time are required when approving reschedule')
-        );
-      }
-
-      // Update session date and time and change status back to booked
-      updateData.scheduled_date = newDate;
-      updateData.scheduled_time = newTime;
-      updateData.status = 'booked';
-
-    } else if (action === 'reject') {
-      // Change status back to booked (rejected)
-      updateData.status = 'booked';
-    } else {
-      return res.status(400).json(
-        errorResponse('Invalid action. Must be "approve" or "reject"')
-      );
-    }
-
-    // Update session
-    const { data: updatedSession, error } = await supabaseAdmin
-      .from('sessions')
-      .update(updateData)
-      .eq('id', sessionId)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Update session error:', error);
-      return res.status(500).json(
-        errorResponse('Failed to update session')
-      );
-    }
-
-    res.json(
-      successResponse(updatedSession, `Reschedule request ${action}ed successfully`)
-    );
-
-  } catch (error) {
-    console.error('Respond to reschedule request error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while responding to reschedule request')
     );
   }
 };
@@ -1914,6 +1713,61 @@ const deleteAssessmentSession = async (req, res) => {
   }
 };
 
+// Get monthly stats (completed and upcoming sessions for current month)
+const getMonthlyStats = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+
+    // Get current month start and end dates (IST timezone)
+    const now = dayjs().tz('Asia/Kolkata');
+    const monthStart = now.startOf('month').format('YYYY-MM-DD');
+    const monthEnd = now.endOf('month').format('YYYY-MM-DD');
+
+    // Get completed sessions for current month
+    const { count: completedCount, error: completedError } = await supabaseAdmin
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('psychologist_id', psychologistId)
+      .eq('status', 'completed')
+      .gte('scheduled_date', monthStart)
+      .lte('scheduled_date', monthEnd);
+
+    if (completedError) {
+      console.error('Error fetching completed sessions:', completedError);
+    }
+
+    // Get upcoming sessions for current month (booked/rescheduled sessions from today onwards)
+    const today = now.format('YYYY-MM-DD');
+    const { count: upcomingCount, error: upcomingError } = await supabaseAdmin
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('psychologist_id', psychologistId)
+      .in('status', ['booked', 'rescheduled', 'reschedule_requested', 'scheduled'])
+      .gte('scheduled_date', today)
+      .lte('scheduled_date', monthEnd);
+
+    if (upcomingError) {
+      console.error('Error fetching upcoming sessions:', upcomingError);
+    }
+
+    res.json(
+      successResponse({
+        completed_sessions: completedCount || 0,
+        upcoming_sessions: upcomingCount || 0,
+        month: now.format('MMMM YYYY'),
+        month_start: monthStart,
+        month_end: monthEnd
+      })
+    );
+
+  } catch (error) {
+    console.error('Error in getMonthlyStats:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching monthly stats')
+    );
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -1925,11 +1779,7 @@ module.exports = {
   addAvailability,
   updateAvailability,
   deleteAvailability,
-  getPackages,
-  createPackage,
-  updatePackage,
-  deletePackage,
-  respondToRescheduleRequest,
   deleteSession,
-  deleteAssessmentSession
+  deleteAssessmentSession,
+  getMonthlyStats
 };

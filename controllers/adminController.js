@@ -340,7 +340,7 @@ const getAllUsers = async (req, res) => {
       if (userIds.length > 0) {
         const { data: clientProfiles, error: profileError } = await supabaseAdmin
           .from('clients')
-          .select('user_id, first_name, last_name, phone_number, child_name, child_age')
+          .select('id, user_id, first_name, last_name, phone_number, child_name, child_age')
           .in('user_id', userIds);
 
         if (!profileError && clientProfiles) {
@@ -357,6 +357,7 @@ const getAllUsers = async (req, res) => {
               return {
                 ...user,
                 profile: {
+                  id: profile.id, // Include client.id for session updates
                   first_name: profile.first_name,
                   last_name: profile.last_name,
                   phone_number: profile.phone_number,
@@ -951,10 +952,12 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get user counts by role (optimized with count queries)
+    // Only count 'client' users (exclude admin, finance, psychologist, superadmin)
     // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
     const { count: totalUsers, error: usersError } = await supabaseAdmin
       .from('users')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'client');
 
     if (usersError) {
       console.error('Get users error:', usersError);
@@ -977,10 +980,12 @@ const getPlatformStats = async (req, res) => {
     }
 
     // Get session counts (optimized with count)
+    // Exclude free assessments - only count paid sessions
     // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
     const { count: totalSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .neq('session_type', 'free_assessment');
 
     if (sessionsError) {
       console.error('Get sessions error:', sessionsError);
@@ -1019,9 +1024,11 @@ const getPlatformStats = async (req, res) => {
       .limit(1000); // Reasonable limit for 2GB plan
 
     // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
+    // Exclude free assessments - only count paid sessions
     const { data: sessionStatuses, error: sessionStatusError } = await supabaseAdmin
       .from('sessions')
       .select('status, price')
+      .neq('session_type', 'free_assessment')
       .limit(1000); // Reasonable limit for 2GB plan
 
     // Calculate accurate statistics
@@ -1089,40 +1096,47 @@ const getPlatformStats = async (req, res) => {
       .select('*', { count: 'exact', head: true })
       .eq('status', 'success');
 
-    // Get cancelled sessions count
+    // Get cancelled sessions count (exclude free assessments)
     const { count: cancelledSessions, error: cancelledSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'cancelled');
+      .eq('status', 'cancelled')
+      .neq('session_type', 'free_assessment');
 
-    // Get no-show sessions count
+    // Get no-show sessions count (exclude free assessments)
     const { count: noShowSessions, error: noShowSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'no_show');
+      .eq('status', 'no_show')
+      .neq('session_type', 'free_assessment');
 
-    // Get booking status metrics
+    // Get booking status metrics (exclude free assessments)
     const { count: rescheduledSessions, error: rescheduledSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'rescheduled');
+      .eq('status', 'rescheduled')
+      .neq('session_type', 'free_assessment');
 
     const { count: rescheduleRequestedSessions, error: rescheduleRequestedSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'reschedule_requested');
+      .eq('status', 'reschedule_requested')
+      .neq('session_type', 'free_assessment');
 
     const { count: completedSessions, error: completedSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'completed');
+      .eq('status', 'completed')
+      .neq('session_type', 'free_assessment');
 
     // Calculate upcoming sessions (not completed/cancelled/no_show and future date)
+    // Exclude free assessments - only count paid sessions
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const { data: upcomingSessionsData, error: upcomingSessionsError } = await supabaseAdmin
       .from('sessions')
       .select('id, scheduled_date, scheduled_time, status')
       .not('status', 'in', '(completed,cancelled,no_show,noshow)')
+      .neq('session_type', 'free_assessment')
       .gte('scheduled_date', today);
     
     // Filter upcoming sessions more accurately (check time as well)
@@ -4239,6 +4253,7 @@ const createManualBooking = async (req, res) => {
       scheduled_time, 
       amount,
       payment_received_date,
+      payment_method,
       notes 
     } = req.body;
 
@@ -4381,7 +4396,14 @@ const createManualBooking = async (req, res) => {
     }
 
     // Generate transaction ID for manual payment
+    // Format: MANUAL-{timestamp}-{random}
+    // Example: MANUAL-1704067200000-abc123xyz
+    // Note: For manual payments, we don't have Razorpay order_id or payment_id
+    // The transaction_id serves as the unique identifier for manual payments
     const transactionId = `MANUAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Normalize payment method (default to 'cash' if not provided)
+    const normalizedPaymentMethod = (payment_method || 'cash').toLowerCase();
 
     // Create manual payment record (use admin client to bypass RLS)
     const { data: paymentRecord, error: paymentError } = await supabaseAdmin
@@ -4395,14 +4417,15 @@ const createManualBooking = async (req, res) => {
         amount: amount,
         session_type: packageData ? 'package' : 'individual',
         status: 'success', // Mark as success for manual payment
+        payment_method: normalizedPaymentMethod, // Store payment method in dedicated column
         razorpay_params: {
           notes: {
-          manual: true,
-          payment_method: 'manual',
-          admin_created: true,
-          created_by: req.user.id,
-          created_at: new Date().toISOString(),
-          payment_received_date: payment_received_date
+            manual: true,
+            payment_method: normalizedPaymentMethod, // Also store in notes for reference
+            admin_created: true,
+            created_by: req.user.id,
+            created_at: new Date().toISOString(),
+            payment_received_date: payment_received_date
           }
         },
         completed_at: payment_received_date,
@@ -5137,6 +5160,343 @@ const getStuckSlotLocks = async (req, res) => {
   }
 };
 
+// Update session payment details (admin only)
+const updateSessionPayment = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { 
+      payment_method, 
+      transaction_id, 
+      razorpay_order_id, 
+      razorpay_payment_id 
+    } = req.body;
+
+    console.log('📝 Admin updating session payment:', {
+      sessionId,
+      payment_method,
+      transaction_id,
+      razorpay_order_id,
+      razorpay_payment_id
+    });
+
+    // Validate required fields
+    if (!transaction_id) {
+      return res.status(400).json(
+        errorResponse('Transaction ID is required')
+      );
+    }
+
+    // Check if session exists
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, payment_id')
+      .eq('id', sessionId)
+      .single();
+
+    if (sessionError || !session) {
+      console.error('❌ Session not found:', sessionError);
+      return res.status(404).json(
+        errorResponse('Session not found')
+      );
+    }
+
+    // Check if payment exists
+    if (!session.payment_id) {
+      return res.status(400).json(
+        errorResponse('This session does not have an associated payment record')
+      );
+    }
+
+    // Prepare update data
+    const paymentUpdateData = {
+      transaction_id: transaction_id.trim(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Add payment_method if provided
+    if (payment_method) {
+      paymentUpdateData.payment_method = payment_method.toLowerCase();
+    }
+
+    // Add Razorpay fields if provided
+    if (razorpay_order_id !== undefined) {
+      paymentUpdateData.razorpay_order_id = razorpay_order_id?.trim() || null;
+    }
+
+    if (razorpay_payment_id !== undefined) {
+      paymentUpdateData.razorpay_payment_id = razorpay_payment_id?.trim() || null;
+    }
+
+    // Update payment record
+    const { data: updatedPayment, error: paymentUpdateError } = await supabaseAdmin
+      .from('payments')
+      .update(paymentUpdateData)
+      .eq('id', session.payment_id)
+      .select()
+      .single();
+
+    if (paymentUpdateError) {
+      console.error('❌ Error updating payment:', paymentUpdateError);
+      return res.status(500).json(
+        errorResponse('Failed to update payment details')
+      );
+    }
+
+    console.log('✅ Payment updated successfully:', updatedPayment.id);
+
+    // Also update razorpay_params notes if payment_method is provided
+    if (payment_method && updatedPayment.razorpay_params) {
+      const updatedParams = {
+        ...updatedPayment.razorpay_params,
+        notes: {
+          ...(updatedPayment.razorpay_params.notes || {}),
+          payment_method: payment_method.toLowerCase()
+        }
+      };
+
+      await supabaseAdmin
+        .from('payments')
+        .update({ razorpay_params: updatedParams })
+        .eq('id', session.payment_id);
+    }
+
+    // Fetch updated session with payment details
+    const { data: updatedSession, error: fetchError } = await supabaseAdmin
+      .from('sessions')
+      .select(`
+        *,
+        payment:payments(*)
+      `)
+      .eq('id', sessionId)
+      .single();
+
+    if (fetchError) {
+      console.error('❌ Error fetching updated session:', fetchError);
+      // Still return success since payment was updated
+      return res.json(
+        successResponse(updatedPayment, 'Payment details updated successfully')
+      );
+    }
+
+    res.json(
+      successResponse(updatedSession, 'Session payment details updated successfully')
+    );
+  } catch (error) {
+    console.error('❌ Exception in updateSessionPayment:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while updating payment details')
+    );
+  }
+};
+
+// Update session details (admin only - comprehensive update)
+const updateSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const {
+      psychologist_id,
+      client_id,
+      scheduled_date,
+      scheduled_time,
+      status,
+      price,
+      payment_method,
+      transaction_id,
+      razorpay_order_id,
+      razorpay_payment_id
+    } = req.body;
+
+    console.log('📝 Admin updating session:', {
+      sessionId,
+      psychologist_id,
+      client_id,
+      scheduled_date,
+      scheduled_time,
+      status,
+      price
+    });
+
+    // Check if session exists
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, psychologist_id, client_id, scheduled_date, scheduled_time, status, price, payment_id')
+      .eq('id', sessionId)
+      .single();
+
+    if (sessionError || !session) {
+      console.error('❌ Session not found:', sessionError);
+      return res.status(404).json(
+        errorResponse('Session not found')
+      );
+    }
+
+    // Define allowed statuses
+    const ALLOWED_STATUSES = ['booked', 'scheduled', 'rescheduled', 'reschedule_requested', 'confirmed', 'completed', 'cancelled', 'no_show', 'noshow'];
+
+    // Validate status if provided
+    if (status && !ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json(
+        errorResponse(`Invalid session status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`)
+      );
+    }
+
+    // Prepare session update data
+    const sessionUpdateData = {
+      updated_at: new Date().toISOString()
+    };
+
+    // Update psychologist if provided
+    if (psychologist_id !== undefined && psychologist_id !== null) {
+      // Verify psychologist exists
+      const { data: psychologist, error: psychError } = await supabaseAdmin
+        .from('psychologists')
+        .select('id')
+        .eq('id', psychologist_id)
+        .single();
+
+      if (psychError || !psychologist) {
+        return res.status(404).json(
+          errorResponse('Psychologist not found')
+        );
+      }
+      sessionUpdateData.psychologist_id = psychologist_id;
+    }
+
+    // Update client if provided
+    if (client_id !== undefined && client_id !== null) {
+      // Verify client exists
+      const { data: client, error: clientError } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('id', client_id)
+        .single();
+
+      if (clientError || !client) {
+        return res.status(404).json(
+          errorResponse('Client not found')
+        );
+      }
+      sessionUpdateData.client_id = client_id;
+    }
+
+    // Update date/time if provided
+    if (scheduled_date) {
+      sessionUpdateData.scheduled_date = scheduled_date;
+    }
+    if (scheduled_time) {
+      sessionUpdateData.scheduled_time = scheduled_time;
+    }
+
+    // Update status if provided
+    if (status) {
+      sessionUpdateData.status = status;
+    }
+
+    // Update price if provided
+    if (price !== undefined && price !== null) {
+      sessionUpdateData.price = parseFloat(price);
+    }
+
+    // Check for conflicts if date/time/psychologist changed
+    if ((scheduled_date || scheduled_time || psychologist_id !== undefined) && sessionUpdateData.psychologist_id) {
+      const checkPsychologistId = sessionUpdateData.psychologist_id || session.psychologist_id;
+      const checkDate = sessionUpdateData.scheduled_date || session.scheduled_date;
+      const checkTime = sessionUpdateData.scheduled_time || session.scheduled_time;
+
+      const { data: conflictingSessions, error: conflictError } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('psychologist_id', checkPsychologistId)
+        .eq('scheduled_date', checkDate)
+        .eq('scheduled_time', checkTime)
+        .in('status', ['booked', 'rescheduled', 'confirmed', 'scheduled'])
+        .neq('id', sessionId);
+
+      if (conflictError) {
+        console.error('❌ Error checking conflicts:', conflictError);
+      } else if (conflictingSessions && conflictingSessions.length > 0) {
+        return res.status(400).json(
+          errorResponse('Selected time slot is already booked for the psychologist')
+        );
+      }
+    }
+
+    // Update session
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
+      .from('sessions')
+      .update(sessionUpdateData)
+      .eq('id', sessionId)
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          child_age,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          email,
+          phone
+        )
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('❌ Error updating session:', updateError);
+      return res.status(500).json(
+        errorResponse('Failed to update session')
+      );
+    }
+
+    // Update payment details if provided and payment exists
+    if (session.payment_id && (payment_method || transaction_id || razorpay_order_id !== undefined || razorpay_payment_id !== undefined)) {
+      const paymentUpdateData = {
+        updated_at: new Date().toISOString()
+      };
+
+      if (payment_method) {
+        paymentUpdateData.payment_method = payment_method.toLowerCase();
+      }
+      if (transaction_id) {
+        paymentUpdateData.transaction_id = transaction_id.trim();
+      }
+      if (razorpay_order_id !== undefined) {
+        paymentUpdateData.razorpay_order_id = razorpay_order_id?.trim() || null;
+      }
+      if (razorpay_payment_id !== undefined) {
+        paymentUpdateData.razorpay_payment_id = razorpay_payment_id?.trim() || null;
+      }
+
+      const { error: paymentUpdateError } = await supabaseAdmin
+        .from('payments')
+        .update(paymentUpdateData)
+        .eq('id', session.payment_id);
+
+      if (paymentUpdateError) {
+        console.error('❌ Error updating payment:', paymentUpdateError);
+        // Don't fail the request, just log the error
+      }
+    }
+
+    console.log('✅ Session updated successfully:', updatedSession.id);
+
+    res.json(
+      successResponse(updatedSession, 'Session updated successfully')
+    );
+  } catch (error) {
+    console.error('❌ Exception in updateSession:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while updating session')
+    );
+  }
+};
+
 module.exports = {
   getAllUsers,
   getAllPsychologists,
@@ -5163,6 +5523,8 @@ module.exports = {
   updateAllPsychologistsAvailability,
   handleRescheduleRequest,
   createManualBooking,
+  updateSessionPayment,
+  updateSession,
   approveAssessmentRescheduleRequest,
   getRescheduleRequests,
   checkMissingPackages,

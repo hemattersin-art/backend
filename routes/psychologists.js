@@ -6,7 +6,6 @@ const timeBlockingController = require('../controllers/timeBlockingController');
 const { authenticateToken, requirePsychologist } = require('../middleware/auth');
 const { 
   validatePsychologistProfile,
-  validatePackage,
   validateAvailability
 } = require('../utils/validation');
 
@@ -20,9 +19,9 @@ router.put('/profile', validatePsychologistProfile, psychologistController.updat
 
 // Session management
 router.get('/sessions', psychologistController.getSessions);
+router.get('/stats/monthly', psychologistController.getMonthlyStats);
 router.put('/sessions/:sessionId', psychologistController.updateSession);
 router.post('/sessions/:sessionId/complete', psychologistController.completeSession);
-router.post('/sessions/:sessionId/reschedule-response', psychologistController.respondToRescheduleRequest);
 router.delete('/sessions/:sessionId', psychologistController.deleteSession);
 // Assessment session scheduling
 router.post('/assessment-sessions/:assessmentSessionId/schedule', psychologistController.scheduleAssessmentSession);
@@ -34,12 +33,6 @@ router.get('/availability', psychologistController.getAvailability);
 router.post('/availability', validateAvailability, psychologistController.addAvailability);
 router.put('/availability', validateAvailability, psychologistController.updateAvailability);
 router.delete('/availability/:availabilityId', psychologistController.deleteAvailability);
-
-// Package management
-router.get('/packages', psychologistController.getPackages);
-router.post('/packages', validatePackage, psychologistController.createPackage);
-router.put('/packages/:packageId', validatePackage, psychologistController.updatePackage);
-router.delete('/packages/:packageId', psychologistController.deletePackage);
 
 // Time blocking management
 router.post('/block-time', timeBlockingController.blockTimeSlots);
