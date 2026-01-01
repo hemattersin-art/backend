@@ -337,14 +337,27 @@ const processPaymentCaptured = async (payload, eventId, skipSignatureCheck = fal
         };
       }
 
+      // Extract payment method from Razorpay payment entity
+      let paymentMethod = null;
+      if (payment.method) {
+        paymentMethod = payment.method;
+      }
+      
       // Update payment record with payment_id and status
+      const updateData = {
+        status: 'success',
+        razorpay_payment_id: paymentId,
+        completed_at: new Date().toISOString()
+      };
+      
+      // Add payment_method if available
+      if (paymentMethod) {
+        updateData.payment_method = paymentMethod;
+      }
+      
       await supabaseAdmin
         .from('payments')
-        .update({
-          status: 'success',
-          razorpay_payment_id: paymentId,
-          completed_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', paymentRecord.id);
     }
 

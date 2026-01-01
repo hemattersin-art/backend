@@ -120,6 +120,7 @@ const getTimeSlots = (startTime, endTime, interval = 30) => {
 const canAccessResource = (userRole, resourceOwnerId, userId) => {
   if (userRole === 'superadmin') return true;
   if (userRole === 'admin') return true;
+  if (userRole === 'finance') return true; // Finance can access financial resources
   return resourceOwnerId === userId;
 };
 

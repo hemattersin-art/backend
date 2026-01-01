@@ -298,7 +298,8 @@ const getAllSessions = async (req, res) => {
     const { supabaseAdmin } = require('../config/supabase');
     let countQuery = supabaseAdmin
       .from('sessions')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .neq('session_type', 'free_assessment'); // Exclude free assessments
 
     // Apply same filters for count
     if (status) {
@@ -313,12 +314,14 @@ const getAllSessions = async (req, res) => {
     if (date) {
       countQuery = countQuery.eq('scheduled_date', date);
     }
+    // Note: free_assessment exclusion already applied above
 
     const { count: sessionsCount, error: countError } = await countQuery;
     console.log('Total sessions count:', sessionsCount);
 
     // Now fetch the paginated sessions
     // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
+    // Exclude free assessments - they have their own page
     let query = supabaseAdmin
       .from('sessions')
       .select(`
@@ -341,7 +344,8 @@ const getAllSessions = async (req, res) => {
           area_of_expertise,
           email
         )
-      `);
+      `)
+      .neq('session_type', 'free_assessment'); // Exclude free assessments
 
     console.log('Supabase query built, executing...');
 
@@ -1729,6 +1733,17 @@ const completeSession = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to complete session')
       );
+    }
+
+    // Calculate commission and GST (if payment is completed)
+    try {
+      if (updatedSession.payment_status === 'paid') {
+        const commissionService = require('../services/commissionCalculationService');
+        await commissionService.calculateAndRecordCommission(sessionId, updatedSession);
+      }
+    } catch (commissionError) {
+      console.error('Error calculating commission:', commissionError);
+      // Don't fail the request if commission calculation fails
     }
 
     // Send completion notification to client

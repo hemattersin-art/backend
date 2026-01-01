@@ -395,6 +395,7 @@ const requireClient = requireRole(['client']);
 const requirePsychologist = requireRole(['psychologist']);
 const requireAdmin = requireRole(['admin', 'superadmin']);
 const requireSuperAdmin = requireRole(['superadmin']);
+const requireFinance = requireRole(['finance', 'admin', 'superadmin']); // Finance can access finance routes, admins can too
 
 module.exports = {
   authenticateToken,
@@ -402,5 +403,6 @@ module.exports = {
   requireClient,
   requirePsychologist,
   requireAdmin,
-  requireSuperAdmin
+  requireSuperAdmin,
+  requireFinance
 };

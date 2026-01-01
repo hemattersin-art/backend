@@ -748,7 +748,7 @@ const updateUserRole = async (req, res) => {
     const { userId } = req.params;
     const { new_role } = req.body;
 
-    if (!new_role || !['client', 'psychologist', 'admin', 'superadmin'].includes(new_role)) {
+    if (!new_role || !['client', 'psychologist', 'admin', 'superadmin', 'finance'].includes(new_role)) {
       return res.status(400).json(
         errorResponse('Valid new role is required')
       );

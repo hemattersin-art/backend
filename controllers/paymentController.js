@@ -2106,18 +2106,34 @@ const handlePaymentSuccess = async (req, res) => {
       }
     });
 
+    // Extract payment method from Razorpay response
+    // Razorpay sends method in the payment entity or directly in params
+    let paymentMethod = null;
+    if (params.payment?.entity?.method) {
+      paymentMethod = params.payment.entity.method;
+    } else if (params.method) {
+      paymentMethod = params.method;
+    }
+    
     // Atomically update payment status to completed and set session_id
     // Only update if status is still 'pending' (prevents race conditions)
     // This ensures only one request can successfully update the payment
+    const updateData = {
+      status: 'success',
+      razorpay_payment_id: razorpay_payment_id,
+      razorpay_response: params,
+      session_id: session.id,
+      completed_at: new Date().toISOString()
+    };
+    
+    // Add payment_method if available
+    if (paymentMethod) {
+      updateData.payment_method = paymentMethod;
+    }
+    
     const { data: updatedPayment, error: paymentStatusUpdateError } = await supabaseAdmin
       .from('payments')
-      .update({
-        status: 'success',
-        razorpay_payment_id: razorpay_payment_id,
-        razorpay_response: params,
-        session_id: session.id,
-        completed_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', paymentRecord.id)
       .eq('status', 'pending') // Only update if still pending (atomic check-and-set)
       .select('*')

@@ -39,6 +39,7 @@ const counsellingRoutes = require('./routes/counselling');
 const assessmentsRoutes = require('./routes/assessments');
 const securityRoutes = require('./routes/security');
 const betterParentingRoutes = require('./routes/betterParenting');
+const financeRoutes = require('./routes/finance');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -1001,6 +1002,7 @@ app.use('/api/counselling', counsellingRoutes);
 app.use('/api/assessments', assessmentsRoutes);
 app.use('/api/better-parenting', betterParentingRoutes);
 app.use('/api/security', securityRoutes);
+app.use('/api/finance', financeRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
