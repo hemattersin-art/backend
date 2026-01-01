@@ -171,18 +171,28 @@ app.get('/health', (req, res) => {
 });
 
 // Security monitoring endpoint (admin only)
-app.get('/api/security/status', (req, res) => {
-  const summary = securityMonitor.getSecuritySummary();
-  const recentEvents = securityMonitor.getRecentEvents(20);
-  
-  res.json({
-    success: true,
-    data: {
-      summary,
-      recentEvents,
-      timestamp: new Date().toISOString()
-    }
-  });
+app.get('/api/security/status', async (req, res) => {
+  try {
+    // Refresh metrics from database
+    await securityMonitor.loadMetrics();
+    const summary = securityMonitor.getSecuritySummary();
+    const recentEvents = await securityMonitor.getRecentEvents(20);
+    
+    res.json({
+      success: true,
+      data: {
+        summary,
+        recentEvents,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching security status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch security status'
+    });
+  }
 });
 
 
@@ -1060,6 +1070,10 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   // Start Recovery Job (recovers failed session creations, runs every 5 minutes)
   const { startRecoveryScheduler } = require('./jobs/recoveryJob');
   startRecoveryScheduler(5); // Run every 5 minutes
+  
+  // Start Security Logs Cleanup Job (deletes logs older than 1 week, runs weekly)
+  const { startSecurityLogsCleanupScheduler } = require('./jobs/securityLogsCleanupJob');
+  startSecurityLogsCleanupScheduler(7); // Run every 7 days (weekly)
   
   // Start Slot Lock Cleanup Job (releases expired slots and cleans up abandoned payments, runs every 10 minutes)
   const { releaseExpiredSlots, cleanupAbandonedPendingPayments } = require('./services/slotLockService');

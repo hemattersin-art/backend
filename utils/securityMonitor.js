@@ -1,5 +1,11 @@
-const fs = require('fs');
-const path = require('path');
+// Lazy load supabaseAdmin to avoid requiring it before dotenv is loaded
+let _supabaseAdmin = null;
+function getSupabaseAdmin() {
+  if (!_supabaseAdmin) {
+    _supabaseAdmin = require('../config/supabase').supabaseAdmin;
+  }
+  return _supabaseAdmin;
+}
 
 class SecurityMonitor {
   constructor() {
@@ -12,8 +18,8 @@ class SecurityMonitor {
       startTime: new Date()
     };
     
-    this.logFile = path.join(__dirname, 'security-logs.json');
-    this.loadMetrics();
+    // Don't load metrics in constructor - wait until dotenv is loaded
+    // loadMetrics() will be called after server starts
   }
 
   // Track blocked requests
@@ -69,27 +75,53 @@ class SecurityMonitor {
     });
   }
 
-  // Log security events
-  logSecurityEvent(event) {
+  // Log security events to database
+  async logSecurityEvent(event) {
+    // Prepare database entry
     const logEntry = {
-      ...event,
-      id: Date.now() + Math.random()
+      event_type: event.type,
+      ip_address: event.ip || null,
+      user_agent: event.userAgent || null,
+      email: event.email || null,
+      reason: event.reason || null,
+      url: event.url || null,
+      method: event.method || null,
+      memory_usage_mb: event.memoryUsage || null,
+      event_data: {
+        // Store any additional event data
+        ...(event.userAgent ? { userAgent: event.userAgent } : {}),
+        ...(event.url ? { url: event.url } : {}),
+        ...(event.method ? { method: event.method } : {})
+      },
+      timestamp: event.timestamp || new Date().toISOString()
     };
 
-    // Append to log file
-    try {
-      const logs = this.loadLogs();
-      logs.push(logEntry);
-      
-      // Keep only last 1000 entries
-      if (logs.length > 1000) {
-        logs.splice(0, logs.length - 1000);
-      }
-      
-      fs.writeFileSync(this.logFile, JSON.stringify(logs, null, 2));
-    } catch (error) {
-      console.error('Failed to write security log:', error);
-    }
+    // Insert into database (non-blocking)
+    getSupabaseAdmin()
+      .from('security_logs')
+      .insert([logEntry])
+      .then(({ error }) => {
+        if (error) {
+          // Table might not exist - this is a critical security issue
+          if (error.code === '42P01') { // Table doesn't exist
+            console.error('🚨 CRITICAL: security_logs table not found! Run migration: create_security_logs_table.sql');
+            console.error('🚨 Security log (console only):', JSON.stringify(event, null, 2));
+          } else {
+            // Other database errors - log but don't break
+            console.error('🚨 Failed to write security log to database:', error);
+            console.error('🚨 Security log (console only):', JSON.stringify(event, null, 2));
+          }
+        } else {
+          // Only log in non-production to reduce noise
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`🔒 Security log saved: ${event.type} - IP: ${event.ip || 'N/A'}`);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('🚨 Exception writing security log:', err);
+        console.error('🚨 Security log (console only):', JSON.stringify(event, null, 2));
+      });
 
     // Console warning for critical events
     if (event.type === 'BLOCKED_REQUEST' || event.type === 'MEMORY_ALERT') {
@@ -97,52 +129,121 @@ class SecurityMonitor {
     }
   }
 
-  // Load existing logs
-  loadLogs() {
+  // Load existing logs from database (for backward compatibility)
+  async loadLogs(limit = 1000) {
     try {
-      if (fs.existsSync(this.logFile)) {
-        const data = fs.readFileSync(this.logFile, 'utf8');
-        return JSON.parse(data);
+      const { data, error } = await getSupabaseAdmin()
+        .from('security_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        if (error.code === '42P01') {
+          // Table doesn't exist yet - return empty array
+          return [];
+        }
+        console.error('Failed to load security logs from database:', error);
+        return [];
       }
+
+      // Convert database format to old format for backward compatibility
+      return (data || []).map(log => ({
+        id: log.id,
+        type: log.event_type,
+        ip: log.ip_address,
+        userAgent: log.user_agent,
+        email: log.email,
+        reason: log.reason,
+        url: log.url,
+        method: log.method,
+        memoryUsage: log.memory_usage_mb,
+        timestamp: log.timestamp,
+        ...(log.event_data || {})
+      }));
     } catch (error) {
       console.error('Failed to load security logs:', error);
+      return [];
     }
-    return [];
   }
 
-  // Load metrics from file
-  loadMetrics() {
+  // Load metrics from database (aggregate from security_logs)
+  async loadMetrics() {
     try {
-      const metricsFile = path.join(__dirname, 'security-metrics.json');
-      if (fs.existsSync(metricsFile)) {
-        const data = fs.readFileSync(metricsFile, 'utf8');
-        const savedMetrics = JSON.parse(data);
-        
-        // Merge with current metrics
-        this.metrics = {
-          ...this.metrics,
-          ...savedMetrics,
-          suspiciousIPs: new Set(savedMetrics.suspiciousIPs || [])
-        };
+      // Check if environment variables are loaded
+      // If not, skip loading metrics (will retry later)
+      if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        // Environment variables not loaded yet - this is expected on startup
+        // Don't log as error, just return silently
+        return;
       }
+
+      // Get metrics from database
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+      const supabaseAdmin = getSupabaseAdmin();
+
+      // Count blocked requests
+      const { count: blockedCount } = await supabaseAdmin
+        .from('security_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'BLOCKED_REQUEST')
+        .gte('timestamp', oneWeekAgo.toISOString());
+
+      // Count bot detections
+      const { count: botCount } = await supabaseAdmin
+        .from('security_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'BOT_DETECTED')
+        .gte('timestamp', oneWeekAgo.toISOString());
+
+      // Count memory alerts
+      const { count: memoryCount } = await supabaseAdmin
+        .from('security_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'MEMORY_ALERT')
+        .gte('timestamp', oneWeekAgo.toISOString());
+
+      // Count auth failures
+      const { count: authCount } = await supabaseAdmin
+        .from('security_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_type', 'AUTH_FAILURE')
+        .gte('timestamp', oneWeekAgo.toISOString());
+
+      // Get unique suspicious IPs
+      const { data: ipData } = await supabaseAdmin
+        .from('security_logs')
+        .select('ip_address')
+        .eq('event_type', 'BLOCKED_REQUEST')
+        .gte('timestamp', oneWeekAgo.toISOString())
+        .not('ip_address', 'is', null);
+
+      const uniqueIPs = new Set((ipData || []).map(log => log.ip_address).filter(Boolean));
+
+      // Update metrics
+      this.metrics.requestsBlocked = blockedCount || 0;
+      this.metrics.botDetections = botCount || 0;
+      this.metrics.memoryAlerts = memoryCount || 0;
+      this.metrics.authFailures = authCount || 0;
+      this.metrics.suspiciousIPs = uniqueIPs;
     } catch (error) {
-      console.error('Failed to load security metrics:', error);
+      // Only log errors if environment variables are loaded (avoid startup noise)
+      if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        // Environment is loaded but query failed - this is a real error
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Failed to load security metrics from database:', error.message);
+        }
+      }
+      // Keep default metrics if database query fails
     }
   }
 
-  // Save metrics to file
+  // Save metrics (no longer needed - metrics are calculated from database)
   saveMetrics() {
-    try {
-      const metricsFile = path.join(__dirname, 'security-metrics.json');
-      const metricsToSave = {
-        ...this.metrics,
-        suspiciousIPs: Array.from(this.metrics.suspiciousIPs)
-      };
-      
-      fs.writeFileSync(metricsFile, JSON.stringify(metricsToSave, null, 2));
-    } catch (error) {
-      console.error('Failed to save security metrics:', error);
-    }
+    // Metrics are now calculated from database, no need to save separately
+    // This method is kept for backward compatibility
   }
 
   // Get security summary
@@ -162,41 +263,78 @@ class SecurityMonitor {
     };
   }
 
-  // Get recent security events
-  getRecentEvents(limit = 50) {
-    const logs = this.loadLogs();
-    return logs.slice(-limit).reverse();
+  // Get recent security events from database
+  async getRecentEvents(limit = 50) {
+    try {
+      const { data, error } = await getSupabaseAdmin()
+        .from('security_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        if (error.code === '42P01') {
+          // Table doesn't exist yet
+          return [];
+        }
+        console.error('Failed to get recent security events:', error);
+        return [];
+      }
+
+      // Convert database format to old format for backward compatibility
+      return (data || []).map(log => ({
+        id: log.id,
+        type: log.event_type,
+        ip: log.ip_address,
+        userAgent: log.user_agent,
+        email: log.email,
+        reason: log.reason,
+        url: log.url,
+        method: log.method,
+        memoryUsage: log.memory_usage_mb,
+        timestamp: log.timestamp,
+        ...(log.event_data || {})
+      }));
+    } catch (error) {
+      console.error('Failed to get recent security events:', error);
+      return [];
+    }
   }
 
-  // Clean old logs (run periodically)
-  cleanOldLogs() {
-    try {
-      const logs = this.loadLogs();
-      const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      
-      const recentLogs = logs.filter(log => 
-        new Date(log.timestamp) > oneWeekAgo
-      );
-      
-      fs.writeFileSync(this.logFile, JSON.stringify(recentLogs, null, 2));
-      console.log(`🧹 Cleaned security logs. Kept ${recentLogs.length} recent entries.`);
-    } catch (error) {
-      console.error('Failed to clean security logs:', error);
-    }
+  // Clean old logs (now handled by cleanup job, kept for backward compatibility)
+  async cleanOldLogs() {
+    // Cleanup is now handled by securityLogsCleanupJob.js
+    // This method is kept for backward compatibility but does nothing
+    console.log('ℹ️ Security logs cleanup is now handled by securityLogsCleanupJob.js');
   }
 }
 
 // Create singleton instance
 const securityMonitor = new SecurityMonitor();
 
-// Save metrics every 5 minutes
-setInterval(() => {
-  securityMonitor.saveMetrics();
-}, 5 * 60 * 1000);
+// Don't load metrics immediately - wait for dotenv to load first
+// Metrics will be loaded when first needed or by the interval below
 
-// Clean logs daily
-setInterval(() => {
-  securityMonitor.cleanOldLogs();
-}, 24 * 60 * 60 * 1000);
+// Refresh metrics every 5 minutes (starts after first interval)
+// This ensures dotenv is loaded before first call
+setTimeout(() => {
+  // Initial load after a short delay to ensure dotenv is loaded
+  securityMonitor.loadMetrics().catch(err => {
+    // Silently fail on first load - it's expected if dotenv isn't loaded yet
+    if (process.env.NODE_ENV === 'development') {
+      // Only log in development for debugging
+    }
+  });
+  
+  // Then set up periodic refresh
+  setInterval(() => {
+    securityMonitor.loadMetrics().catch(err => {
+      // Silently fail - metrics are not critical for operation
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Failed to refresh security metrics:', err);
+      }
+    });
+  }, 5 * 60 * 1000);
+}, 1000); // Wait 1 second for dotenv to load
 
 module.exports = securityMonitor;
