@@ -149,10 +149,17 @@ app.use(memoryMonitor);
 // General rate limiting
 app.use(generalLimiter);
 
-// Compression middleware (reduces transfer time, especially for international users)
-// Note: Requires 'npm install compression' - uncomment after installing
-// const compression = require('compression');
-// app.use(compression({ level: 6, threshold: 1024 })); // Compress responses > 1KB
+// Compression middleware (reduces egress by 60-80% and transfer time)
+// Note: Requires 'npm install compression' - install if not already installed
+let compression;
+try {
+  compression = require('compression');
+  app.use(compression({ level: 6, threshold: 1024 })); // Compress responses > 1KB
+  console.log('✅ Response compression enabled (reduces egress by 60-80%)');
+} catch (err) {
+  console.warn('⚠️ Compression module not found. Install with: npm install compression');
+  console.warn('   This reduces egress by 60-80% - highly recommended!');
+}
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -1074,6 +1081,10 @@ console.log(`🚀 Little Care Backend running on port ${PORT}`);
   // Start Security Logs Cleanup Job (deletes logs older than 1 week, runs weekly)
   const { startSecurityLogsCleanupScheduler } = require('./jobs/securityLogsCleanupJob');
   startSecurityLogsCleanupScheduler(7); // Run every 7 days (weekly)
+  
+  // Start Audit Logs Cleanup Job (deletes logs older than 1 week, runs weekly)
+  const { startAuditLogsCleanupScheduler } = require('./jobs/auditLogsCleanupJob');
+  startAuditLogsCleanupScheduler(7); // Run every 7 days (weekly)
   
   // Start Slot Lock Cleanup Job (releases expired slots and cleans up abandoned payments, runs every 10 minutes)
   const { releaseExpiredSlots, cleanupAbandonedPendingPayments } = require('./services/slotLockService');

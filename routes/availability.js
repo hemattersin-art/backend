@@ -2,6 +2,7 @@ const express = require('express');
 const availabilityService = require('../utils/availabilityCalendarService');
 const calendarSyncService = require('../services/calendarSyncService');
 const { successResponse, errorResponse } = require('../utils/helpers');
+const { globalCache } = require('../utils/cache');
 const router = express.Router();
 
 /**
@@ -61,6 +62,26 @@ router.get('/psychologist/:id/range', async (req, res, next) => {
       );
     }
 
+    // Create cache key (exclude sync parameter from cache key if sync=true, as it needs fresh data)
+    const cacheKey = sync === '1' || sync === 'true' 
+      ? `availability-range-${psychologistId}-${startDate}-${endDate}-sync`
+      : `availability-range-${psychologistId}-${startDate}-${endDate}`;
+
+    // Check cache first (only if not syncing)
+    if (sync !== '1' && sync !== 'true') {
+      const cached = globalCache.get(cacheKey);
+      if (cached) {
+        console.log(`📦 Cache hit for availability range: ${psychologistId} (${startDate} to ${endDate})`);
+        // Set cache headers
+        res.set({
+          'Cache-Control': 'public, max-age=120, s-maxage=300',
+          'ETag': `"${cacheKey}"`,
+          'X-Cache': 'HIT'
+        });
+        return res.json(cached);
+      }
+    }
+
     // Optionally run a real-time Google Calendar sync for this psychologist
     // when ?sync=1 or ?sync=true is passed (used by therapist profile page).
     if (sync === '1' || sync === 'true') {
@@ -81,18 +102,27 @@ router.get('/psychologist/:id/range', async (req, res, next) => {
       endDate
     );
 
-    // Set cache headers (2 minutes browser cache, 5 minutes CDN)
-    res.set({
-      'Cache-Control': 'public, max-age=120, s-maxage=300',
-      'ETag': `"availability-range-${psychologistId}-${startDate}-${endDate}"`
+    const response = successResponse({
+      message: 'Availability range retrieved successfully',
+      data: availability
     });
 
-    res.json(
-      successResponse({
-        message: 'Availability range retrieved successfully',
-        data: availability
-      })
-    );
+    // Cache the response (24 hours TTL for non-sync requests, 5 minutes for sync requests)
+    const cacheTTL = sync === '1' || sync === 'true' 
+      ? 5 * 60 * 1000  // 5 minutes for sync requests (fresher data)
+      : 24 * 60 * 60 * 1000;  // 24 hours for regular requests
+    
+    globalCache.set(cacheKey, response, cacheTTL);
+    console.log(`💾 Cached availability range: ${psychologistId} (TTL: ${cacheTTL / 1000 / 60} minutes)`);
+
+    // Set cache headers
+    res.set({
+      'Cache-Control': 'public, max-age=120, s-maxage=300',
+      'ETag': `"${cacheKey}"`,
+      'X-Cache': 'MISS'
+    });
+
+    res.json(response);
 
   } catch (error) {
     console.error('Error getting psychologist availability range:', error);

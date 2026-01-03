@@ -284,10 +284,10 @@ class AvailabilityCalendarService {
         throw new Error('Psychologist not found');
       }
 
-      // SINGLE QUERY: Get availability from availability table
+      // SINGLE QUERY: Get availability from availability table (optimized - select only needed columns)
       const { data: availabilityData, error: availabilityError } = await supabaseAdmin
         .from('availability')
-        .select('*')
+        .select('id, psychologist_id, date, time_slots, is_available')
         .eq('psychologist_id', psychologistId)
         .gte('date', startDate)
         .lte('date', endDate)
@@ -300,28 +300,33 @@ class AvailabilityCalendarService {
 
       console.log(`📊 Found ${availabilityData.length} availability records in date range`);
 
-      // Get all booked sessions in the date range to filter them out
+      // Get all booked sessions in the date range to filter them out (optimized - parallel queries)
       // Check both regular therapy sessions and assessment sessions
-      const { data: bookedSessions, error: sessionsError } = await supabaseAdmin
-        .from('sessions')
-        .select('scheduled_date, scheduled_time, status, id')
-        .eq('psychologist_id', psychologistId)
-        .gte('scheduled_date', startDate)
-        .lte('scheduled_date', endDate)
-        .in('status', ['booked', 'rescheduled', 'confirmed']);
+      const [sessionsResult, assessmentSessionsResult] = await Promise.allSettled([
+        supabaseAdmin
+          .from('sessions')
+          .select('scheduled_date, scheduled_time, status')
+          .eq('psychologist_id', psychologistId)
+          .gte('scheduled_date', startDate)
+          .lte('scheduled_date', endDate)
+          .in('status', ['booked', 'rescheduled', 'confirmed']),
+        supabaseAdmin
+          .from('assessment_sessions')
+          .select('scheduled_date, scheduled_time, status')
+          .eq('psychologist_id', psychologistId)
+          .gte('scheduled_date', startDate)
+          .lte('scheduled_date', endDate)
+          .in('status', ['booked', 'reserved']) // Include reserved as they're also blocked
+      ]);
+
+      const bookedSessions = sessionsResult.status === 'fulfilled' ? sessionsResult.value.data : null;
+      const sessionsError = sessionsResult.status === 'fulfilled' ? sessionsResult.value.error : sessionsResult.reason;
+      const bookedAssessmentSessions = assessmentSessionsResult.status === 'fulfilled' ? assessmentSessionsResult.value.data : null;
+      const assessmentSessionsError = assessmentSessionsResult.status === 'fulfilled' ? assessmentSessionsResult.value.error : assessmentSessionsResult.reason;
 
       if (sessionsError) {
         console.error('Error fetching booked sessions:', sessionsError);
       }
-
-      // Also get booked assessment sessions for the same period
-      const { data: bookedAssessmentSessions, error: assessmentSessionsError } = await supabaseAdmin
-        .from('assessment_sessions')
-        .select('scheduled_date, scheduled_time, status, id')
-        .eq('psychologist_id', psychologistId)
-        .gte('scheduled_date', startDate)
-        .lte('scheduled_date', endDate)
-        .in('status', ['booked', 'reserved']); // Include reserved as they're also blocked
 
       if (assessmentSessionsError) {
         console.error('Error fetching booked assessment sessions:', assessmentSessionsError);
