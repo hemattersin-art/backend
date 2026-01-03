@@ -2,20 +2,25 @@ const { supabaseAdmin } = require('../config/supabase');
 
 /**
  * Generate default time slots for free assessments
- * Slots: 10 AM, 11 AM, 12 PM, (break 1-2 PM), 2 PM, 3 PM, 4 PM
- * Returns array of time strings in HH:MM:SS format (e.g. "10:00:00", "14:00:00")
+ * 20-minute slots from 10:00 AM to 5:00 PM (17:00)
+ * Returns array of time strings in HH:MM:SS format (e.g. "10:00:00", "10:20:00", "10:40:00")
  */
 const generateDefaultTimeSlots = () => {
-  // Time slots: 10 AM, 11 AM, 12 PM, 2 PM, 3 PM, 4 PM
+  // 20-minute slots from 10:00 AM to 5:00 PM (17:00)
+  // 10:00 to 17:00 = 7 hours = 420 minutes = 21 slots (20-minute intervals)
   // Stored in HH:MM:SS format (24-hour)
-  return [
-    '10:00:00', // 10:00 AM
-    '11:00:00', // 11:00 AM
-    '12:00:00', // 12:00 PM
-    '14:00:00', // 2:00 PM
-    '15:00:00', // 3:00 PM
-    '16:00:00'  // 4:00 PM
-  ];
+  const slots = [];
+  const startHour = 10; // 10:00 AM
+  const endHour = 17;   // 5:00 PM (17:00)
+  
+  for (let hour = startHour; hour < endHour; hour++) {
+    // Each hour has 3 slots: :00, :20, :40
+    slots.push(`${String(hour).padStart(2, '0')}:00:00`);
+    slots.push(`${String(hour).padStart(2, '0')}:20:00`);
+    slots.push(`${String(hour).padStart(2, '0')}:40:00`);
+  }
+  
+  return slots;
 };
 
 /**

@@ -230,9 +230,10 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
     console.log('🔍 Found date-specific configs:', dateConfigs?.length || 0);
 
     // Convert date configs to object for easier lookup
+    // Store the full config object, not just time_slots
     const dateConfigsByDate = {};
     dateConfigs.forEach(config => {
-      dateConfigsByDate[config.date] = config.time_slots;
+      dateConfigsByDate[config.date] = config;
     });
 
     console.log('🔍 Date configs by date:', dateConfigsByDate);
@@ -245,6 +246,28 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
       // If we have date-specific configurations, use them
       if (dateConfigs && dateConfigs.length > 0) {
         console.log('✅ Found date-specific configurations, processing them...');
+        
+        // Get existing bookings for the date range to calculate available slots correctly
+        const { data: existingBookings, error: bookingsError } = await supabaseAdmin
+          .from('free_assessments')
+          .select('scheduled_date, scheduled_time')
+          .gte('scheduled_date', startDate)
+          .lte('scheduled_date', endDate)
+          .eq('status', 'booked');
+
+        if (bookingsError) {
+          console.error('Error fetching existing bookings:', bookingsError);
+          // Continue without booking data - will overestimate availability
+        }
+
+        // Count bookings per date and time
+        const bookingCounts = {};
+        if (existingBookings) {
+          existingBookings.forEach(booking => {
+            const key = `${booking.scheduled_date}_${booking.scheduled_time}`;
+            bookingCounts[key] = (bookingCounts[key] || 0) + 1;
+          });
+        }
         
         // Generate availability for each date in range using date-specific configs
         const availability = [];
@@ -265,27 +288,48 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
             
             if (dateConfig) {
               console.log(`🔍 Processing configured date ${dateStr}:`, dateConfig);
-              const allSlots = [
-                ...(dateConfig.morning || []),
-                ...(dateConfig.noon || []),
-                ...(dateConfig.evening || []),
-                ...(dateConfig.night || [])
-              ];
               
-              availability.push({
-                date: dateStr,
-                availableSlots: allSlots.length,
-                totalSlots: allSlots.length,
-                isConfigured: true
+              // Extract slots (support both grouped object and flat array)
+              const extractAllSlots = (ts) => {
+                if (Array.isArray(ts)) return ts;
+                if (ts && typeof ts === 'object') {
+                  return [
+                    ...(ts.morning || []),
+                    ...(ts.noon || []),
+                    ...(ts.evening || []),
+                    ...(ts.night || [])
+                  ];
+                }
+                return [];
+              };
+              const allSlots = extractAllSlots(dateConfig.time_slots);
+              
+              // Calculate available slots (subtract booked slots)
+              let availableSlots = 0;
+              const maxBookingsPerSlot = 1; // Default max bookings per slot
+              
+              allSlots.forEach(slot => {
+                const time24Hour = toHms24(slot);
+                const bookingKey = `${dateStr}_${time24Hour}`;
+                const currentBookings = bookingCounts[bookingKey] || 0;
+                
+                if (currentBookings < maxBookingsPerSlot) {
+                  availableSlots++;
+                }
               });
-            } else {
-              availability.push({
-                date: dateStr,
-                availableSlots: 0,
-                totalSlots: 0,
-                isConfigured: false
-              });
+              
+              // Include all dates that have slots configured (even if availableSlots is 0)
+              // Frontend will handle highlighting based on availableSlots > 0
+              if (allSlots.length > 0) {
+                availability.push({
+                  date: dateStr,
+                  availableSlots, // Use calculated available slots (can be 0 if all booked)
+                  totalSlots: allSlots.length,
+                  isConfigured: true
+                });
+              }
             }
+            // Don't include dates without configs - only dates with configs that have available slots
           }
         }
         
@@ -385,7 +429,7 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
             }
             return [];
           };
-          const allSlots = extractAllSlots(dateConfig);
+          const allSlots = extractAllSlots(dateConfig.time_slots);
           
           console.log(`🔍 Date ${dateStr} allSlots:`, allSlots);
           totalSlots = allSlots.length;
@@ -422,12 +466,17 @@ const getFreeAssessmentAvailabilityRange = async (req, res) => {
         
         console.log(`🔍 Date ${dateStr}: configured=${isConfigured}, availableSlots=${availableSlots}, totalSlots=${totalSlots}`);
         
-        availability.push({
-          date: dateStr,
-          availableSlots,
-          totalSlots,
-          isConfigured
-        });
+        // Include all dates that have a configuration (even if availableSlots is 0)
+        // Also include dates without configs if they have available slots from global timeslots
+        // Frontend will handle highlighting based on availableSlots > 0
+        if (isConfigured || availableSlots > 0) {
+          availability.push({
+            date: dateStr,
+            availableSlots, // Can be 0 if all slots are booked
+            totalSlots,
+            isConfigured
+          });
+        }
       }
     }
 
