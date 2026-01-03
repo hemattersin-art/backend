@@ -380,6 +380,33 @@ const getAllSessions = async (req, res) => {
       );
     }
 
+    // Fetch package data for sessions that have package_id
+    // Since there's no direct foreign key relationship, fetch separately
+    if (sessions && sessions.length > 0) {
+      const packageIds = [...new Set(sessions.map(s => s.package_id).filter(Boolean))];
+      
+      if (packageIds.length > 0) {
+        const { data: packages, error: packagesError } = await supabaseAdmin
+          .from('packages')
+          .select('id, package_type, price, description, session_count')
+          .in('id', packageIds);
+
+        if (!packagesError && packages) {
+          const packagesMap = packages.reduce((acc, pkg) => {
+            acc[pkg.id] = pkg;
+            return acc;
+          }, {});
+
+          // Attach package data to sessions
+          sessions.forEach(session => {
+            if (session.package_id && packagesMap[session.package_id]) {
+              session.package = packagesMap[session.package_id];
+            }
+          });
+        }
+      }
+    }
+
     // Also fetch assessment sessions for admin dashboard
     let assessmentSessions = [];
     let assessmentSessionsCount = 0;
