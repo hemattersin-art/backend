@@ -2393,8 +2393,9 @@ const handlePaymentSuccess = async (req, res) => {
             status: session.status || 'booked',
             psychologistId: session.psychologist_id || actualPsychologistId,
             clientId: session.client_id || clientId,
-            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for download URL
-            receiptNumber: receiptResult?.receiptNumber || null
+            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for reference
+            receiptNumber: receiptResult?.receiptNumber || null,
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null // Pass PDF buffer to attach to email
       });
       
           console.log('✅ Confirmation emails sent successfully with receipt (async)');

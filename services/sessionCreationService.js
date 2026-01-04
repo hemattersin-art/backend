@@ -423,8 +423,9 @@ const createSessionFromSlotLock = async (slotLock) => {
             psychologistId: slotLock.psychologist_id,
             clientId: slotLock.client_id,
             packageInfo: packageInfo, // Include package details
-            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for download URL
-            receiptNumber: receiptResult?.receiptNumber || null
+            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for reference
+            receiptNumber: receiptResult?.receiptNumber || null,
+            receiptPdfBuffer: receiptResult?.pdfBuffer || null // Pass PDF buffer to attach to email
           });
           
           if (emailResult) {

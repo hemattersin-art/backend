@@ -184,7 +184,8 @@ class EmailService {
         psychologistId,
         clientId,
         packageInfo, // Package information: { totalSessions, completedSessions, remainingSessions, packageType }
-        receiptId // Receipt ID for generating download URL
+        receiptId, // Receipt ID for generating download URL
+        receiptPdfBuffer // PDF buffer to attach to email
       } = sessionData;
 
       // Use consistent date/time format
@@ -247,10 +248,18 @@ class EmailService {
       const googleCalendarLink = generateGoogleCalendarLink(calendarData);
       const outlookCalendarLink = generateOutlookCalendarLink(calendarData);
 
-      // Generate receipt download URL if receiptId is available
-      // Link to profile receipts page where user can download after login
-      const frontendUrl = process.env.FRONTEND_URL || process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') || 'https://www.little.care';
-      const receiptDownloadUrl = receiptId ? `${frontendUrl}/profile/receipts` : null;
+      // Generate receipt filename for attachment
+      let receiptFileName = 'Receipt.pdf';
+      if (receiptPdfBuffer && clientName) {
+        const sanitizedName = clientName
+          .trim()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-zA-Z0-9\-_]/g, '')
+          .substring(0, 50);
+        receiptFileName = `${sanitizedName || 'Receipt'}.pdf`;
+      } else if (receiptPdfBuffer && sessionData.receiptNumber) {
+        receiptFileName = `Receipt-${sessionData.receiptNumber}.pdf`;
+      }
 
       // Send email to client
       if (clientEmail && !clientEmail.includes('placeholder')) {
@@ -266,7 +275,8 @@ class EmailService {
           googleCalendarLink,
           outlookCalendarLink,
           price: finalPrice || 0,
-          receiptDownloadUrl: receiptDownloadUrl || sessionData.receiptUrl || null, // Receipt download URL
+          receiptPdfBuffer: receiptPdfBuffer || null, // Receipt PDF buffer to attach
+          receiptFileName: receiptFileName, // Receipt filename for attachment
           packageInfo: packageInfo || null // Package information
         });
       } else {
@@ -328,7 +338,8 @@ class EmailService {
       googleCalendarLink,
       outlookCalendarLink,
       price,
-      receiptDownloadUrl,
+      receiptPdfBuffer,
+      receiptFileName,
       packageInfo
     } = emailData;
 
@@ -424,14 +435,13 @@ class EmailService {
                         </tr>
                       </table>
                       
-                      ${receiptDownloadUrl ? `
-                      <!-- Receipt Download -->
+                      ${receiptPdfBuffer ? `
+                      <!-- Receipt Info -->
                       <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
                         <tr>
                           <td style="padding: 0 0 20px 0; text-align: center;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📄 Download Receipt</h3>
-                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Your payment receipt is ready for download.</p>
-                            <a href="${receiptDownloadUrl}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">Download Receipt</a>
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📄 Payment Receipt</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Your payment receipt has been attached to this email.</p>
                           </td>
                         </tr>
                       </table>
@@ -527,6 +537,11 @@ class EmailService {
           filename: calendarInvite.filename,
           content: calendarInvite.content,
           contentType: calendarInvite.contentType
+        }] : []),
+        ...(receiptPdfBuffer ? [{
+          filename: receiptFileName || 'Receipt.pdf',
+          content: receiptPdfBuffer,
+          contentType: 'application/pdf'
         }] : [])
       ]
     };
