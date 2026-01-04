@@ -298,7 +298,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your therapy session with Dr. ${psychologistName} is scheduled in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const clientMessage = `🔔 Reminder: Your therapy session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           (session.google_meet_link 
             ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
             : '') +
@@ -323,7 +323,7 @@ class SessionReminderService {
 
       // Send reminder to psychologist
       if (psychologist.phone) {
-        const psychologistMessage = `🔔 Reminder: You have a session with ${clientName} in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const psychologistMessage = `🔔 Reminder: You have a session with ${clientName}.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           `👤 Client: ${clientName}\n` +
           (session.google_meet_link 
             ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
@@ -371,7 +371,7 @@ class SessionReminderService {
             user_role: 'client',
             type: 'session_reminder_2h',
             title: 'Session Reminder',
-            message: `Your session with Dr. ${psychologistName} is in 2 hours`,
+            message: `Your session with ${psychologistName} is scheduled`,
             related_id: session.id,
             is_read: false
           },
@@ -380,7 +380,7 @@ class SessionReminderService {
             user_role: 'psychologist',
             type: 'session_reminder_2h',
             title: 'Session Reminder',
-            message: `Your session with ${clientName} is in 2 hours`,
+            message: `Your session with ${clientName} is scheduled`,
             related_id: session.id,
             is_read: false
           }
@@ -432,7 +432,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your free assessment session with ${psychologistName} is scheduled in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const clientMessage = `🔔 Reminder: Your free assessment session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           `Please be ready for your assessment session. We look forward to meeting you!`;
 
         reminderPromises.push(
@@ -454,7 +454,7 @@ class SessionReminderService {
 
       // Send reminder to psychologist if exists
       if (psychologist && psychologist.phone) {
-        const psychologistMessage = `🔔 Reminder: You have a free assessment session with ${clientName} in 2 hours.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const psychologistMessage = `🔔 Reminder: You have a free assessment session with ${clientName}.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           `👤 Client: ${clientName}\n` +
           `Assessment ID: ${assessment.id}`;
 
@@ -483,7 +483,7 @@ class SessionReminderService {
           user_role: 'client',
           type: 'free_assessment_reminder_2h',
           title: 'Free Assessment Reminder',
-          message: `Your free assessment session is in 2 hours`,
+          message: `Your free assessment session is scheduled`,
           related_id: assessment.id,
           is_read: false
         }
@@ -495,7 +495,7 @@ class SessionReminderService {
           user_role: 'psychologist',
           type: 'free_assessment_reminder_2h',
           title: 'Free Assessment Reminder',
-          message: `Your free assessment session with ${clientName} is in 2 hours`,
+          message: `Your free assessment session with ${clientName} is scheduled`,
           related_id: assessment.id,
           is_read: false
         });

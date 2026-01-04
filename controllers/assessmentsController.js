@@ -125,60 +125,33 @@ const getAssessmentBySlug = async (req, res) => {
       return res.status(400).json(errorResponse('Slug is required'));
     }
 
-    // OPTIMIZATION: Check cache first (1 hour TTL for published assessments)
-    const cacheKey = `assessment:${slug}`;
-    const cached = globalCache.get(cacheKey);
-    if (cached) {
-      return res.json(successResponse(cached, 'Assessment retrieved (cached)'));
+    // Check for preview mode
+    const isPreview = req.query.preview === '1' || req.query.preview === 'true';
+    
+    // OPTIMIZATION: Check cache first (only for published, not preview)
+    // Preview mode should always fetch fresh data
+    const cacheKey = `assessment:${slug}${isPreview ? ':preview' : ''}`;
+    if (!isPreview) {
+      const cached = globalCache.get(cacheKey);
+      if (cached) {
+        return res.json(successResponse(cached, 'Assessment retrieved (cached)'));
+      }
     }
 
-    // OPTIMIZATION: Select only needed columns to reduce egress usage
-    // This reduces data transfer from ~50-100KB to ~10-20KB per request
+    // Use select('*') to get all columns (like counselling and better-parenting)
+    // This avoids column mismatch errors if schema changes
     const startTime = Date.now();
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('assessments')
-      .select(`
-        id,
-        slug,
-        status,
-        hero_title,
-        hero_subtext,
-        hero_image_url,
-        hero_cta_text,
-        hero_point_1,
-        hero_point_2,
-        hero_point_3,
-        seo_title,
-        seo_description,
-        og_image,
-        benefits_title,
-        benefits,
-        benefits_image_url,
-        types_title,
-        types,
-        types_button_text,
-        right_image_url,
-        left_image_url,
-        mobile_image_url,
-        faqs,
-        testimonials,
-        info_cards,
-        videos,
-        reviews,
-        assigned_doctor_ids,
-        assessment_card_title,
-        assessment_card_description,
-        assessment_card_sessions_info,
-        assessment_card_types_heading,
-        assessment_card_certified_label,
-        assessment_card_non_certified_label,
-        therapists_heading,
-        created_at,
-        updated_at
-      `)
-      .eq('slug', slug)
-      .eq('status', 'published')
-      .single();
+      .select('*')
+      .eq('slug', slug);
+    
+    // Only filter by published status if not in preview mode
+    if (!isPreview) {
+      query = query.eq('status', 'published');
+    }
+    
+    const { data, error } = await query.single();
     
     const queryTime = Date.now() - startTime;
     if (queryTime > 1000) {
@@ -208,7 +181,10 @@ const getAssessmentBySlug = async (req, res) => {
     // OPTIMIZATION: Cache the result for 24 hours (86400000ms)
     // Published assessments rarely change, so 24-hour cache is safe
     // This reduces egress by 99%+ (cache hits = 0 egress)
-    globalCache.set(cacheKey, data, 86400000);
+    // Only cache published assessments, not preview mode
+    if (!isPreview) {
+      globalCache.set(cacheKey, data, 86400000);
+    }
     
     res.json(successResponse(data, 'Assessment retrieved'));
   } catch (err) {

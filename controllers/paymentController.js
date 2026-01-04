@@ -830,16 +830,18 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     
     console.log('📄 Storing receipt data - session_id:', receiptData.session_id, 'receipt_number:', receiptData.receipt_number);
     
-    const { error: receiptError } = await supabaseAdmin
+    const { data: insertedReceipt, error: receiptError } = await supabaseAdmin
       .from('receipts')
-      .insert(receiptData);
+      .insert(receiptData)
+      .select('id')
+      .single();
 
     if (receiptError) {
       console.error('❌ Error storing receipt details:', receiptError);
       throw receiptError;
     }
 
-    console.log('✅ Receipt details stored successfully in database');
+    console.log('✅ Receipt details stored successfully in database, receipt ID:', insertedReceipt?.id);
     
     // Log receipt generation
     if (clientData?.id) {
@@ -857,6 +859,7 @@ const generateAndStoreReceipt = async (sessionData, paymentData, clientData, psy
     // Return receipt info with PDF buffer (PDF will be sent then discarded)
     return { 
       success: true, 
+      receiptId: insertedReceipt?.id, // Return receipt ID for download URL
       receiptNumber: shortReceiptNumber, // Return short receipt number as primary
       receiptNumberLong: receiptNumber, // Keep original for reference
       pdfBuffer: pdfBuffer, // PDF buffer for email/WhatsApp (will be discarded after sending)
@@ -2390,7 +2393,7 @@ const handlePaymentSuccess = async (req, res) => {
             status: session.status || 'booked',
             psychologistId: session.psychologist_id || actualPsychologistId,
             clientId: session.client_id || clientId,
-            receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for download URL
             receiptNumber: receiptResult?.receiptNumber || null
       });
       

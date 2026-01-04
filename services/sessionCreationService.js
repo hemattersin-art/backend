@@ -423,7 +423,7 @@ const createSessionFromSlotLock = async (slotLock) => {
             psychologistId: slotLock.psychologist_id,
             clientId: slotLock.client_id,
             packageInfo: packageInfo, // Include package details
-            receiptPdfBuffer: receiptResult?.pdfBuffer || null,
+            receiptId: receiptResult?.receiptId || null, // Pass receipt ID for download URL
             receiptNumber: receiptResult?.receiptNumber || null
           });
           

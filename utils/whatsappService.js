@@ -251,9 +251,9 @@ function buildBookingMessage({ childName, date, time, meetLink, psychologistName
   
   const childLine = hasChildName ? `👧 Child: ${childName}\n\n` : '';
 
-  // Psychologist name line (if provided)
+  // Psychologist name line (if provided) - no Dr. prefix
   const psychologistLine = psychologistName && psychologistName.trim() 
-    ? `👨‍⚕️ Therapist: Dr. ${psychologistName.trim()}\n\n` 
+    ? `👨‍⚕️ Therapist: ${psychologistName.trim()}\n\n` 
     : '';
 
   // Package information line
@@ -264,6 +264,11 @@ function buildBookingMessage({ childName, date, time, meetLink, psychologistName
     packageLine = `📦 Package Session: ${completed}/${packageInfo.totalSessions} completed, ${remaining} remaining\n\n`;
   }
 
+  // Build join meet button/link - formatted as clickable link
+  const joinMeetButton = meetLink 
+    ? `\n\n🔗 *Join Meet:*\n${meetLink}\n\n` 
+    : '';
+
   return (
     `🧸 ${sessionType} Confirmed!\n\n` +
     `Session details:\n\n` +
@@ -272,7 +277,7 @@ function buildBookingMessage({ childName, date, time, meetLink, psychologistName
     (packageLine || '') +
     `📅 Date: ${friendlyDate || date}\n\n` +
     `⏰ Time: ${friendlyTime || time} (IST)\n\n` +
-    (meetLink ? `🔗 Google Meet: ${meetLink}\n\n` : '\n') +
+    joinMeetButton +
     `We look forward to seeing you. 💜`
   );
 }
@@ -298,49 +303,43 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     packageInfo = null
   } = details || {};
 
-  // 1) Welcome (message 1)
-  const welcomeMessage = isFreeAssessment
+  // Message 1: Welcome + Session Details (with Join Meet button)
+  const welcomeAndDetailsMessage = (isFreeAssessment
     ? `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking a free assessment with our child specialists.`
+      `Thank you for booking a free assessment with our child specialists.\n\n`
     : packageInfo
     ? `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking your next package session with our child specialists.`
+      `Thank you for booking your next package session with our child specialists.\n\n`
     : `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking a therapy session with our child specialists.`;
+      `Thank you for booking a therapy session with our child specialists.\n\n`) +
+    buildBookingMessage({
+      childName,
+      date,
+      time,
+      meetLink,
+      psychologistName,
+      isFreeAssessment,
+      packageInfo
+    });
 
-  // 2) Booking details + Meet link (message 2)
-  const bookingMessage = buildBookingMessage({
-    childName,
-    date,
-    time,
-    meetLink,
-    psychologistName,
-    isFreeAssessment,
-    packageInfo
-  });
-
-  // 3) Preparation / instructions (message 3)
-  const instructionMessage =
+  // Message 2: Before session reminders + Contact info
+  const remindersAndContactMessage =
     `📝 Before the session:\n\n` +
     `• Please be ready at least 10 minutes before your scheduled time.\n\n` +
     `• Ensure a stable internet connection.\n\n` +
     `• Choose a quiet place with good lighting and minimal background noise.\n\n` +
-    `• Keep your device charged or connected to power.`;
-
-  // 4) Contact / enquiries (message 4)
-  const contactMessage =
+    `• Keep your device charged or connected to power.\n\n` +
     `📞 For any other enquiry or help, you can reach us on:\n` +
     `WhatsApp / Call: +91 95390 07766`;
 
-  // Send as separate messages in order, with a delay between each to respect WASenderApi account protection
+  // Send as 3 separate messages in order, with a delay between each to respect WASenderApi account protection
   const messages = [
-    welcomeMessage,
-    bookingMessage,
-    instructionMessage,
-    contactMessage
+    welcomeAndDetailsMessage,
+    remindersAndContactMessage
   ];
 
   let lastResult = null;
+  // Send first 2 text messages
   for (let i = 0; i < messages.length; i++) {
     lastResult = await sendWhatsAppTextWithRetry(toPhoneE164, messages[i]);
     // Wait ~5.5s between messages to stay under "1 message per 5 seconds" limit
@@ -349,7 +348,11 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     }
   }
 
-  // 6) Send receipt PDF as document (if available)
+  // Message 3: Send receipt PDF as document (if available)
+  // Wait before sending receipt to maintain proper message order
+  if (receiptUrl || receiptPdfBuffer) {
+    await new Promise(resolve => setTimeout(resolve, 5500));
+  }
   // Note: WASender API requires a URL, so if we only have a buffer, we skip WhatsApp receipt
   // The receipt is still sent via email with the PDF attachment
   if (receiptUrl) {

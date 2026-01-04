@@ -183,7 +183,8 @@ class EmailService {
         status,
         psychologistId,
         clientId,
-        packageInfo // Package information: { totalSessions, completedSessions, remainingSessions, packageType }
+        packageInfo, // Package information: { totalSessions, completedSessions, remainingSessions, packageType }
+        receiptId // Receipt ID for generating download URL
       } = sessionData;
 
       // Use consistent date/time format
@@ -213,11 +214,10 @@ class EmailService {
         throw new Error('Email service not properly initialized');
       }
       
-      // Format date
+      // Format date (without year)
       const sessionDateObj = new Date(`${finalSessionDate}T00:00:00`);
       const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
-        year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
@@ -247,6 +247,11 @@ class EmailService {
       const googleCalendarLink = generateGoogleCalendarLink(calendarData);
       const outlookCalendarLink = generateOutlookCalendarLink(calendarData);
 
+      // Generate receipt download URL if receiptId is available
+      // Link to profile receipts page where user can download after login
+      const frontendUrl = process.env.FRONTEND_URL || process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') || 'https://www.little.care';
+      const receiptDownloadUrl = receiptId ? `${frontendUrl}/profile/receipts` : null;
+
       // Send email to client
       if (clientEmail && !clientEmail.includes('placeholder')) {
         console.log('📧 Sending email to client:', clientEmail);
@@ -257,13 +262,11 @@ class EmailService {
           scheduledDate: formattedDate,
           scheduledTime: formattedTime,
           googleMeetLink: finalMeetLink,
-          sessionId,
           calendarInvite: calendarInvites.client,
           googleCalendarLink,
           outlookCalendarLink,
           price: finalPrice || 0,
-          receiptUrl: sessionData.receiptUrl || null, // Receipt URL
-          receiptPdfBuffer: sessionData.receiptPdfBuffer || null, // Receipt PDF buffer to attach
+          receiptDownloadUrl: receiptDownloadUrl || sessionData.receiptUrl || null, // Receipt download URL
           packageInfo: packageInfo || null // Package information
         });
       } else {
@@ -300,7 +303,9 @@ class EmailService {
           psychologistName,
           scheduledDate: formattedDate,
           scheduledTime: formattedTime,
-          sessionId
+          sessionId: sessionId || sessionData?.sessionId || sessionData?.id || sessionData?.session_id,
+          clientId: clientId || sessionData?.clientId || sessionData?.client_id,
+          packageId: packageInfo?.packageId || packageInfo?.id || sessionData?.packageId || sessionData?.package_id
         });
       }
 
@@ -319,135 +324,225 @@ class EmailService {
       scheduledDate, 
       scheduledTime, 
       googleMeetLink, 
-      sessionId,
       calendarInvite,
       googleCalendarLink,
       outlookCalendarLink,
       price,
-      receiptUrl,
-      receiptPdfBuffer,
+      receiptDownloadUrl,
       packageInfo
     } = emailData;
 
+    // Get logo URL - use favicon for email compatibility
+    // Use www.little.care as the base URL for logo (publicly accessible)
+    const frontendUrl = process.env.FRONTEND_URL || process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') || 'https://www.little.care';
+    const logoUrl = `https://www.little.care/favicon.png`;
+    
+    // Contact information
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
+
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `Session Confirmed - ${scheduledDate} at ${scheduledTime}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">Session Confirmed!</h1>
-          </div>
-          
-          <div style="padding: 20px; background: #f8f9fa;">
-            <h2 style="color: #333;">Hello ${clientName},</h2>
-            
-            <p>Your therapy session has been successfully scheduled. Here are the details:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #667eea;">
-              <h3 style="color: #667eea; margin-top: 0;">Session Details</h3>
-              <p><strong>Date:</strong> ${scheduledDate}</p>
-              <p><strong>Time:</strong> ${scheduledTime}</p>
-              <p><strong>Therapist:</strong> ${psychologistName}</p>
-              ${packageInfo && packageInfo.totalSessions ? `
-              <div style="background: #f0f4ff; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 3px solid #3f2e73;">
-                <p style="margin: 0; color: #3f2e73; font-weight: bold;">📦 Package Session</p>
-                <p style="margin: 5px 0 0 0; color: #555;">
-                  <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
-                </p>
-              </div>
-              ` : ''}
-              <p><strong>Session Fee:</strong> ${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</p>
-              <p><strong>Session ID:</strong> ${sessionId}</p>
-            </div>
-            
-            ${googleCalendarLink || outlookCalendarLink ? `
-            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-              <h3 style="color: #856404; margin-top: 0;">📅 Add to Your Calendar</h3>
-              <p>Don't forget your appointment! Add it to your calendar:</p>
-              <div style="margin: 15px 0;">
-                ${googleCalendarLink ? `
-                <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #4285f4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin: 5px; font-weight: bold;">
-                  📅 Add to Google Calendar
-                </a>
-                ` : ''}
-                ${outlookCalendarLink ? `
-                <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #0078d4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin: 5px; font-weight: bold;">
-                  📅 Add to Outlook
-                </a>
-                ` : ''}
-              </div>
-              <p style="font-size: 14px; color: #666; margin-top: 15px;">
-                💡 <strong>Tip:</strong> Adding this to your calendar will help you remember your appointment and receive automatic reminders.
-              </p>
-            </div>
-            ` : ''}
-            
-            ${googleMeetLink ? `
-            <div style="background: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #28a745; margin-top: 0;">Join Your Session</h3>
-              <p>Click the button below to join your Google Meet session:</p>
-              <a href="${googleMeetLink}" style="display: inline-block; background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                Join Google Meet
-              </a>
-              <p style="margin-top: 10px; font-size: 14px; color: #666;">
-                Or copy this link: <a href="${googleMeetLink}">${googleMeetLink}</a>
-              </p>
-            </div>
-            ` : ''}
-            
-            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-              <h3 style="color: #856404; margin-top: 0;">Important Reminders</h3>
-              <ul style="color: #856404;">
-                <li>Please join the session 5 minutes before the scheduled time</li>
-                <li>Ensure you have a stable internet connection</li>
-                <li>Find a quiet, private space for your session</li>
-                <li>Have any relevant documents or notes ready</li>
-              </ul>
-            </div>
-            
-            <p>If you need to reschedule or have any questions, please contact us at support@littlecare.com</p>
-            
-            <p>We look forward to supporting you on your wellness journey!</p>
-            
-            <p>Best regards,<br>The Little Care Team</p>
-          </div>
-          
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-            <p style="color: #6c757d; font-size: 14px;">
-              This email was sent to confirm your therapy session. 
-              If you have any questions, please contact support@littlecare.com
-            </p>
-          </div>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Confirmed!</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${clientName},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your therapy session has been successfully scheduled. Here are the details:</p>
+                      
+                      <!-- Session Details Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Therapist:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
+                              </tr>
+                              ${packageInfo && packageInfo.totalSessions ? `
+                              <tr>
+                                <td colspan="2" style="padding: 15px 0 8px 0;">
+                                  <p style="margin: 0; color: #3f2e73; font-weight: 600; font-size: 14px;">📦 Package Session</p>
+                                  <p style="margin: 5px 0 0 0; color: #4a5568; font-size: 13px;">
+                                    <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
+                                  </p>
+                                </td>
+                              </tr>
+                              ` : ''}
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Session Fee:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-weight: 600;">${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      ${receiptDownloadUrl ? `
+                      <!-- Receipt Download -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📄 Download Receipt</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Your payment receipt is ready for download.</p>
+                            <a href="${receiptDownloadUrl}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">Download Receipt</a>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      ${googleCalendarLink || outlookCalendarLink ? `
+                      <!-- Calendar Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📅 Add to Your Calendar</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Don't forget your appointment! Add it to your calendar:</p>
+                            <div style="text-align: center;">
+                              ${googleCalendarLink ? `
+                              <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                                📅 Google Calendar
+                              </a>
+                              ` : ''}
+                              ${outlookCalendarLink ? `
+                              <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                                📅 Outlook
+                              </a>
+                              ` : ''}
+                            </div>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      ${googleMeetLink ? `
+                      <!-- Google Meet Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
+                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Google Meet
+                            </a>
+                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Important Reminders</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>Please join the session 5 minutes before the scheduled time</li>
+                              <li>Ensure you have a stable internet connection</li>
+                              <li>Find a quiet, private space for your session</li>
+                              <li>Have any relevant documents or notes ready</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We look forward to supporting you on your wellness journey!</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This email was sent to confirm your therapy session.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `,
       attachments: [
         ...(calendarInvite ? [{
           filename: calendarInvite.filename,
           content: calendarInvite.content,
           contentType: calendarInvite.contentType
-        }] : []),
-        ...(receiptPdfBuffer ? [{
-          filename: (() => {
-            // Generate filename using client name (sanitized for filesystem)
-            if (clientName) {
-              const sanitizedName = clientName
-                .trim()
-                .replace(/\s+/g, '-') // Replace spaces with hyphens
-                .replace(/[^a-zA-Z0-9\-_]/g, '') // Remove special characters except hyphens and underscores
-                .substring(0, 50); // Limit length to 50 characters
-              return `${sanitizedName || 'Receipt'}.pdf`;
-            }
-            // Fallback to session ID if client name not available
-            return `Receipt-${sessionId}.pdf`;
-          })(),
-          content: receiptPdfBuffer,
-          contentType: 'application/pdf'
         }] : [])
       ]
     };
 
-    return this.transporter.sendMail(mailOptions);
+    // Override replyTo and ensure from address is noreply
+    const finalMailOptions = {
+      ...mailOptions,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care'
+    };
+    
+    return this.transporter.sendMail(finalMailOptions);
   }
 
   async sendPsychologistConfirmation(emailData) {
@@ -466,94 +561,176 @@ class EmailService {
       packageInfo
     } = emailData;
 
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
+
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `New Session Scheduled - ${scheduledDate} at ${scheduledTime}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">New Session Scheduled</h1>
-          </div>
-          
-          <div style="padding: 20px; background: #f8f9fa;">
-            <h2 style="color: #333;">Hello ${psychologistName},</h2>
-            
-            <p>A new therapy session has been scheduled with you. Here are the details:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #28a745; margin-top: 0;">Session Details</h3>
-              <p><strong>Date:</strong> ${scheduledDate}</p>
-              <p><strong>Time:</strong> ${scheduledTime}</p>
-              <p><strong>Client:</strong> ${clientName}</p>
-              ${packageInfo && packageInfo.totalSessions ? `
-              <div style="background: #f0f4ff; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 3px solid #3f2e73;">
-                <p style="margin: 0; color: #3f2e73; font-weight: bold;">📦 Package Session</p>
-                <p style="margin: 5px 0 0 0; color: #555;">
-                  <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
-                </p>
-              </div>
-              ` : ''}
-              <p><strong>Session Fee:</strong> ${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</p>
-              <p><strong>Session ID:</strong> ${sessionId}</p>
-            </div>
-            
-            ${googleCalendarLink || outlookCalendarLink ? `
-            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-              <h3 style="color: #856404; margin-top: 0;">📅 Add to Your Calendar</h3>
-              <p>Add this session to your calendar:</p>
-              <div style="margin: 15px 0;">
-                ${googleCalendarLink ? `
-                <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #4285f4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin: 5px; font-weight: bold;">
-                  📅 Add to Google Calendar
-                </a>
-                ` : ''}
-                ${outlookCalendarLink ? `
-                <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #0078d4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; margin: 5px; font-weight: bold;">
-                  📅 Add to Outlook
-                </a>
-                ` : ''}
-              </div>
-            </div>
-            ` : ''}
-            
-            ${googleMeetLink ? `
-            <div style="background: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #28a745; margin-top: 0;">Session Link</h3>
-              <p>Your Google Meet session is ready:</p>
-              <a href="${googleMeetLink}" style="display: inline-block; background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                Start Session
-              </a>
-              <p style="margin-top: 10px; font-size: 14px; color: #666;">
-                Or copy this link: <a href="${googleMeetLink}">${googleMeetLink}</a>
-              </p>
-            </div>
-            ` : ''}
-            
-            <div style="background: #d1ecf1; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
-              <h3 style="color: #0c5460; margin-top: 0;">Session Preparation</h3>
-              <ul style="color: #0c5460;">
-                <li>Review client information and previous session notes</li>
-                <li>Prepare any relevant materials or resources</li>
-                <li>Ensure your workspace is professional and private</li>
-                <li>Test your audio and video equipment</li>
-              </ul>
-            </div>
-            
-            <p>Please ensure you're available 5 minutes before the scheduled time to start the session.</p>
-            
-            <p>If you need to reschedule or have any questions, please contact the admin team.</p>
-            
-            <p>Best regards,<br>The Little Care Team</p>
-          </div>
-          
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-            <p style="color: #6c757d; font-size: 14px;">
-              This email confirms your scheduled therapy session. 
-              Please ensure you're prepared and than on time.
-            </p>
-          </div>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">New Session Scheduled</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${psychologistName},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">A new therapy session has been scheduled with you. Here are the details:</p>
+                      
+                      <!-- Session Details Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${clientName}</td>
+                              </tr>
+                              ${packageInfo && packageInfo.totalSessions ? `
+                              <tr>
+                                <td colspan="2" style="padding: 15px 0 8px 0;">
+                                  <p style="margin: 0; color: #3f2e73; font-weight: 600; font-size: 14px;">📦 Package Session</p>
+                                  <p style="margin: 5px 0 0 0; color: #4a5568; font-size: 13px;">
+                                    <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
+                                  </p>
+                                </td>
+                              </tr>
+                              ` : ''}
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Session Fee:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-weight: 600;">${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      ${googleCalendarLink || outlookCalendarLink ? `
+                      <!-- Calendar Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📅 Add to Your Calendar</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Add this session to your calendar:</p>
+                            <div style="text-align: center;">
+                              ${googleCalendarLink ? `
+                              <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                                📅 Google Calendar
+                              </a>
+                              ` : ''}
+                              ${outlookCalendarLink ? `
+                              <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                                📅 Outlook
+                              </a>
+                              ` : ''}
+                            </div>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      ${googleMeetLink ? `
+                      <!-- Google Meet Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
+                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Google Meet
+                            </a>
+                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Session Preparation</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>Review client information and previous session notes</li>
+                              <li>Prepare any relevant materials or resources</li>
+                              <li>Ensure your workspace is professional and private</li>
+                              <li>Test your audio and video equipment</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">Please ensure you're available 5 minutes before the scheduled time to start the session.</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This email confirms your scheduled therapy session. Please ensure you're prepared and on time.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `,
       attachments: calendarInvite ? [
         {
@@ -568,53 +745,141 @@ class EmailService {
   }
 
   async sendAdminNotification(emailData) {
-    const { to, clientName, psychologistName, scheduledDate, scheduledTime, sessionId } = emailData;
+    const { to, clientName, psychologistName, scheduledDate, scheduledTime, sessionId, clientId, packageId } = emailData;
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `New Session Booked - ${scheduledDate} at ${scheduledTime}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%); padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">New Session Booked</h1>
-          </div>
-          
-          <div style="padding: 20px; background: #f8f9fa;">
-            <h2 style="color: #333;">Admin Notification</h2>
-            
-            <p>A new therapy session has been booked on the platform. Here are the details:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #6f42c1;">
-              <h3 style="color: #6f42c1; margin-top: 0;">Session Details</h3>
-              <p><strong>Date:</strong> ${scheduledDate}</p>
-              <p><strong>Time:</strong> ${scheduledTime}</p>
-              <p><strong>Client:</strong> ${clientName}</p>
-              <p><strong>Therapist:</strong> ${psychologistName}</p>
-              <p><strong>Session ID:</strong> ${sessionId}</p>
-            </div>
-            
-            <div style="background: #f8d7da; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545;">
-              <h3 style="color: #721c24; margin-top: 0;">Action Required</h3>
-              <ul style="color: #721c24;">
-                <li>Verify session details in the admin panel</li>
-                <li>Ensure therapist availability is confirmed</li>
-                <li>Check if any special accommodations are needed</li>
-                <li>Monitor session completion and follow-up</li>
-              </ul>
-            </div>
-            
-            <p>This session has been automatically added to the Google Calendar and all parties have been notified.</p>
-            
-            <p>Best regards,<br>Little Care Platform</p>
-          </div>
-          
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-            <p style="color: #6c757d; font-size: 14px;">
-              This is an automated notification from the Little Care therapy platform.
-            </p>
-          </div>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">New Session Booked</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Admin Notification</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">A new therapy session has been booked on the platform. Here are the details:</p>
+                      
+                      <!-- Session Details Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${clientName}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Therapist:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
+                              </tr>
+                              ${sessionId ? `
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Session ID:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-family: monospace;">${sessionId}</td>
+                              </tr>
+                              ` : ''}
+                              ${clientId ? `
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client ID:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-family: monospace;">${clientId}</td>
+                              </tr>
+                              ` : ''}
+                              ${packageId ? `
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Package ID:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-family: monospace;">${packageId}</td>
+                              </tr>
+                              ` : ''}
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Action Required -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Action Required</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>Verify session details in the admin panel</li>
+                              <li>Ensure therapist availability is confirmed</li>
+                              <li>Check if any special accommodations are needed</li>
+                              <li>Monitor session completion and follow-up</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">This session has been automatically added to the Google Calendar and all parties have been notified.</p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">Little Care Platform</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This is an automated notification from the Little Care therapy platform.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `
     };
 
@@ -700,63 +965,142 @@ class EmailService {
     const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
     const sessionTypeTitle = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
+
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `Session Rescheduled - ${newDate} at ${newTime}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%); padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">Session Rescheduled</h1>
-          </div>
-          
-          <div style="padding: 20px; background: #f8f9fa;">
-            <h2 style="color: #333;">Hello ${name},</h2>
-            
-            <p>Your ${sessionType} has been rescheduled. Here are the updated details:</p>
-            
-            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-              <h3 style="color: #856404; margin-top: 0;">Previous Schedule</h3>
-              <p><strong>Date:</strong> ${oldDate}</p>
-              <p><strong>Time:</strong> ${oldTime}</p>
-            </div>
-            
-            <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #155724; margin-top: 0;">New Schedule</h3>
-              <p><strong>Date:</strong> ${newDate}</p>
-              <p><strong>Time:</strong> ${newTime}</p>
-            </div>
-            
-            <div style="background: #d1ecf1; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
-              <h3 style="color: #0c5460; margin-top: 0;">Session Information</h3>
-              <p><strong>Session ID:</strong> ${sessionId}</p>
-              <p><strong>Type:</strong> ${sessionTypeTitle}</p>
-              <p><strong>Role:</strong> ${type === 'client' ? 'Client' : 'Therapist'}</p>
-              ${meetLink ? `<p><strong>New Google Meet Link:</strong> <a href="${meetLink}" style="color: #17a2b8;">${meetLink}</a></p>` : ''}
-            </div>
-            
-            ${meetLink ? `
-            <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #155724; margin-top: 0;">🔗 Meeting Link</h3>
-              <p style="color: #155724;">Your new Google Meet link for the rescheduled session:</p>
-              <p style="word-break: break-all;"><a href="${meetLink}" style="color: #28a745; font-weight: bold;">${meetLink}</a></p>
-            </div>
-            ` : ''}
-            
-            <p>Please update your calendar and ensure you're available at the new time.</p>
-            
-            <p>If you have any questions or need to make further changes, please contact us.</p>
-            
-            <p>Best regards,<br>The Little Care Team</p>
-          </div>
-          
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-            <p style="color: #6c757d; font-size: 14px;">
-              This email confirms your session has been rescheduled. 
-              Please note the new date and time.
-            </p>
-          </div>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Rescheduled</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${name},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your ${sessionType} has been rescheduled. Here are the updated details:</p>
+                      
+                      <!-- Previous Schedule -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 20px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Previous Schedule</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${oldDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${oldTime}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- New Schedule -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">New Schedule</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${newDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${newTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Type:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${sessionTypeTitle}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      ${meetLink ? `
+                      <!-- Google Meet Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
+                            <a href="${meetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Google Meet
+                            </a>
+                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${meetLink}" style="color: #3f2e73; text-decoration: underline;">${meetLink}</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">Please update your calendar and ensure you're available at the new time.</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This email confirms your session has been rescheduled. Please note the new date and time.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `
     };
 
@@ -777,11 +1121,10 @@ class EmailService {
       } = assessmentData;
 
       // Parse date and time in IST (UTC+5:30)
-      // Format date
+      // Format date (without year)
       const assessmentDateObj = new Date(`${assessmentDate}T00:00:00`);
       const formattedDate = assessmentDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
-        year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
@@ -826,9 +1169,18 @@ class EmailService {
 
   async sendClientFreeAssessmentConfirmation(emailData) {
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
+    const totalAssessments = 3;
+    const remainingAssessments = totalAssessments - assessmentNumber;
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `Free Assessment Confirmed - ${assessmentDate} at ${assessmentTime}`,
       html: `
@@ -837,73 +1189,135 @@ class EmailService {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Free Assessment Confirmed</title>
         </head>
-        <body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;">
-          <div style="max-width: 600px; margin: 0 auto; background-color: white;">
-            <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); padding: 20px; text-align: center;">
-              <h1 style="color: white; margin: 0; font-size: 24px;">Free Assessment Confirmed!</h1>
-            </div>
-            
-            <div style="padding: 20px;">
-              <h2 style="color: #333; margin-top: 0;">Hello ${clientName},</h2>
-              
-              <p>Your free assessment session has been successfully booked! Here are the details:</p>
-              
-              <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-                <h3 style="color: #155724; margin-top: 0;">Assessment Details</h3>
-                <p><strong>Assessment Number:</strong> ${assessmentNumber} of 20</p>
-                <p><strong>Date:</strong> ${assessmentDate}</p>
-                <p><strong>Time:</strong> ${assessmentTime}</p>
-                <p><strong>Duration:</strong> 20 minutes</p>
-                <p><strong>Therapist:</strong> ${psychologistName}</p>
-                <p><strong>Type:</strong> Free Assessment Session</p>
-              </div>
-              
-              <div style="background: #d1ecf1; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
-                <h3 style="color: #0c5460; margin-top: 0;">Join Your Session</h3>
-                <p>Your session will be conducted online via Google Meet.</p>
-                ${googleMeetLink ? `
-                  <p><strong>Meeting Link:</strong></p>
-                  <p style="word-break: break-all; margin: 10px 0;">
-                    <a href="${googleMeetLink}" style="color: #007bff; text-decoration: underline; font-size: 16px;">${googleMeetLink}</a>
-                  </p>
-                  <div style="text-align: center; margin: 20px 0;">
-                    <a href="${googleMeetLink}" style="background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold; font-size: 16px;">
-                      🎥 Join Meeting Now
-                    </a>
-                  </div>
-                  <p style="font-size: 14px; color: #666; margin-top: 15px;">
-                    <strong>Note:</strong> If the button doesn't work, copy and paste this link into your browser:<br>
-                    <span style="background: #f8f9fa; padding: 5px; border-radius: 3px; font-family: monospace; font-size: 12px;">${googleMeetLink}</span>
-                  </p>
-                ` : '<p>Meeting link will be provided closer to the session time.</p>'}
-              </div>
-              
-              <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-                <h3 style="color: #856404; margin-top: 0;">Important Notes</h3>
-                <ul style="margin: 0; padding-left: 20px;">
-                  <li>Please join the meeting 5 minutes before your scheduled time</li>
-                  <li>Ensure you have a stable internet connection</li>
-                  <li>Find a quiet, private space for your session</li>
-                  <li>This is a free assessment session - no payment required</li>
-                  <li>You have ${20 - assessmentNumber} free assessments remaining</li>
-                </ul>
-              </div>
-              
-              <p>If you need to cancel or reschedule, please contact us at least 24 hours in advance.</p>
-              
-              <p>We look forward to meeting you!</p>
-              
-              <p>Best regards,<br>The Little Care Team</p>
-            </div>
-            
-            <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-              <p style="color: #6c757d; font-size: 14px; margin: 0;">
-                This is your free assessment session. No payment is required.
-              </p>
-            </div>
-          </div>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Free Assessment Confirmed!</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${clientName},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your free assessment session has been successfully scheduled. Here are the details:</p>
+                      
+                      <!-- Assessment Details Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Assessment Details</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Assessment Number:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentNumber} of ${totalAssessments}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Duration:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">20 minutes</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Therapist:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Type:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">Free Assessment Session</td>
+                              </tr>
+                              <tr>
+                                <td colspan="2" style="padding: 15px 0 8px 0;">
+                                  <p style="margin: 0; color: #3f2e73; font-weight: 600; font-size: 14px;">You have ${remainingAssessments} free assessment${remainingAssessments !== 1 ? 's' : ''} remaining</p>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      ${googleMeetLink ? `
+                      <!-- Google Meet Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
+                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Google Meet
+                            </a>
+                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Important Reminders</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>Please join the session 5 minutes before the scheduled time</li>
+                              <li>Ensure you have a stable internet connection</li>
+                              <li>Find a quiet, private space for your session</li>
+                              <li>This is a free assessment session - no payment required</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We look forward to meeting you and supporting you on your wellness journey!</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This is your free assessment session. No payment is required.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </body>
         </html>
       `,
@@ -915,7 +1329,7 @@ Hello ${clientName},
 Your free assessment session has been successfully booked!
 
 Assessment Details:
-- Assessment Number: ${assessmentNumber} of 20
+- Assessment Number: ${assessmentNumber} of ${totalAssessments}
 - Date: ${assessmentDate}
 - Time: ${assessmentTime}
 - Duration: 20 minutes
@@ -932,9 +1346,9 @@ Important Notes:
 - Ensure you have a stable internet connection
 - Find a quiet, private space for your session
 - This is a free assessment session - no payment required
-- You have ${20 - assessmentNumber} free assessments remaining
+- You have ${remainingAssessments} free assessment${remainingAssessments !== 1 ? 's' : ''} remaining
 
-If you need to cancel or reschedule, please contact us at least 24 hours in advance.
+If you need to cancel or reschedule, please contact us at least 24 hours in advance at hey@little.care or +91-9539007766.
 
 We look forward to meeting you!
 
@@ -948,67 +1362,151 @@ The Little Care Team
 
   async sendPsychologistFreeAssessmentNotification(emailData) {
     const { to, clientName, psychologistName, assessmentDate, assessmentTime, assessmentNumber, googleMeetLink } = emailData;
+    const contactEmail = 'hey@little.care';
+    const contactPhone = '+91-9539007766';
 
     const mailOptions = {
-      from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+      from: {
+        name: 'LittleCare',
+        address: 'noreply@little.care'
+      },
+      replyTo: 'noreply@little.care',
+      sender: 'noreply@little.care',
       to: to,
       subject: `Free Assessment Scheduled - ${assessmentDate} at ${assessmentTime}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%); padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">Free Assessment Scheduled</h1>
-          </div>
-          
-          <div style="padding: 20px; background: #f8f9fa;">
-            <h2 style="color: #333;">Hello ${psychologistName},</h2>
-            
-            <p>A free assessment session has been scheduled with you. Here are the details:</p>
-            
-            <div style="background: #d4edda; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
-              <h3 style="color: #155724; margin-top: 0;">Session Details</h3>
-              <p><strong>Client Name:</strong> ${clientName}</p>
-              <p><strong>Assessment Number:</strong> ${assessmentNumber} of 3</p>
-              <p><strong>Date:</strong> ${assessmentDate}</p>
-              <p><strong>Time:</strong> ${assessmentTime}</p>
-              <p><strong>Duration:</strong> 20 minutes</p>
-              <p><strong>Type:</strong> Free Assessment Session</p>
-            </div>
-            
-            <div style="background: #d1ecf1; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #17a2b8;">
-              <h3 style="color: #0c5460; margin-top: 0;">Join Session</h3>
-              <p>This session will be conducted online via Google Meet.</p>
-              ${googleMeetLink ? `
-                <p><strong>Meeting Link:</strong> <a href="${googleMeetLink}" style="color: #007bff; text-decoration: none;">${googleMeetLink}</a></p>
-                <p style="margin-top: 15px;">
-                  <a href="${googleMeetLink}" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">
-                    Join Meeting
-                  </a>
-                </p>
-              ` : '<p>Meeting link will be provided closer to the session time.</p>'}
-            </div>
-            
-            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ffc107;">
-              <h3 style="color: #856404; margin-top: 0;">Important Notes</h3>
-              <ul style="margin: 0; padding-left: 20px;">
-                <li>This is a free assessment session - no payment involved</li>
-                <li>Please join the meeting 5 minutes before the scheduled time</li>
-                <li>Focus on understanding the client's needs and concerns</li>
-                <li>Provide recommendations for future therapy sessions if appropriate</li>
-                <li>Session duration is 20 minutes</li>
-              </ul>
-            </div>
-            
-            <p>Please ensure you're available at the scheduled time.</p>
-            
-            <p>Best regards,<br>The Little Care Team</p>
-          </div>
-          
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #dee2e6;">
-            <p style="color: #6c757d; font-size: 14px;">
-              This is a free assessment session. Please provide quality care.
-            </p>
-          </div>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Free Assessment Scheduled</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${psychologistName},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">A free assessment session has been scheduled with you. Here are the details:</p>
+                      
+                      <!-- Assessment Details Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Assessment Details</h3>
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client Name:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${clientName}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Assessment Number:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentNumber} of 3</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentDate}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentTime}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Duration:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">20 minutes</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Type:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">Free Assessment Session</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      ${googleMeetLink ? `
+                      <!-- Google Meet Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
+                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
+                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Google Meet
+                            </a>
+                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
+                      
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Important Notes</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>This is a free assessment session - no payment involved</li>
+                              <li>Please join the meeting 5 minutes before the scheduled time</li>
+                              <li>Focus on understanding the client's needs and concerns</li>
+                              <li>Provide recommendations for future therapy sessions if appropriate</li>
+                              <li>Session duration is 20 minutes</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">Please ensure you're available at the scheduled time.</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This is a free assessment session. Please provide quality care.<br>
+                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `
     };
 
@@ -1024,7 +1522,12 @@ The Little Care Team
       }
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+        from: {
+          name: 'LittleCare',
+          address: 'noreply@little.care'
+        },
+        replyTo: 'noreply@little.care',
+        sender: 'noreply@little.care',
         to: to,
         subject: subject,
         html: html,
@@ -1057,53 +1560,92 @@ The Little Care Team
         <html>
         <head>
           <meta charset="utf-8">
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #3f2e73; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-            .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
-            .credentials { background-color: #fff; border: 2px solid #3f2e73; border-radius: 8px; padding: 20px; margin: 20px 0; }
-            .credential-item { margin: 15px 0; }
-            .label { font-weight: bold; color: #3f2e73; }
-            .value { font-family: monospace; font-size: 16px; color: #333; background-color: #f0f0f0; padding: 8px 12px; border-radius: 4px; display: inline-block; }
-            .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px; }
-            .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-          </style>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🧸 Welcome to Little Care!</h1>
-            </div>
-            <div class="content">
-              <p>Hello ${name},</p>
-              <p>Your account has been successfully created. Please find your login credentials below:</p>
-              
-              <div class="credentials">
-                <div class="credential-item">
-                  <span class="label">Email:</span><br>
-                  <span class="value">${email}</span>
-                </div>
-                <div class="credential-item">
-                  <span class="label">Password:</span><br>
-                  <span class="value">${password}</span>
-                </div>
-              </div>
-              
-              <div class="warning">
-                <strong>⚠️ Important:</strong> Please save these credentials securely. For security reasons, we recommend changing your password after your first login.
-              </div>
-              
-              <p>You can now log in to your account and access all our services.</p>
-              
-              <p>If you have any questions or need assistance, please don't hesitate to contact us.</p>
-              
-              <p>Best regards,<br>The Little Care Team</p>
-            </div>
-            <div class="footer">
-              <p>This is an automated email. Please do not reply to this message.</p>
-            </div>
-          </div>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+          <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+            <tr>
+              <td style="padding: 20px 10px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Welcome to Little Care!</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 30px 20px;">
+                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${name},</h2>
+                      
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your account has been successfully created. Please find your login credentials below:</p>
+                      
+                      <!-- Credentials Card -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0; border: 2px solid #3f2e73; border-radius: 8px;">
+                        <tr>
+                          <td style="padding: 20px;">
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #3f2e73;">Email:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-family: monospace; background-color: #f0f0f0; padding: 8px 12px; border-radius: 4px;">${email}</td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #3f2e73;">Password:</strong></td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-family: monospace; background-color: #f0f0f0; padding: 8px 12px; border-radius: 4px;">${password}</td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <p style="color: #856404; font-size: 14px; line-height: 1.8; margin: 0; padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                              <strong>⚠️ Important:</strong> Please save these credentials securely. For security reasons, we recommend changing your password after your first login.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">You can now log in to your account and access all our services.</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions or need assistance, please contact us at <a href="mailto:hey@little.care" style="color: #3f2e73; text-decoration: none;">hey@little.care</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">+91-9539007766</a></p>
+                      
+                      <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                        Best regards,<br>
+                        <strong style="color: #3f2e73;">The Little Care Team</strong>
+                      </p>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                        This is an automated email. Please do not reply to this message.<br>
+                        If you have any questions, please contact <a href="mailto:hey@little.care" style="color: #3f2e73; text-decoration: none;">hey@little.care</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">+91-9539007766</a>
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
         </body>
         </html>
       `;
@@ -1120,7 +1662,7 @@ Password: ${password}
 
 You can now log in to your account and access all our services.
 
-If you have any questions or need assistance, please don't hesitate to contact us.
+If you have any questions or need assistance, please contact us at hey@little.care or +91-9539007766.
 
 Best regards,
 The Little Care Team
@@ -1147,11 +1689,10 @@ This is an automated email. Please do not reply to this message.
     isPsychologist = false
   }) {
     try {
-      // Format date
+      // Format date (without year)
       const sessionDateObj = new Date(`${sessionDate}T00:00:00`);
       const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
-        year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
@@ -1160,64 +1701,124 @@ This is an automated email. Please do not reply to this message.
       const formattedTime = formatTimeFromString(sessionTime);
 
       const recipientName = isPsychologist ? psychologistName : clientName;
-      const otherParty = isPsychologist ? clientName : `Dr. ${psychologistName}`;
+      const otherParty = isPsychologist ? clientName : psychologistName;
+      const contactEmail = 'hey@little.care';
+      const contactPhone = '+91-9539007766';
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+        from: {
+          name: 'LittleCare',
+          address: 'noreply@little.care'
+        },
+        replyTo: 'noreply@little.care',
+        sender: 'noreply@little.care',
         to: to,
         subject: 'Session Cancelled',
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-              <h1 style="margin: 0; font-size: 28px;">Session Cancelled</h1>
-              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Session cancellation confirmation</p>
-            </div>
-            
-            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-              <h2 style="color: #2d3748; margin-top: 0;">Hello ${recipientName},</h2>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Your therapy session with <strong>${otherParty}</strong> has been cancelled.
-              </p>
-              
-              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc3545;">
-                <h3 style="color: #2d3748; margin-top: 0;">Cancelled Session Details</h3>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Date:</strong> ${formattedDate}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Time:</strong> ${formattedTime}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Session ID:</strong> ${sessionId}</p>
-              </div>
-              
-              ${!isPsychologist ? `
-              <div style="background: #e6fffa; border: 1px solid #81e6d9; padding: 15px; border-radius: 6px; margin: 20px 0;">
-                <p style="margin: 0; color: #234e52; font-size: 14px;">
-                  <strong>📅 Need to reschedule?</strong><br>
-                  You can book a new session anytime from your profile dashboard.
-                </p>
-              </div>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
-                   style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
-                  Book New Session
-                </a>
-              </div>
-              ` : ''}
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                If you have any questions, please contact our support team.
-              </p>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Best regards,<br>
-                <strong>The Little Care Team</strong>
-              </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
-              <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Little Care. All rights reserved.</p>
-            </div>
-          </div>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+              <tr>
+                <td style="padding: 20px 10px;">
+                  <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <!-- Header with Logo -->
+                    <tr>
+                      <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                          <tr>
+                            <td align="center" style="padding-bottom: 15px;">
+                              <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td align="center">
+                              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Cancelled</h1>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                      <td style="padding: 30px 20px;">
+                        <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${recipientName},</h2>
+                        
+                        <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your therapy session with <strong>${otherParty}</strong> has been cancelled.</p>
+                        
+                        <!-- Cancelled Session Details -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Cancelled Session Details</h3>
+                              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${formattedDate}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${formattedTime}</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        ${!isPsychologist ? `
+                        <!-- Reschedule Section -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <p style="color: #234e52; font-size: 14px; line-height: 1.8; margin: 0; padding: 15px; background-color: #e6fffa; border-left: 4px solid #81e6d9; border-radius: 4px;">
+                                <strong>📅 Need to reschedule?</strong><br>
+                                You can book a new session anytime from your profile dashboard.
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0; text-align: center;">
+                              <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">
+                                Book New Session
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+                        ` : ''}
+                        
+                        <!-- Footer Text -->
+                        <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                        
+                        <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                          Best regards,<br>
+                          <strong style="color: #3f2e73;">The Little Care Team</strong>
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                      <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                          This is an automated message. Please do not reply to this email.<br>
+                          If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
         `
       };
 
@@ -1237,78 +1838,143 @@ This is an automated email. Please do not reply to this message.
     sessionId
   }) {
     try {
-      // Format date
+      // Format date (without year)
       const sessionDateObj = new Date(`${sessionDate}T00:00:00`);
       const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
-        year: 'numeric',
         month: 'long',
         day: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
       // Format time directly (no timezone conversion - time is already in IST)
       const formattedTime = formatTimeFromString(sessionTime);
+      const contactEmail = 'hey@little.care';
+      const contactPhone = '+91-9539007766';
 
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+        from: {
+          name: 'LittleCare',
+          address: 'noreply@little.care'
+        },
+        replyTo: 'noreply@little.care',
+        sender: 'noreply@little.care',
         to: to,
         subject: 'No-Show Notice - Session Missed',
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-              <h1 style="margin: 0; font-size: 28px;">⚠️ No-Show Notice</h1>
-              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Session missed - let's reschedule</p>
-            </div>
-            
-            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-              <h2 style="color: #2d3748; margin-top: 0;">Hello ${clientName},</h2>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                We noticed that you didn't attend your scheduled therapy session with <strong>Dr. ${psychologistName}</strong>.
-              </p>
-              
-              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ff9800;">
-                <h3 style="color: #2d3748; margin-top: 0;">Missed Session Details</h3>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Date:</strong> ${formattedDate}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Time:</strong> ${formattedTime}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Psychologist:</strong> Dr. ${psychologistName}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Session ID:</strong> ${sessionId}</p>
-              </div>
-              
-              <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 20px; border-radius: 6px; margin: 20px 0;">
-                <h3 style="color: #856404; margin-top: 0;">📞 Need Help?</h3>
-                <p style="margin: 5px 0; color: #856404;">
-                  <strong>Let us know the reason or contact our team to reschedule:</strong>
-                </p>
-                <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-                  <li>📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@littlecare.com'}</li>
-                  <li>📱 WhatsApp: ${process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || 'Contact us via our support number'}</li>
-                  <li>💬 Book a new session from your profile</li>
-                </ul>
-              </div>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
-                   style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
-                  Reschedule Session
-                </a>
-              </div>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                We're here to help you reschedule or address any concerns. Don't hesitate to reach out!
-              </p>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Best regards,<br>
-                <strong>The Little Care Team</strong>
-              </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
-              <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Little Care. All rights reserved.</p>
-            </div>
-          </div>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+              <tr>
+                <td style="padding: 20px 10px;">
+                  <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <!-- Header with Logo -->
+                    <tr>
+                      <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                          <tr>
+                            <td align="center" style="padding-bottom: 15px;">
+                              <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td align="center">
+                              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">⚠️ No-Show Notice</h1>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                      <td style="padding: 30px 20px;">
+                        <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${clientName},</h2>
+                        
+                        <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">We noticed that you didn't attend your scheduled therapy session with <strong>${psychologistName}</strong>.</p>
+                        
+                        <!-- Missed Session Details -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Missed Session Details</h3>
+                              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${formattedDate}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${formattedTime}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Psychologist:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Need Help Section -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📞 Need Help?</h3>
+                              <p style="color: #856404; font-size: 14px; line-height: 1.8; margin: 0 0 10px 0; padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                                <strong>Let us know the reason or contact our team to reschedule:</strong>
+                              </p>
+                              <ul style="color: #856404; font-size: 14px; line-height: 1.8; margin: 10px 0 0 0; padding-left: 20px;">
+                                <li>📧 Email: <a href="mailto:${contactEmail}" style="color: #856404; text-decoration: none;">${contactEmail}</a></li>
+                                <li>📱 WhatsApp: <a href="https://wa.me/919539007766" style="color: #856404; text-decoration: none;">${contactPhone}</a></li>
+                                <li>💬 Book a new session from your profile</li>
+                              </ul>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Reschedule Button -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0; text-align: center;">
+                              <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">
+                                Reschedule Session
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Footer Text -->
+                        <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We're here to help you reschedule or address any concerns. Don't hesitate to reach out!</p>
+                        
+                        <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                        
+                        <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                          Best regards,<br>
+                          <strong style="color: #3f2e73;">The Little Care Team</strong>
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                      <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                          This is an automated message. Please do not reply to this email.<br>
+                          If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
         `
       };
 
@@ -1328,67 +1994,135 @@ This is an automated email. Please do not reply to this message.
     clientEmail
   }) {
     try {
+      const contactEmail = 'hey@little.care';
+      const contactPhone = '+91-9539007766';
+
       const mailOptions = {
-        from: `LittleCare <${process.env.EMAIL_FROM || 'noreply@littlecare.com'}>`,
+        from: {
+          name: 'LittleCare',
+          address: 'noreply@little.care'
+        },
+        replyTo: 'noreply@little.care',
+        sender: 'noreply@little.care',
         to: clientEmail,
         subject: 'Session Completed - Summary & Report Available',
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-              <h1 style="margin: 0; font-size: 28px;">Session Completed</h1>
-              <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Your therapy session summary and report are ready</p>
-            </div>
-            
-            <div style="background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px;">
-              <h2 style="color: #2d3748; margin-top: 0;">Hello ${clientName},</h2>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Great news! Your therapy session with <strong>${psychologistName}</strong> has been completed.
-              </p>
-              
-              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #4F46E5;">
-                <h3 style="color: #2d3748; margin-top: 0;">Session Details</h3>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Child:</strong> ${childName}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Date:</strong> ${sessionDate}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Time:</strong> ${sessionTime}</p>
-                <p style="margin: 5px 0; color: #4a5568;"><strong>Psychologist:</strong> ${psychologistName}</p>
-              </div>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Your psychologist has provided a detailed summary and report of the session. You can now view these in your profile.
-              </p>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" 
-                   style="background: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">
-                  View Session Summary & Report
-                </a>
-              </div>
-              
-              <div style="background: #e6fffa; border: 1px solid #81e6d9; padding: 15px; border-radius: 6px; margin: 20px 0;">
-                <p style="margin: 0; color: #234e52; font-size: 14px;">
-                  <strong>📋 What you'll find:</strong><br>
-                  • Session summary with key points<br>
-                  • Detailed report with findings and recommendations<br>
-                  • Next steps for continued care
-                </p>
-              </div>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                If you have any questions about the session or need to schedule a follow-up, please don't hesitate to reach out.
-              </p>
-              
-              <p style="color: #4a5568; line-height: 1.6;">
-                Best regards,<br>
-                <strong>The Little Care Team</strong>
-              </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px; color: #6c757d; font-size: 12px;">
-              <p>This is an automated message. Please do not reply to this email.</p>
-              <p>&copy; 2024 Little Care. All rights reserved.</p>
-            </div>
-          </div>
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          </head>
+          <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f7fa;">
+            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f7fa;">
+              <tr>
+                <td style="padding: 20px 10px;">
+                  <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <!-- Header with Logo -->
+                    <tr>
+                      <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                          <tr>
+                            <td align="center" style="padding-bottom: 15px;">
+                              <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td align="center">
+                              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Completed</h1>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    
+                    <!-- Main Content -->
+                    <tr>
+                      <td style="padding: 30px 20px;">
+                        <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${clientName},</h2>
+                        
+                        <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Great news! Your therapy session with <strong>${psychologistName}</strong> has been completed.</p>
+                        
+                        <!-- Session Details -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
+                              <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Child:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${childName}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${sessionDate}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${sessionTime}</td>
+                                </tr>
+                                <tr>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Psychologist:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
+                                </tr>
+                              </table>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Footer Text -->
+                        <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">Your psychologist has provided a detailed summary and report of the session. You can now view these in your profile.</p>
+                        
+                        <!-- View Report Button -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0; text-align: center;">
+                              <a href="${process.env.FRONTEND_URL || 'https://littlecare.vercel.app'}/profile" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">
+                                View Session Summary & Report
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- What You'll Find -->
+                        <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                          <tr>
+                            <td style="padding: 0 0 20px 0;">
+                              <p style="color: #234e52; font-size: 14px; line-height: 1.8; margin: 0; padding: 15px; background-color: #e6fffa; border-left: 4px solid #81e6d9; border-radius: 4px;">
+                                <strong>📋 What you'll find:</strong><br>
+                                • Session summary with key points<br>
+                                • Detailed report with findings and recommendations<br>
+                                • Next steps for continued care
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Footer Text -->
+                        <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions about the session or need to schedule a follow-up, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                        
+                        <p style="color: #2d3748; font-size: 15px; margin: 0;">
+                          Best regards,<br>
+                          <strong style="color: #3f2e73;">The Little Care Team</strong>
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                      <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
+                          This is an automated message. Please do not reply to this email.<br>
+                          If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
         `
       };
 
