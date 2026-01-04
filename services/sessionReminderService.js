@@ -458,7 +458,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your free assessment session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
+        const clientMessage = `🔔 Reminder: Your free assessment session with our specialist is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
           `Please be ready for your assessment session. We look forward to meeting you!`;
 
         reminderPromises.push(
