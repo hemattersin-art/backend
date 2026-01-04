@@ -2201,6 +2201,7 @@ const getPendingPayouts = async (req, res) => {
         scheduled_date,
         status,
         payment_id,
+        price,
         psychologist:psychologists(id, first_name, last_name, email, phone, cover_image_url)
       `)
       .eq('status', 'completed') // Only completed sessions
@@ -2234,8 +2235,74 @@ const getPendingPayouts = async (req, res) => {
     );
 
     if (sessionsError) throw sessionsError;
+    
+    // Get commission_history for these completed sessions
+    const sessionIds = completedSessionsWithPayments.map(s => s.id);
+    const { data: commissionHistory, error: commissionError } = await supabaseAdmin
+      .from('commission_history')
+      .select(`
+        session_id,
+        psychologist_id,
+        session_amount,
+        commission_amount,
+        session_type,
+        payment_status,
+        payout_id
+      `)
+      .in('session_id', sessionIds);
 
-    if (!completedSessionsWithPayments || completedSessionsWithPayments.length === 0) {
+    if (commissionError) {
+      console.error('Error fetching commission history:', commissionError);
+    }
+
+    // Check if there are any payouts for any psychologists in this month
+    // If a payout exists for a psychologist, all sessions for that psychologist in that month should be excluded
+    const psychologistIds = [...new Set(completedSessionsWithPayments.map(s => s.psychologist_id).filter(Boolean))];
+    
+    let paidPsychologistIds = new Set();
+    if (psychologistIds.length > 0) {
+      // Check for payouts that match the psychologist and month
+      // We check if payout notes contain the month/year or if payout_date is in the month range
+      const { data: existingPayouts, error: payoutCheckError } = await supabaseAdmin
+        .from('payouts')
+        .select('id, psychologist_id, payout_date, notes')
+        .in('psychologist_id', psychologistIds)
+        .eq('status', 'paid');
+
+      // Get all psychologist IDs that have paid payouts for this month
+      // Match by checking if notes contain the month/year or if payout_date falls within the month
+      if (!payoutCheckError && existingPayouts) {
+        const monthYearStr = new Date(targetYear, targetMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        existingPayouts.forEach(payout => {
+          // Check if payout notes mention this month/year, or if payout_date is in the month range
+          const payoutDate = new Date(payout.payout_date);
+          const payoutMonth = payoutDate.getMonth() + 1;
+          const payoutYear = payoutDate.getFullYear();
+          
+          if ((payout.notes && payout.notes.includes(monthYearStr)) || 
+              (payoutMonth === targetMonth && payoutYear === targetYear)) {
+            paidPsychologistIds.add(payout.psychologist_id);
+          }
+        });
+      }
+    }
+
+    // Filter out sessions that have already been paid (have payout_id or payment_status = 'paid')
+    const paidSessionIds = new Set(
+      (commissionHistory || [])
+        .filter(ch => ch.payment_status === 'paid' || ch.payout_id)
+        .map(ch => ch.session_id)
+    );
+
+    // Exclude already paid sessions from the list
+    // Also exclude all sessions for psychologists who have a paid payout for this month
+    const unpaidSessions = completedSessionsWithPayments.filter(s => 
+      !paidSessionIds.has(s.id) && !paidPsychologistIds.has(s.psychologist_id)
+    );
+    
+    console.log(`📊 Found ${unpaidSessions.length} unpaid completed sessions (${completedSessionsWithPayments.length} total) for ${targetMonth}/${targetYear}`);
+
+    if (!unpaidSessions || unpaidSessions.length === 0) {
       await auditLogger.logAction({
         userId: req.user.id,
         userEmail: req.user.email,
@@ -2255,24 +2322,8 @@ const getPendingPayouts = async (req, res) => {
       }, 'No completed sessions found for the selected month'));
     }
 
-    // Get commission_history for these completed sessions
-    const sessionIds = completedSessionsWithPayments.map(s => s.id);
-    const { data: commissionHistory, error: commissionError } = await supabaseAdmin
-      .from('commission_history')
-      .select(`
-        session_id,
-        psychologist_id,
-        session_amount,
-        commission_amount,
-        session_type
-      `)
-      .in('session_id', sessionIds)
-      .eq('payment_status', 'pending'); // Only pending payments
-
-    if (commissionError) throw commissionError;
-
     // Get package types for package sessions
-    const packageIds = [...new Set(completedSessionsWithPayments.map(s => s.package_id).filter(Boolean))];
+    const packageIds = [...new Set(unpaidSessions.map(s => s.package_id).filter(Boolean))];
     let packagesMap = {};
     if (packageIds.length > 0) {
       const { data: packages } = await supabaseAdmin
@@ -2287,21 +2338,52 @@ const getPendingPayouts = async (req, res) => {
       }
     }
 
-    // Build commission map by session_id
+    // Build commission map by session_id (only for unpaid sessions)
     const commissionMap = {};
     commissionHistory?.forEach(ch => {
-      commissionMap[ch.session_id] = ch;
+      if (!paidSessionIds.has(ch.session_id)) { // Only include unpaid sessions
+        commissionMap[ch.session_id] = ch;
+      }
+    });
+
+    // Get session prices for sessions without commission history
+    // Price is already included in unpaidSessions, so use it directly
+    const sessionPriceMap = {};
+    unpaidSessions.forEach(s => {
+      if (!commissionMap[s.id] && s.price !== undefined) {
+        sessionPriceMap[s.id] = parseFloat(s.price || 0);
+      }
     });
 
     // Group by psychologist
     const payoutsByDoctor = {};
     
-    completedSessionsWithPayments.forEach(session => {
+    unpaidSessions.forEach(session => {
       const psychId = session.psychologist_id;
-      const commission = commissionMap[session.id];
+      let commission = commissionMap[session.id];
       
-      // Skip if no commission history (shouldn't happen, but safety check)
-      if (!commission) return;
+      // If no commission history, calculate from session price
+      if (!commission && sessionPriceMap[session.id] !== undefined) {
+        const sessionAmount = sessionPriceMap[session.id];
+        // Default commission rate: 30% (can be made configurable per doctor later)
+        const defaultCommissionRate = 0.30;
+        const commissionAmount = sessionAmount * defaultCommissionRate;
+        
+        commission = {
+          session_id: session.id,
+          psychologist_id: psychId,
+          session_amount: sessionAmount,
+          commission_amount: commissionAmount,
+          session_type: session.session_type || 'individual',
+          payment_status: 'pending'
+        };
+      }
+      
+      // Skip if still no commission data (shouldn't happen for paid sessions)
+      if (!commission) {
+        console.warn(`No commission data for session ${session.id}, skipping`);
+        return;
+      }
 
       if (!payoutsByDoctor[psychId]) {
         payoutsByDoctor[psychId] = {
@@ -2366,6 +2448,8 @@ const getPendingPayouts = async (req, res) => {
       net_payout: payout.total_doctor_wallet,
       session_details: payout.sessions
     }));
+    
+    console.log(`✅ Processed ${payouts.length} doctors with completed paid sessions`);
 
     await auditLogger.logAction({
       userId: req.user.id,
@@ -2497,6 +2581,204 @@ const processPayout = async (req, res) => {
     console.error('Process payout error:', error);
     res.status(500).json(
       errorResponse('Internal server error while processing payout')
+    );
+  }
+};
+
+/**
+ * Mark Payout as Paid (Simple)
+ * POST /api/finance/payouts/mark-paid
+ * Marks pending payouts for a psychologist as paid for a specific month/year
+ */
+const markPayoutAsPaid = async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    if (!['finance', 'admin', 'superadmin'].includes(userRole)) {
+      return res.status(403).json(
+        errorResponse('Access denied. Finance role required.')
+      );
+    }
+
+    const { psychologist_id, month, year } = req.body;
+
+    if (!psychologist_id || !month || !year) {
+      return res.status(400).json(
+        errorResponse('Psychologist ID, month, and year are required')
+      );
+    }
+
+    const monthStr = month < 10 ? `0${month}` : String(month);
+    const monthStart = `${year}-${monthStr}-01`;
+    const monthEnd = new Date(year, month, 0).toISOString().split('T')[0];
+
+    // Get pending payout data for this psychologist and month
+    const { data: completedSessions, error: sessionsError } = await supabaseAdmin
+      .from('sessions')
+      .select(`
+        id,
+        psychologist_id,
+        scheduled_date,
+        status,
+        payment_id,
+        price,
+        psychologist:psychologists(id, first_name, last_name, email, phone, cover_image_url)
+      `)
+      .eq('status', 'completed')
+      .eq('psychologist_id', psychologist_id)
+      .gte('scheduled_date', monthStart)
+      .lte('scheduled_date', monthEnd)
+      .not('payment_id', 'is', null)
+      .neq('session_type', 'free_assessment');
+
+    if (sessionsError) {
+      console.error('Error fetching completed sessions:', sessionsError);
+      throw sessionsError;
+    }
+
+    const paymentIds = [...new Set(completedSessions?.map(s => s.payment_id).filter(Boolean) || [])];
+    let successfulPaymentIds = [];
+    
+    if (paymentIds.length > 0) {
+      const { data: payments } = await supabaseAdmin
+        .from('payments')
+        .select('id, status')
+        .in('id', paymentIds)
+        .in('status', ['paid', 'success', 'completed', 'cash']);
+      
+      if (payments) {
+        successfulPaymentIds = payments.map(p => p.id);
+      }
+    }
+
+    const completedSessionsWithPayments = (completedSessions || []).filter(s => 
+      s.payment_id && successfulPaymentIds.includes(s.payment_id)
+    );
+
+    if (completedSessionsWithPayments.length === 0) {
+      return res.status(404).json(
+        errorResponse('No completed paid sessions found for this psychologist in the selected month')
+      );
+    }
+
+    const sessionIds = completedSessionsWithPayments.map(s => s.id);
+    const { data: commissionHistory, error: commissionError } = await supabaseAdmin
+      .from('commission_history')
+      .select(`
+        session_id,
+        psychologist_id,
+        session_amount,
+        commission_amount,
+        payment_status
+      `)
+      .in('session_id', sessionIds);
+
+    if (commissionError) {
+      console.error('Error fetching commission history:', commissionError);
+    }
+
+    // Calculate totals
+    let totalCommission = 0;
+    let totalDoctorWallet = 0;
+    let totalSessionAmount = 0;
+
+    const commissionMap = {};
+    commissionHistory?.forEach(ch => {
+      commissionMap[ch.session_id] = ch;
+    });
+
+    completedSessionsWithPayments.forEach(session => {
+      let commission = commissionMap[session.id];
+      
+      if (!commission) {
+        // Fallback: calculate commission from session price
+        const sessionAmount = parseFloat(session.price || 0);
+        const defaultCommissionRate = 0.30;
+        const commissionAmount = sessionAmount * defaultCommissionRate;
+        commission = {
+          session_amount: sessionAmount,
+          commission_amount: commissionAmount
+        };
+      }
+
+      const sessionAmount = parseFloat(commission.session_amount || 0);
+      const commissionAmount = parseFloat(commission.commission_amount || 0);
+      const doctorWallet = sessionAmount - commissionAmount;
+
+      totalSessionAmount += sessionAmount;
+      totalCommission += commissionAmount;
+      totalDoctorWallet += doctorWallet;
+    });
+
+    // Create payout record
+    const payoutDate = new Date().toISOString().split('T')[0];
+    const { data: payout, error: payoutError } = await supabaseAdmin
+      .from('payouts')
+      .insert([{
+        psychologist_id,
+        payout_date: payoutDate,
+        total_commission: Math.round(totalCommission * 100) / 100,
+        tds_amount: 0,
+        tds_percentage: 0,
+        net_payout: Math.round(totalDoctorWallet * 100) / 100,
+        payment_method: 'other',
+        status: 'paid',
+        processed_by: userId,
+        processed_at: new Date().toISOString(),
+        notes: `Marked as paid for ${new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
+        created_by: userId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (payoutError) {
+      console.error('Error creating payout:', payoutError);
+      throw payoutError;
+    }
+
+    // Update commission history to mark as paid
+    // Update all commission history entries for sessions in this month that are still pending
+    const { error: commissionUpdateError } = await supabaseAdmin
+      .from('commission_history')
+      .update({
+        payment_status: 'paid',
+        payout_id: payout.id,
+        updated_at: new Date().toISOString()
+      })
+      .in('session_id', sessionIds)
+      .eq('psychologist_id', psychologist_id)
+      .eq('payment_status', 'pending');
+
+    if (commissionUpdateError) {
+      console.error('Error updating commission history:', commissionUpdateError);
+      // Don't throw - payout is already created, just log the error
+    }
+
+    await auditLogger.logAction({
+      userId,
+      userEmail: req.user.email,
+      userRole,
+      action: 'FINANCE_PAYOUT_MARKED_PAID',
+      resource: 'payouts',
+      resourceId: payout.id,
+      endpoint: '/api/finance/payouts/mark-paid',
+      method: 'POST',
+      details: { psychologist_id, month, year, amount: totalDoctorWallet },
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    }).catch(err => console.error('Audit log error:', err));
+
+    res.json(
+      successResponse(payout, 'Payout marked as paid successfully')
+    );
+
+  } catch (error) {
+    console.error('Mark payout as paid error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while marking payout as paid')
     );
   }
 };
@@ -3659,6 +3941,7 @@ module.exports = {
   createIncomeSource,
   getPayouts,
   getPayoutDetails,
-  getFreeAssessments
+  getFreeAssessments,
+  markPayoutAsPaid
 };
 

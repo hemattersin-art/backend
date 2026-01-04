@@ -262,18 +262,24 @@ class SessionReminderService {
    */
   async sendReminderForSession(session) {
     try {
-      // Check if reminder has already been sent
-      const { data: existingNotifications } = await supabaseAdmin
-        .from('notifications')
+      // ATOMIC CHECK AND LOCK: Try to update reminder_sent from false to true
+      // This acts as a distributed lock - only one process can successfully update
+      // If update affects 0 rows, it means reminder_sent was already true (or another process got there first)
+      const { data: updateData, error: lockError } = await supabaseAdmin
+        .from('sessions')
+        .update({ reminder_sent: true })
+        .eq('id', session.id)
+        .eq('reminder_sent', false) // Only update if it's currently false
         .select('id')
-        .eq('related_id', session.id)
-        .eq('type', 'session_reminder_2h')
-        .limit(1);
+        .single();
 
-      if (existingNotifications && existingNotifications.length > 0) {
-        console.log(`⏭️  Reminder already sent for session ${session.id}, skipping...`);
+      // If no rows were updated, it means reminder was already sent (or being processed by another instance)
+      if (lockError || !updateData) {
+        console.log(`⏭️  Reminder already sent or being processed for session ${session.id}, skipping...`);
         return;
       }
+
+      console.log(`🔒 Lock acquired for session ${session.id}, proceeding with reminder...`);
 
       const client = session.client;
       const psychologist = session.psychologist;
@@ -350,17 +356,8 @@ class SessionReminderService {
       // Wait for both messages to complete (or fail) before moving to next session
       await Promise.all(reminderPromises);
 
-      // Mark reminder as sent in the sessions table
-      const { error: updateError } = await supabaseAdmin
-        .from('sessions')
-        .update({ reminder_sent: true })
-        .eq('id', session.id);
-
-      if (updateError) {
-        console.error(`❌ Error updating reminder_sent for session ${session.id}:`, updateError);
-      } else {
-        console.log(`✅ Marked reminder_sent=true for session ${session.id}`);
-      }
+      // Note: reminder_sent was already set to true at the start of this function (atomic lock)
+      // This ensures no duplicate reminders are sent even if multiple cron jobs run concurrently
 
       // Create notification record to track that reminder was sent
       await supabaseAdmin
@@ -397,17 +394,46 @@ class SessionReminderService {
    */
   async sendReminderForFreeAssessment(assessment) {
     try {
-      // Check if reminder has already been sent
-      const { data: existingNotifications } = await supabaseAdmin
-        .from('notifications')
-        .select('id')
-        .eq('related_id', assessment.id)
-        .eq('type', 'free_assessment_reminder_2h')
-        .limit(1);
+      // ATOMIC CHECK: Try to insert a "lock" notification first
+      // This acts as a distributed lock - only one process can successfully insert
+      // We'll insert a temporary lock notification, then send reminders, then update it
+      const lockNotification = {
+        user_id: assessment.user_id || assessment.client?.user_id || assessment.client?.id,
+        user_role: 'client',
+        type: 'free_assessment_reminder_2h',
+        title: 'Free Assessment Reminder',
+        message: 'Reminder lock', // Temporary message
+        related_id: assessment.id,
+        is_read: false
+      };
 
-      if (existingNotifications && existingNotifications.length > 0) {
-        console.log(`⏭️  Reminder already sent for free assessment ${assessment.id}, skipping...`);
-        return;
+      // Try to insert the lock notification
+      // If it fails (duplicate), it means another process is already handling this
+      const { data: insertedLock, error: lockError } = await supabaseAdmin
+        .from('notifications')
+        .insert([lockNotification])
+        .select('id')
+        .single();
+
+      // If insert failed (likely due to unique constraint or duplicate), skip
+      if (lockError || !insertedLock) {
+        // Check if notification already exists (to confirm it's a duplicate, not another error)
+        const { data: existingNotifications } = await supabaseAdmin
+          .from('notifications')
+          .select('id')
+          .eq('related_id', assessment.id)
+          .eq('type', 'free_assessment_reminder_2h')
+          .limit(1);
+
+        if (existingNotifications && existingNotifications.length > 0) {
+          console.log(`⏭️  Reminder already sent for free assessment ${assessment.id}, skipping...`);
+          return;
+        } else {
+          // If it's a different error, log it but still proceed (fail-safe)
+          console.warn(`⚠️  Error creating lock notification for free assessment ${assessment.id}:`, lockError);
+        }
+      } else {
+        console.log(`🔒 Lock acquired for free assessment ${assessment.id}, proceeding with reminder...`);
       }
 
       const client = assessment.client;
@@ -425,7 +451,7 @@ class SessionReminderService {
       const formattedTime = assessmentDateTime.format('hh:mm A');
 
       const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
-      const psychologistName = psychologist ? `${psychologist.first_name} ${psychologist.last_name}`.trim() : 'your psychologist';
+      const psychologistName = psychologist ? `${psychologist.first_name} ${psychologist.last_name}`.trim() : 'our specialist';
 
       // Send reminders to both client and psychologist (if psychologist exists)
       const reminderPromises = [];
@@ -476,10 +502,10 @@ class SessionReminderService {
       // Wait for all messages to complete
       await Promise.all(reminderPromises);
 
-      // Create notification record to track that reminder was sent
+      // Update the lock notification with proper messages, or create new ones if lock wasn't created
       const notificationsToInsert = [
         {
-          user_id: assessment.user_id || client.user_id,
+          user_id: assessment.user_id || client.user_id || client.id,
           user_role: 'client',
           type: 'free_assessment_reminder_2h',
           title: 'Free Assessment Reminder',
@@ -501,9 +527,32 @@ class SessionReminderService {
         });
       }
 
-      await supabaseAdmin
-        .from('notifications')
-        .insert(notificationsToInsert);
+      // Update the lock notification or insert new ones
+      if (insertedLock) {
+        // Update the lock notification with proper message
+        await supabaseAdmin
+          .from('notifications')
+          .update({ message: notificationsToInsert[0].message })
+          .eq('id', insertedLock.id);
+
+        // Insert psychologist notification if needed
+        if (psychologist && notificationsToInsert.length > 1) {
+          await supabaseAdmin
+            .from('notifications')
+            .insert([notificationsToInsert[1]]);
+        }
+      } else {
+        // If lock wasn't created, try to insert all notifications (may fail if duplicates exist)
+        await supabaseAdmin
+          .from('notifications')
+          .insert(notificationsToInsert)
+          .catch(err => {
+            // Ignore duplicate errors - it means another process already created them
+            if (!err.message?.includes('duplicate') && !err.code?.includes('23505')) {
+              console.error(`Error inserting notifications for free assessment ${assessment.id}:`, err);
+            }
+          });
+      }
 
       console.log(`✅ Reminder notifications created for free assessment ${assessment.id}`);
     } catch (error) {

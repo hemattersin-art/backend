@@ -1141,7 +1141,7 @@ const bookFreeAssessment = async (req, res) => {
            */
           const meetSessionData = {
             summary: `Free Assessment`,
-            description: `Free 20-minute assessment session with our assessment specialist`,
+            description: `Free 20-minute assessment session with our specialist`,
             startDate: scheduledDate,
             startTime: scheduledTime,
             endTime: addMinutesToTime(scheduledTime, 20),

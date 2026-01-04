@@ -85,6 +85,7 @@ router.get('/payouts', financeController.getPayouts);
 router.get('/payouts/pending', financeController.getPendingPayouts);
 router.get('/payouts/:payoutId', financeController.getPayoutDetails);
 router.post('/payouts', financeController.processPayout);
+router.post('/payouts/mark-paid', financeController.markPayoutAsPaid);
 
 module.exports = router;
 
