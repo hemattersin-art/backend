@@ -2989,6 +2989,30 @@ const rescheduleSession = async (req, res) => {
       );
     }
 
+    // For free assessment sessions, also update the free_assessments table
+    if (session.session_type === 'free_assessment') {
+      try {
+        const { error: freeAssessmentUpdateError } = await supabaseAdmin
+          .from('free_assessments')
+          .update({
+            scheduled_date: formatDate(new_date),
+            scheduled_time: formatTime(new_time),
+            status: 'rescheduled',
+            updated_at: new Date().toISOString()
+          })
+          .eq('session_id', sessionId);
+
+        if (freeAssessmentUpdateError) {
+          console.error('⚠️ Error updating free_assessments table:', freeAssessmentUpdateError);
+        } else {
+          console.log('✅ Updated free_assessments table with new date/time');
+        }
+      } catch (freeAssessmentError) {
+        console.error('⚠️ Error updating free_assessments table:', freeAssessmentError);
+        // Don't fail the reschedule if free_assessments update fails
+      }
+    }
+
     // Update receipt with new session date and time
     try {
       const { data: receipt, error: receiptError } = await supabaseAdmin
@@ -3094,7 +3118,7 @@ const rescheduleSession = async (req, res) => {
     // Send WhatsApp notifications for reschedule
     try {
       console.log('📱 Sending WhatsApp notifications for admin reschedule...');
-      const whatsappService = require('../utils/whatsappService');
+      const { sendRescheduleConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
       // Use phone numbers already fetched from session query above
       const clientPhone = session.clients.phone_number || null;
@@ -3102,30 +3126,16 @@ const rescheduleSession = async (req, res) => {
 
       const clientName = session.clients.child_name || `${session.clients.first_name} ${session.clients.last_name}`;
       const psychologistName = `${session.psychologists.first_name} ${session.psychologists.last_name}`;
-      
-      const originalDateTime = new Date(`${oldSessionData.date}T${oldSessionData.time}`).toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        dateStyle: 'long',
-        timeStyle: 'short'
-      });
-      const newDateTime = new Date(`${new_date}T${new_time}`).toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        dateStyle: 'long',
-        timeStyle: 'short'
-      });
 
-      // Send WhatsApp to client
+      // Send WhatsApp to client using new reschedule template
       if (clientPhone) {
-        const clientMessage = `🔄 Your therapy session has been rescheduled by admin.\n\n` +
-          `❌ Old: ${originalDateTime}\n` +
-          `✅ New: ${newDateTime}\n\n` +
-          (newMeetLink 
-            ? `🔗 New Google Meet Link: ${newMeetLink}\n\n`
-            : '') +
-          `${reason ? `Reason: ${reason}\n\n` : ''}` +
-          `Please update your calendar. We look forward to seeing you at the new time!`;
-
-        const clientResult = await whatsappService.sendWhatsAppTextWithRetry(clientPhone, clientMessage);
+        const clientResult = await sendRescheduleConfirmation(clientPhone, {
+          oldDate: oldSessionData.date,
+          oldTime: oldSessionData.time,
+          newDate: new_date,
+          newTime: new_time,
+          newMeetLink: newMeetLink
+        });
         if (clientResult?.success) {
           console.log('✅ Reschedule WhatsApp sent to client');
         } else {
@@ -3846,6 +3856,30 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
+      // For free assessment sessions, also update the free_assessments table
+      if (session.session_type === 'free_assessment') {
+        try {
+          const { error: freeAssessmentUpdateError } = await supabaseAdmin
+            .from('free_assessments')
+            .update({
+              scheduled_date: formatDate(newDate),
+              scheduled_time: formatTime(newTime),
+              status: 'rescheduled',
+              updated_at: new Date().toISOString()
+            })
+            .eq('session_id', session.id);
+
+          if (freeAssessmentUpdateError) {
+            console.error('⚠️ Error updating free_assessments table:', freeAssessmentUpdateError);
+          } else {
+            console.log('✅ Updated free_assessments table with new date/time');
+          }
+        } catch (freeAssessmentError) {
+          console.error('⚠️ Error updating free_assessments table:', freeAssessmentError);
+          // Don't fail the reschedule if free_assessments update fails
+        }
+      }
+
       // Update receipt with new session date and time
       try {
         const { data: receipt, error: receiptError } = await supabaseAdmin
@@ -4184,13 +4218,13 @@ const handleRescheduleRequest = async (req, res) => {
                 </ul>
                 <p>Your session remains available at the originally scheduled time. If you need to discuss this further or have any concerns, please contact our operations team via WhatsApp or call.</p>
                 <p>Thank you for your understanding.</p>
-                <p>Best regards,<br>Kuttikal Team</p>
+                <p>Best regards,<br>Little Care Team</p>
               </div>
             `;
 
             if (clientEmail) {
               await emailService.transporter.sendMail({
-                from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
+                from: process.env.EMAIL_FROM || 'noreply@little.care',
                 to: clientEmail,
                 subject: declineEmailSubject,
                 html: declineEmailHtml

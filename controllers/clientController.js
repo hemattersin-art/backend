@@ -2402,13 +2402,36 @@ const rescheduleSession = async (req, res) => {
         }
     }
 
-    // For free assessment sessions, update the timeslot availability
+    // For free assessment sessions, update the timeslot availability and free_assessments table
     if (session.session_type === 'free_assessment') {
       try {
         const oldDate = session.scheduled_date;
         const oldTime = session.scheduled_time;
         const newDate = formatDate(new_date);
         const newTime = formatTime(new_time);
+
+        // Update the free_assessments table to sync with sessions table
+        // Use the same formatted date/time as sessions table for consistency
+        try {
+          const { error: freeAssessmentUpdateError } = await supabaseAdmin
+            .from('free_assessments')
+            .update({
+              scheduled_date: newDate, // Already formatted above
+              scheduled_time: newTime,  // Already formatted above
+              status: 'rescheduled',
+              updated_at: new Date().toISOString()
+            })
+            .eq('session_id', sessionId);
+
+          if (freeAssessmentUpdateError) {
+            console.error('⚠️ Error updating free_assessments table:', freeAssessmentUpdateError);
+          } else {
+            console.log('✅ Updated free_assessments table with new date/time');
+          }
+        } catch (freeAssessmentError) {
+          console.error('⚠️ Error updating free_assessments table:', freeAssessmentError);
+          // Don't fail the reschedule if free_assessments update fails
+        }
 
         // Add back the old slot
         const { data: oldDateConfig } = await supabaseAdmin
@@ -2970,21 +2993,37 @@ const submitSessionFeedback = async (req, res) => {
     }
 
     // Get client ID from user_id
-    // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
-    const { data: client, error: clientError } = await supabaseAdmin
-      .from('clients')
-      .select('id')
-      .eq('id', userId)
-      .single();
+    // Use client_id if available (new system), otherwise fall back to req.user.id (old system)
+    // Or try lookup by user_id first, then fallback to id for backward compatibility
+    let clientId = req.user.client_id || req.user.id;
+    
+    // If client_id is not in req.user, try to find it
+    if (!req.user.client_id) {
+      // Try new system first: lookup by user_id
+      let { data: client, error: clientError } = await supabaseAdmin
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
 
-    if (clientError || !client) {
-      console.error('Error finding client:', clientError);
-      return res.status(404).json(
-        errorResponse('Client profile not found')
-      );
+      // Fallback to old system: lookup by id (backward compatibility)
+      if (clientError || !client) {
+        ({ data: client, error: clientError } = await supabaseAdmin
+          .from('clients')
+          .select('id')
+          .eq('id', userId)
+          .single());
+      }
+
+      if (clientError || !client) {
+        console.error('Error finding client:', clientError);
+        return res.status(404).json(
+          errorResponse('Client profile not found')
+        );
+      }
+
+      clientId = client.id;
     }
-
-    const clientId = client.id;
     console.log(`📝 Client ${clientId} submitting feedback for session ${sessionId}`);
 
     // Check if session exists and belongs to this client
@@ -3023,19 +3062,42 @@ const submitSessionFeedback = async (req, res) => {
       );
     }
 
-    // Update session with feedback
-    const { data: updatedSession, error: updateError } = await supabaseAdmin
+    // Update session with feedback and rating
+    // Try with rating first, fallback to feedback only if rating column doesn't exist
+    let updateData = {
+      feedback: feedback,
+      updated_at: new Date().toISOString()
+    };
+    
+    // Try to include rating (may not exist in all database schemas)
+    let { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
       .update({
-        feedback: feedback,
-        updated_at: new Date().toISOString()
+        ...updateData,
+        rating: rating
       })
       .eq('id', sessionId)
-      .select('id, feedback, updated_at')
+      .select('id, feedback, rating, updated_at')
       .single();
+
+    // If update fails with column error, try without rating (for backward compatibility)
+    if (updateError && (
+      updateError.code === '42703' || // PostgreSQL: undefined column
+      updateError.message?.includes('column') && updateError.message?.includes('does not exist') ||
+      updateError.message?.includes('rating')
+    )) {
+      console.log('⚠️ Rating column not found or error with rating, updating feedback only');
+      ({ data: updatedSession, error: updateError } = await supabaseAdmin
+        .from('sessions')
+        .update(updateData)
+        .eq('id', sessionId)
+        .select('id, feedback, updated_at')
+        .single());
+    }
 
     if (updateError) {
       console.error('Error updating session with feedback:', updateError);
+      console.error('Update error details:', JSON.stringify(updateError, null, 2));
       return res.status(500).json(
         errorResponse('Failed to submit feedback')
       );

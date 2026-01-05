@@ -1547,15 +1547,25 @@ const adminListFreeAssessments = async (req, res) => {
         scheduled_date,
         scheduled_time,
         status,
+        session_id,
         client:clients(id, first_name, last_name, email),
         psychologist:psychologists(id, first_name, last_name, email),
-        session:sessions(google_meet_link)
+        session:sessions(google_meet_link, feedback, rating)
       `)
       .order('scheduled_date', { ascending: true })
       .order('scheduled_time', { ascending: true });
 
     if (status) {
-      query = query.eq('status', status);
+      // If status filter is provided, use it
+      if (status === 'all') {
+        // 'all' means show everything including completed
+        // Don't add any status filter
+      } else {
+        query = query.eq('status', status);
+      }
+    } else {
+      // Default: exclude completed assessments when no filter is provided
+      query = query.neq('status', 'completed');
     }
 
     const { data, error } = await query;
@@ -1594,9 +1604,12 @@ const adminListFreeAssessments = async (req, res) => {
         scheduledDate: a.scheduled_date,
         scheduledTime: a.scheduled_time,
         status: a.status,
+        session_id: a.session_id || null,
         client: a.client || null,
         psychologist: a.psychologist || null,
-        meetLink
+        meetLink,
+        feedback: a.session?.feedback || null,
+        rating: a.session?.rating || null
       });
     }
 
@@ -1604,6 +1617,71 @@ const adminListFreeAssessments = async (req, res) => {
   } catch (error) {
     console.error('Admin list free assessments exception:', error);
     return res.status(500).json(errorResponse('Internal server error'));
+  }
+};
+
+// Admin: Delete free assessment
+const deleteFreeAssessment = async (req, res) => {
+  try {
+    const { assessmentId } = req.params;
+
+    console.log('🗑️ Admin deleting free assessment:', assessmentId);
+
+    // Get the assessment
+    const { data: assessment, error: assessmentError } = await supabaseAdmin
+      .from('free_assessments')
+      .select('id, session_id, status')
+      .eq('id', assessmentId)
+      .single();
+
+    if (assessmentError || !assessment) {
+      return res.status(404).json(
+        errorResponse('Free assessment not found')
+      );
+    }
+
+    // Delete the associated session if it exists
+    if (assessment.session_id) {
+      try {
+        const { error: sessionDeleteError } = await supabaseAdmin
+          .from('sessions')
+          .delete()
+          .eq('id', assessment.session_id);
+
+        if (sessionDeleteError) {
+          console.warn('⚠️ Error deleting associated session:', sessionDeleteError);
+          // Continue with assessment deletion even if session deletion fails
+        } else {
+          console.log('✅ Deleted associated session:', assessment.session_id);
+        }
+      } catch (sessionError) {
+        console.warn('⚠️ Error deleting associated session:', sessionError);
+        // Continue with assessment deletion
+      }
+    }
+
+    // Delete the free assessment
+    const { error: deleteError } = await supabaseAdmin
+      .from('free_assessments')
+      .delete()
+      .eq('id', assessmentId);
+
+    if (deleteError) {
+      console.error('Error deleting free assessment:', deleteError);
+      return res.status(500).json(
+        errorResponse('Failed to delete free assessment')
+      );
+    }
+
+    console.log('✅ Free assessment deleted successfully:', assessmentId);
+    return res.json(
+      successResponse(null, 'Free assessment deleted successfully')
+    );
+  } catch (error) {
+    console.error('Delete free assessment error:', error);
+    return res.status(500).json(
+      errorResponse('Internal server error while deleting free assessment')
+    );
   }
 };
 
@@ -1615,5 +1693,6 @@ module.exports = {
   getFreeAssessmentAvailabilityRange,
   bookFreeAssessment,
   cancelFreeAssessment,
-  adminListFreeAssessments
+  adminListFreeAssessments,
+  deleteFreeAssessment
 };

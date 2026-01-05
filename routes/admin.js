@@ -90,6 +90,7 @@ router.put('/sessions/:sessionId/reschedule', adminController.rescheduleSession)
 router.put('/sessions/:sessionId/payment', adminController.updateSessionPayment);
 router.put('/sessions/:sessionId', adminController.updateSession);
 router.put('/sessions/:sessionId/no-show', sessionController.markSessionAsNoShow);
+router.post('/sessions/:sessionId/complete', sessionController.completeSession); // Allow admins to complete sessions (especially free assessments)
 router.get('/psychologists/:psychologistId/availability', adminController.getPsychologistAvailabilityForReschedule);
 
 // Manual booking (admin only - for edge cases)

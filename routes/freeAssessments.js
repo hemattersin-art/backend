@@ -7,7 +7,8 @@ const {
   getFreeAssessmentAvailabilityRange,
   bookFreeAssessment,
   cancelFreeAssessment,
-  adminListFreeAssessments
+  adminListFreeAssessments,
+  deleteFreeAssessment
 } = require('../controllers/freeAssessmentController');
 
 // Get client's free assessment status
@@ -28,5 +29,7 @@ router.put('/cancel/:assessmentId', authenticateToken, cancelFreeAssessment);
 // Admin: List free assessments
 router.get('/admin/list', authenticateToken, requireAdmin, adminListFreeAssessments);
 
+// Admin: Delete free assessment
+router.delete('/admin/:assessmentId', authenticateToken, requireAdmin, deleteFreeAssessment);
 
 module.exports = router;

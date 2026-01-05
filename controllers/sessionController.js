@@ -913,25 +913,15 @@ const updateSessionStatus = async (req, res) => {
         const psychologist = updatedSession.psychologist;
         
         if (client?.phone_number) {
-          const clientName = client.child_name || `${client.first_name || ''} ${client.last_name || ''}`.trim();
-          const psychologistName = `${psychologist?.first_name || ''} ${psychologist?.last_name || ''}`.trim();
-          const sessionDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
-            timeZone: 'Asia/Kolkata',
-            dateStyle: 'long',
-            timeStyle: 'short'
+          const psychologistName = `${psychologist?.first_name || ''} ${psychologist?.last_name || ''}`.trim() || 'our specialist';
+          const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+
+          const clientResult = await whatsappService.sendNoShowNotification(client.phone_number, {
+            psychologistName: psychologistName,
+            date: updatedSession.scheduled_date,
+            time: updatedSession.scheduled_time,
+            supportPhone: supportPhone
           });
-
-          const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 XXXX XXXXXX';
-          const noShowMessage = `⚠️ No-Show Notice\n\n` +
-            `We noticed you didn't attend your scheduled session:\n\n` +
-            `📅 Date: ${sessionDateTime}\n` +
-            `👤 Psychologist: Dr. ${psychologistName}\n\n` +
-            `Please let us know the reason or contact our team to reschedule:\n` +
-            `📧 Email: ${process.env.COMPANY_ADMIN_EMAIL || 'support@littlecare.com'}\n` +
-            `📱 WhatsApp: ${supportPhone}\n\n` +
-            `We're here to help you reschedule or address any concerns.`;
-
-          const clientResult = await whatsappService.sendWhatsAppTextWithRetry(client.phone_number, noShowMessage);
           if (clientResult?.success) {
             console.log('✅ No-show WhatsApp sent to client');
           } else {
@@ -939,23 +929,7 @@ const updateSessionStatus = async (req, res) => {
           }
         }
 
-        // Also send email notification
-        try {
-          const emailService = require('../utils/emailService');
-          if (client?.email) {
-            await emailService.sendNoShowNotification({
-              to: client.email,
-              clientName: client.child_name || `${client.first_name || ''} ${client.last_name || ''}`.trim(),
-              psychologistName: `${psychologist?.first_name || ''} ${psychologist?.last_name || ''}`.trim(),
-              sessionDate: updatedSession.scheduled_date,
-              sessionTime: updatedSession.scheduled_time,
-              sessionId: updatedSession.id
-            });
-            console.log('✅ No-show email sent to client');
-          }
-        } catch (emailError) {
-          console.error('❌ Error sending no-show email:', emailError);
-        }
+        // NO EMAIL for no-show (WhatsApp only)
       } catch (waError) {
         console.error('❌ Error handling no-show notifications:', waError);
         // Continue even if notifications fail
@@ -1069,18 +1043,24 @@ const rescheduleSession = async (req, res) => {
         }
     */
     
-    // Get client and psychologist details for email notifications
+    // Get client and psychologist details for email and WhatsApp notifications
     if (true) { // Always fetch for email notifications
       try {
         const { data: clientDetails } = await supabaseAdmin
           .from('clients')
-          .select('first_name, last_name, child_name')
+          .select(`
+            first_name, 
+            last_name, 
+            child_name, 
+            phone_number,
+            user:users(email)
+          `)
           .eq('id', session.client_id)
           .single();
 
         const { data: psychologistDetails } = await supabaseAdmin
           .from('psychologists')
-          .select('first_name, last_name')
+          .select('first_name, last_name, email')
           .eq('id', session.psychologist_id)
           .single();
 
@@ -1099,6 +1079,30 @@ const rescheduleSession = async (req, res) => {
         } catch (emailError) {
           console.error('Error sending reschedule notification emails:', emailError);
           // Continue even if email sending fails
+        }
+
+        // Send WhatsApp notification to client
+        try {
+          const { sendRescheduleConfirmation } = require('../utils/whatsappService');
+          const clientPhone = clientDetails.phone_number || null;
+          if (clientPhone) {
+            const meetLink = session.google_meet_link || session.google_meet_join_url || null;
+            const clientResult = await sendRescheduleConfirmation(clientPhone, {
+              oldDate: session.scheduled_date,
+              oldTime: session.scheduled_time,
+              newDate: new_date,
+              newTime: new_time,
+              newMeetLink: meetLink
+            });
+            if (clientResult?.success) {
+              console.log('✅ Reschedule WhatsApp sent to client');
+            } else {
+              console.warn('⚠️ Failed to send reschedule WhatsApp to client');
+            }
+          }
+        } catch (waError) {
+          console.error('Error sending reschedule WhatsApp:', waError);
+          // Continue even if WhatsApp fails
         }
       } catch (googleError) {
         console.error('Error updating Google Calendar event:', googleError);
@@ -1684,22 +1688,17 @@ const handleRescheduleRequest = async (req, res) => {
   }
 };
 
-// Complete session with summary, report, and notes (psychologist only)
+// Complete session with summary, report, and notes (psychologist or admin for free assessments)
 const completeSession = async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { summary, report, summary_notes } = req.body;
-    const psychologistId = req.user.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const isAdmin = ['admin', 'superadmin'].includes(userRole);
 
-    // Validate required fields
-    if (!summary || !report || !summary_notes) {
-      return res.status(400).json(
-        errorResponse('Summary, report, and summary notes are required')
-      );
-    }
-
-    // Check if session exists and belongs to this psychologist
-    const { data: session, error: sessionError } = await supabaseAdmin
+    // Check if session exists
+    let sessionQuery = supabaseAdmin
       .from('sessions')
       .select(`
         *,
@@ -1710,16 +1709,40 @@ const completeSession = async (req, res) => {
           child_name,
           child_age,
           user_id,
+          phone_number,
           user:users(email)
         )
       `)
-      .eq('id', sessionId)
-      .eq('psychologist_id', psychologistId)
-      .single();
+      .eq('id', sessionId);
+
+    // For psychologists, check if session belongs to them
+    // For admins, allow completing any session (especially free assessments)
+    if (!isAdmin) {
+      sessionQuery = sessionQuery.eq('psychologist_id', userId);
+    }
+
+    const { data: session, error: sessionError } = await sessionQuery.single();
 
     if (sessionError || !session) {
       return res.status(404).json(
         errorResponse('Session not found or you do not have permission to complete this session')
+      );
+    }
+
+    const isFreeAssessment = session.session_type === 'free_assessment';
+
+    // Validate required fields
+    // For free assessments, report is optional (they don't have reports)
+    // For regular sessions, all fields are required
+    if (!summary || !summary_notes) {
+      return res.status(400).json(
+        errorResponse('Summary and summary notes are required')
+      );
+    }
+
+    if (!isFreeAssessment && !report) {
+      return res.status(400).json(
+        errorResponse('Report is required for regular sessions')
       );
     }
 
@@ -1730,16 +1753,23 @@ const completeSession = async (req, res) => {
       );
     }
 
+    // Prepare update data
+    const updateData = {
+      status: 'completed',
+      summary: summary.trim(),
+      summary_notes: summary_notes.trim(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Only add report for non-free-assessment sessions
+    if (!isFreeAssessment && report) {
+      updateData.report = report.trim();
+    }
+
     // Update session with completion data
     const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
-      .update({
-        status: 'completed',
-        summary: summary.trim(),
-        report: report.trim(),
-        summary_notes: summary_notes.trim(),
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', sessionId)
       .select(`
         *,
@@ -1760,6 +1790,26 @@ const completeSession = async (req, res) => {
       return res.status(500).json(
         errorResponse('Failed to complete session')
       );
+    }
+
+    // If this is a free assessment, also update the free_assessments table status
+    if (isFreeAssessment) {
+      try {
+        const { error: assessmentUpdateError } = await supabaseAdmin
+          .from('free_assessments')
+          .update({ status: 'completed' })
+          .eq('session_id', sessionId);
+
+        if (assessmentUpdateError) {
+          console.warn('⚠️ Failed to update free_assessments status:', assessmentUpdateError);
+          // Don't fail the request if this update fails
+        } else {
+          console.log('✅ Free assessment status updated to completed');
+        }
+      } catch (assessmentError) {
+        console.warn('⚠️ Error updating free_assessments status:', assessmentError);
+        // Don't fail the request if this update fails
+      }
     }
 
     // Calculate commission and GST (if payment is completed)
@@ -1788,23 +1838,49 @@ const completeSession = async (req, res) => {
         .from('notifications')
         .insert([clientNotificationData]);
 
-      // Send email notification to client
-      if (session.client.user?.email) {
-        await emailService.sendSessionCompletionNotification({
-          clientName: `${session.client.first_name} ${session.client.last_name}`,
-          childName: session.client.child_name,
-          psychologistName: req.user.first_name || 'Your Psychologist',
-          sessionDate: formatDate(session.scheduled_date),
-          sessionTime: formatTime(session.scheduled_time),
-          clientEmail: session.client.user.email
-        });
+      // Send WhatsApp notification to client (NO EMAIL for session completion)
+      try {
+        const { sendSessionCompletionNotification } = require('../utils/whatsappService');
+        const clientPhone = session.client.phone_number || null;
+        if (clientPhone) {
+          // For free assessments, use "our specialist", otherwise use psychologist name
+          const psychologistName = isFreeAssessment 
+            ? 'our specialist'
+            : `${req.user.first_name || ''} ${req.user.last_name || ''}`.trim() || 'our specialist';
+          const frontendUrl = (
+            process.env.FRONTEND_URL ||
+            process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') ||
+            'https://www.little.care'
+          ).replace(/\/$/, '');
+          const bookingLink = `${frontendUrl}/psychologists`;
+          // For free assessments, use sessions page (they don't have reports)
+          // For regular sessions, use reports page
+          const feedbackLink = isFreeAssessment 
+            ? `${frontendUrl}/profile/sessions?tab=completed`
+            : `${frontendUrl}/profile/reports`;
+
+          const clientResult = await sendSessionCompletionNotification(clientPhone, {
+            psychologistName: psychologistName,
+            bookingLink: bookingLink,
+            feedbackLink: feedbackLink
+          });
+          if (clientResult?.success) {
+            console.log('✅ Session completion WhatsApp sent to client');
+          } else {
+            console.warn('⚠️ Failed to send session completion WhatsApp to client');
+          }
+        }
+      } catch (waError) {
+        console.error('Error sending session completion WhatsApp:', waError);
+        // Don't fail the request if WhatsApp fails
       }
     } catch (notificationError) {
       console.error('Error sending completion notification:', notificationError);
       // Don't fail the request if notification fails
     }
 
-    console.log(`✅ Session ${sessionId} completed by psychologist ${psychologistId}`);
+    const completedBy = isAdmin ? 'admin' : 'psychologist';
+    console.log(`✅ Session ${sessionId} completed by ${completedBy} ${userId}${isFreeAssessment ? ' (free assessment)' : ''}`);
     
     res.json(
       successResponse(updatedSession, 'Session completed successfully')
@@ -1921,7 +1997,6 @@ const markSessionAsNoShow = async (req, res) => {
 
     // Send no-show notification to client
     try {
-      const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       const emailService = require('../utils/emailService');
 
       // Create notification
@@ -1943,58 +2018,28 @@ const markSessionAsNoShow = async (req, res) => {
       // Send WhatsApp notification
       if (session.client?.phone_number) {
         const clientPhone = session.client.phone_number;
-        const clientName = session.client.child_name || 
-                          `${session.client.first_name} ${session.client.last_name}`.trim() || 
-                          'Client';
-        const psychologistName = `${session.psychologist?.first_name || ''} ${session.psychologist?.last_name || ''}`.trim() || 'Psychologist';
-        
-        const noShowMessage = `⚠️ No-Show Notice\n\n` +
-          `Dear ${clientName},\n\n` +
-          `Your session scheduled for ${session.scheduled_date} at ${session.scheduled_time} with ${psychologistName} has been marked as no-show.\n\n` +
-          `${reason ? `Reason: ${reason}\n\n` : ''}` +
-          `If you believe this is an error or would like to reschedule, please contact us.\n\n` +
-          `Thank you.`;
+        const psychologistName = `${session.psychologist?.first_name || ''} ${session.psychologist?.last_name || ''}`.trim() || 'our specialist';
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
 
         try {
-          await sendWhatsAppTextWithRetry(clientPhone, noShowMessage);
-          console.log('✅ No-show WhatsApp sent to client');
+          const { sendNoShowNotification } = require('../utils/whatsappService');
+          const clientResult = await sendNoShowNotification(clientPhone, {
+            psychologistName: psychologistName,
+            date: session.scheduled_date,
+            time: session.scheduled_time,
+            supportPhone: supportPhone
+          });
+          if (clientResult?.success) {
+            console.log('✅ No-show WhatsApp sent to client');
+          } else {
+            console.warn('⚠️ Failed to send no-show WhatsApp to client');
+          }
         } catch (waError) {
           console.warn('⚠️ Failed to send no-show WhatsApp to client:', waError);
         }
       }
 
-      // Send email notification
-      if (session.client?.user?.email) {
-        try {
-          await emailService.transporter.sendMail({
-            from: process.env.EMAIL_FROM || 'noreply@kuttikal.com',
-            to: session.client.user.email,
-            subject: 'No-Show Notice - Session Missed',
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="margin: 0; font-size: 28px;">⚠️ No-Show Notice</h1>
-                <p style="font-size: 16px; color: #555; margin-top: 20px;">
-                  Dear ${session.client.child_name || `${session.client.first_name} ${session.client.last_name}`.trim() || 'Client'},
-                </p>
-                <p style="font-size: 16px; color: #555;">
-                  Your session scheduled for <strong>${session.scheduled_date}</strong> at <strong>${session.scheduled_time}</strong> with <strong>${session.psychologist?.first_name || ''} ${session.psychologist?.last_name || ''}</strong> has been marked as no-show.
-                </p>
-                ${reason ? `<p style="font-size: 16px; color: #555;"><strong>Reason:</strong> ${reason}</p>` : ''}
-                <p style="font-size: 16px; color: #555;">
-                  If you believe this is an error or would like to reschedule, please contact us.
-                </p>
-                <p style="font-size: 16px; color: #555; margin-top: 30px;">
-                  Thank you,<br>
-                  Kuttikal Team
-                </p>
-              </div>
-            `
-          });
-          console.log('✅ No-show email sent to client');
-        } catch (emailError) {
-          console.error('❌ Error sending no-show email:', emailError);
-        }
-      }
+      // NO EMAIL for no-show (WhatsApp only)
     } catch (notificationError) {
       console.error('Error sending no-show notification:', notificationError);
       // Don't fail the request if notification fails

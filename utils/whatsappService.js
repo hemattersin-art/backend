@@ -303,352 +303,279 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     packageInfo = null
   } = details || {};
 
-  // Message 1: Welcome + Session Details (with Join Meet button)
-  const welcomeAndDetailsMessage = (isFreeAssessment
-    ? `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking a free assessment with our child specialists.\n\n`
-    : packageInfo
-    ? `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking your next package session with our child specialists.\n\n`
-    : `👋 Welcome to Little Care! 🌈\n\n` +
-      `Thank you for booking a therapy session with our child specialists.\n\n`) +
-    buildBookingMessage({
-      childName,
-      date,
-      time,
-      meetLink,
-      psychologistName,
-      isFreeAssessment,
-      packageInfo
-    });
+  // New requirement: send a single WhatsApp confirmation message in a clean format
+  // and include a "For receipt: Click here" link (if we can generate one).
 
-  // Message 2: Before session reminders + Contact info
-  const remindersAndContactMessage =
-    `📝 Before the session:\n\n` +
-    `• Please be ready at least 10 minutes before your scheduled time.\n\n` +
-    `• Ensure a stable internet connection.\n\n` +
-    `• Choose a quiet place with good lighting and minimal background noise.\n\n` +
-    `• Keep your device charged or connected to power.\n\n` +
-    `📞 For any other enquiry or help, you can reach us on:\n` +
-    `WhatsApp / Call: +91 95390 07766`;
+  // NOTE: childName is intentionally not used in this WhatsApp template (per request).
+  void childName;
 
-  // Send as 3 separate messages in order, with a delay between each to respect WASenderApi account protection
-  const messages = [
-    welcomeAndDetailsMessage,
-    remindersAndContactMessage
-  ];
+  // Receipt link requirement: always send users to the production receipts page
+  // (no expiring signed links in WhatsApp).
+  const frontendUrl = (
+    process.env.FRONTEND_URL ||
+    process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') ||
+    'https://www.little.care'
+  ).replace(/\/$/, '');
+  const receiptLink = `${frontendUrl}/profile/receipts`;
 
-  let lastResult = null;
-  // Send first 2 text messages
-  for (let i = 0; i < messages.length; i++) {
-    lastResult = await sendWhatsAppTextWithRetry(toPhoneE164, messages[i]);
-    // Wait ~5.5s between messages to stay under "1 message per 5 seconds" limit
-    if (i < messages.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 5500));
-    }
-  }
+  // Keep these for backwards compatibility (not used in this template now)
+  void receiptUrl;
+  void receiptPdfBuffer;
+  void receiptNumber;
+  void clientName;
 
-  // Message 3: Send receipt PDF as document (if available)
-  // Wait before sending receipt to maintain proper message order
-  if (receiptUrl || receiptPdfBuffer) {
-    await new Promise(resolve => setTimeout(resolve, 5500));
-  }
-  // Note: WASender API requires a URL, so if we only have a buffer, we skip WhatsApp receipt
-  // The receipt is still sent via email with the PDF attachment
-  if (receiptUrl) {
-    // Legacy: Receipt stored in storage (old system)
+  // 2) Format date as: "Mon, 12 Jan 2026"
+  const formatBookingDateShort = (dateStr) => {
+    if (!dateStr) return '';
     try {
-      const apiKey = process.env.WASENDER_API_KEY;
-      if (apiKey) {
-        const formattedPhone = formatPhoneNumber(toPhoneE164);
-        if (formattedPhone) {
-          const apiUrl = 'https://wasenderapi.com/api/send-message';
-          const url = new URL(apiUrl);
-
-          // Generate filename using client name if available (sanitized for filesystem)
-          let fileName = 'receipt';
-          if (details?.clientName) {
-            // Sanitize client name: replace spaces with hyphens, remove special characters
-            const sanitizedName = details.clientName
-              .trim()
-              .replace(/\s+/g, '-') // Replace spaces with hyphens
-              .replace(/[^a-zA-Z0-9\-_]/g, '') // Remove special characters except hyphens and underscores
-              .substring(0, 50); // Limit length to 50 characters
-            fileName = sanitizedName || 'receipt';
-          }
-
-          const postData = JSON.stringify({
-            to: formattedPhone,
-            text: '🧾 Here is your receipt for the session.',
-            documentUrl: receiptUrl,
-            fileName: `${fileName}.pdf`
-          });
-
-          const options = {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(postData),
-              Authorization: `Bearer ${apiKey}`
-            }
-          };
-
-          await new Promise((resolve) => {
-            const req = https.request(options, (res) => {
-              let data = '';
-              res.on('data', (chunk) => {
-                data += chunk;
-              });
-              res.on('end', () => {
-                try {
-                  const jsonData = JSON.parse(data || '{}');
-                  if (res.statusCode >= 200 && res.statusCode < 300) {
-                    console.log('✅ WhatsApp receipt PDF sent via WASenderApi:', jsonData);
-                  } else {
-                    console.error('❌ WASenderApi receipt send error:', jsonData);
-                  }
-                } catch (err) {
-                  console.error('❌ WASenderApi receipt response parse error:', err, 'Raw data:', data);
-                }
-                resolve();
-              });
-            });
-
-            req.on('error', (err) => {
-              console.error('❌ WASenderApi receipt request error:', err);
-              resolve();
-            });
-
-            req.write(postData);
-            req.end();
-          });
-        }
-      }
-    } catch (err) {
-      console.error('❌ Error sending WhatsApp receipt PDF:', err);
+      const d = new Date(`${dateStr}T00:00:00+05:30`);
+      return d.toLocaleDateString('en-IN', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata'
+      });
+    } catch {
+      return dateStr;
     }
-  } else if (receiptPdfBuffer) {
-    // New system: PDF buffer available - temporarily upload to storage for WhatsApp
-    // Upload, send via WhatsApp, then delete immediately (not stored permanently)
-    try {
-      const apiKey = process.env.WASENDER_API_KEY;
-      if (apiKey) {
-        const formattedPhone = formatPhoneNumber(toPhoneE164);
-        if (formattedPhone) {
-          console.log('📤 Temporarily uploading receipt PDF to storage for WhatsApp delivery...');
-          
-          // Generate unique temporary filename with timestamp to avoid conflicts
-          const timestamp = Date.now();
-          const tempFileName = `temp/${receiptNumber || `receipt-${timestamp}`}.pdf`;
-          
-          // Try uploading to receipts bucket first, fallback to other buckets if needed
-          let bucketName = 'receipts';
-          let uploadData = null;
-          let uploadError = null;
-          
-          // Upload PDF buffer to Supabase storage temporarily
-          // Note: File must be in a public bucket or we need to create a signed URL
-          ({ data: uploadData, error: uploadError } = await supabaseAdmin.storage
-            .from(bucketName)
-            .upload(tempFileName, receiptPdfBuffer, {
-              contentType: 'application/pdf',
-              cacheControl: '0', // No cache
-              upsert: false
-            }));
+  };
 
-          // If receipts bucket doesn't exist, try using a common bucket as fallback
-          if (uploadError && (uploadError.message?.includes('Bucket') || uploadError.message?.includes('not found'))) {
-            console.warn('⚠️ Receipts bucket not found, trying profile-pictures bucket as fallback...');
-            bucketName = 'profile-pictures'; // Common bucket that likely exists
-            ({ data: uploadData, error: uploadError } = await supabaseAdmin.storage
-              .from(bucketName)
-              .upload(tempFileName, receiptPdfBuffer, {
-                contentType: 'application/pdf',
-                cacheControl: '0',
-                upsert: false
-              }));
-          }
+  const bullet = '•⁠  ⁠';
+  const specialist = (psychologistName && psychologistName.trim()) ? psychologistName.trim() : 'our specialist';
+  const formattedDate = formatBookingDateShort(date);
+  const formattedTime = formatFriendlyTime(time);
 
-          if (uploadError) {
-            console.error('❌ Could not upload receipt PDF temporarily for WhatsApp. Receipt sent via email only.');
-            console.error('   Error:', uploadError.message);
-          } else {
-            try {
-              // Create a signed URL with 10 minutes expiration (secure alternative to public URL)
-              // This allows WASender to download the file without making the bucket public
-              const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
-                .from(bucketName)
-                .createSignedUrl(tempFileName, 600); // 600 seconds = 10 minutes
-              
-              if (signedUrlError || !signedUrlData?.signedUrl) {
-                console.error('❌ Could not create signed URL for receipt:', signedUrlError);
-                // Fallback: try public URL if bucket is public
-                const { data: urlData } = supabaseAdmin.storage
-                  .from(bucketName)
-                  .getPublicUrl(tempFileName);
-                var publicUrl = urlData?.publicUrl;
-              } else {
-                var publicUrl = signedUrlData.signedUrl;
-                console.log(`✅ Created signed URL for receipt (expires in 10 minutes)`);
-              }
-              
-              if (publicUrl) {
-                console.log(`✅ Receipt PDF uploaded temporarily, sending via WhatsApp...`);
-                console.log(`   Temporary file URL: ${publicUrl.substring(0, 80)}...`);
-                console.log(`   Note: File will be deleted in 10 minutes to allow WASender to download`);
-                
-                // Send via WhatsApp using the temporary URL
-                const apiUrl = 'https://wasenderapi.com/api/send-message';
-                const url = new URL(apiUrl);
-
-                // Generate filename using client name (sanitized for filesystem)
-                let fileName = 'Receipt';
-                if (clientName) {
-                  // Sanitize client name: replace spaces with hyphens, remove special characters
-                  const sanitizedName = clientName
-                    .trim()
-                    .replace(/\s+/g, '-') // Replace spaces with hyphens
-                    .replace(/[^a-zA-Z0-9\-_]/g, '') // Remove special characters except hyphens and underscores
-                    .substring(0, 50); // Limit length to 50 characters
-                  fileName = sanitizedName || 'Receipt';
-                } else {
-                  // Fallback to receipt number if client name not available
-                  fileName = `Receipt-${receiptNumber || 'receipt'}`;
-                }
-
-                const postData = JSON.stringify({
-                  to: formattedPhone,
-                  text: '🧾 Here is your receipt for the session.',
-                  documentUrl: publicUrl,
-                  fileName: `${fileName}.pdf`
-                });
-
-                const options = {
-                  hostname: url.hostname,
-                  port: 443,
-                  path: url.pathname,
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(postData),
-                    Authorization: `Bearer ${apiKey}`
-                  }
-                };
-
-                await new Promise((resolve) => {
-                  const req = https.request(options, async (res) => {
-                    let data = '';
-                    res.on('data', (chunk) => {
-                      data += chunk;
-                    });
-                    res.on('end', async () => {
-                      try {
-                        const jsonData = JSON.parse(data || '{}');
-                        if (res.statusCode >= 200 && res.statusCode < 300) {
-                          console.log('✅ WhatsApp receipt PDF sent via WASenderApi:', jsonData);
-                          
-                          // WASender downloads the file asynchronously after receiving our request
-                          // Schedule deletion after 10 minutes to match signed URL expiration
-                          // We don't await this - it runs in the background
-                          setTimeout(async () => {
-                            try {
-                              const { error: deleteError } = await supabaseAdmin.storage
-                                .from(bucketName)
-                                .remove([tempFileName]);
-                              
-                              if (deleteError) {
-                                console.warn('⚠️ Could not delete temporary receipt file:', deleteError.message);
-                              } else {
-                                console.log('🗑️ Temporary receipt file deleted after 10 minutes (WASender download window)');
-                              }
-                            } catch (deleteErr) {
-                              console.warn('⚠️ Error deleting temporary receipt file:', deleteErr);
-                            }
-                          }, 10 * 60 * 1000); // 10 minutes (matches signed URL expiration)
-                          
-                          console.log('⏳ Temporary file will be deleted in 10 minutes to allow WASender to download');
-                          
-                        } else {
-                          console.error('❌ WASenderApi receipt send error:', jsonData);
-                          // On error, wait a shorter time (30 seconds) before deleting
-                          setTimeout(async () => {
-                            try {
-                              await supabaseAdmin.storage.from(bucketName).remove([tempFileName]);
-                              console.log('🗑️ Temporary receipt file deleted after error');
-                            } catch (deleteErr) {
-                              console.warn('⚠️ Error deleting temporary receipt file:', deleteErr);
-                            }
-                          }, 30000); // 30 seconds on error
-                        }
-                      } catch (err) {
-                        console.error('❌ WASenderApi receipt response parse error:', err, 'Raw data:', data);
-                        // On parse error, wait 30 seconds before deleting
-                        setTimeout(async () => {
-                          try {
-                            await supabaseAdmin.storage.from(bucketName).remove([tempFileName]);
-                            console.log('🗑️ Temporary receipt file deleted after parse error');
-                          } catch (deleteErr) {
-                            console.warn('⚠️ Error deleting temporary receipt file:', deleteErr);
-                          }
-                        }, 30000);
-                      }
-                      
-                      resolve();
-                    });
-                  });
-
-                  req.on('error', async (err) => {
-                    console.error('❌ WASenderApi receipt request error:', err);
-                    
-                    // On request error, schedule deletion after 30 seconds
-                    setTimeout(async () => {
-                      try {
-                        await supabaseAdmin.storage.from(bucketName).remove([tempFileName]);
-                        console.log('🗑️ Temporary receipt file deleted after request error');
-                      } catch (deleteErr) {
-                        console.warn('⚠️ Error deleting temporary receipt file:', deleteErr);
-                      }
-                    }, 30000); // 30 seconds on error
-                    
-                    resolve();
-                  });
-
-                  req.write(postData);
-                  req.end();
-                });
-              } else {
-                console.error('❌ Could not get public URL for temporary receipt. Receipt sent via email only.');
-                // Clean up upload
-                await supabaseAdmin.storage.from(bucketName).remove([tempFileName]);
-              }
-            } catch (sendError) {
-              console.error('❌ Error sending receipt via WhatsApp:', sendError);
-              // Clean up upload
-              try {
-                await supabaseAdmin.storage.from(bucketName).remove([tempFileName]);
-              } catch (cleanupErr) {
-                console.warn('⚠️ Error cleaning up temporary file:', cleanupErr);
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('❌ Error processing WhatsApp receipt PDF:', err);
-      console.log('   Receipt sent via email with PDF attachment');
-    }
+  // Package line (only for package sessions): "1 of 3 sessions booked, 2 left"
+  let packageLine = '';
+  if (!isFreeAssessment && packageInfo && packageInfo.totalSessions) {
+    const total = packageInfo.totalSessions || 0;
+    const completed = packageInfo.completedSessions || 0;
+    const booked = Math.min(total, completed + 1);
+    const left = Math.max(total - booked, 0);
+    packageLine = `${bullet}Package: ${booked} of ${total} sessions booked, ${left} left\n`;
   }
 
-  return lastResult || { success: false, skipped: true, reason: 'no_messages_sent' };
+  const joinBlock = meetLink ? `Join link:\n${meetLink}\n\n` : '';
+  const receiptBlock = `For receipt: Click here\n${receiptLink}\n\n`;
+
+  const specialistLine = isFreeAssessment
+    ? `${bullet}Little Care Specialist\n`
+    : `${bullet}Specialist: ${specialist}\n`;
+
+  // Format message - same structure for all session types
+  const message =
+    `Hey 👋\n\n` +
+    `Your session with Little Care is confirmed.\n` +
+    specialistLine +
+    packageLine +
+    `${bullet}Date: ${formattedDate}\n` +
+    `${bullet}Time: ${formattedTime} (IST)\n\n` +
+    joinBlock +
+    `Please be ready 10 mins early with good internet, a quiet space, and a charged device.\n\n` +
+    `For help: +91 95390 07766\n` +
+    receiptBlock +
+    `— Little Care 💜`;
+
+  // Send exactly one message (clean + link-friendly)
+  return await sendWhatsAppTextWithRetry(toPhoneE164, message);
+}
+
+/**
+ * Format date as: "19 Jan-26" (DD MMM-YY format)
+ * @param {string} dateStr - Date string (YYYY-MM-DD)
+ * @returns {string} Formatted date
+ */
+function formatRescheduleDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(`${dateStr}T00:00:00+05:30`);
+    const day = d.getDate().toString().padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = monthNames[d.getMonth()];
+    const year = d.getFullYear().toString().slice(-2);
+    return `${day} ${month}-${year}`;
+  } catch {
+    return dateStr;
+  }
+}
+
+/**
+ * Format time as: "9:00 PM" (12-hour format)
+ * @param {string} timeStr - Time string (HH:MM)
+ * @returns {string} Formatted time
+ */
+function formatRescheduleTime(timeStr) {
+  if (!timeStr) return '';
+  try {
+    const [h, m] = timeStr.split(':');
+    const hours = parseInt(h, 10);
+    const minutes = parseInt(m || '0', 10);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    return `${displayHours}:${displayMinutes} ${period}`;
+  } catch {
+    return timeStr;
+  }
+}
+
+/**
+ * Send reschedule confirmation WhatsApp message
+ * @param {string} toPhoneE164 - Phone number in E.164 format
+ * @param {Object} details - { oldDate, oldTime, newDate, newTime, newMeetLink? }
+ * @returns {Promise<Object>} - { success: boolean, ... }
+ */
+async function sendRescheduleConfirmation(toPhoneE164, details) {
+  const {
+    oldDate,
+    oldTime,
+    newDate,
+    newTime,
+    newMeetLink
+  } = details || {};
+
+  const bullet = '•⁠  ⁠';
+  const oldFormatted = `${formatRescheduleDate(oldDate)}, ${formatRescheduleTime(oldTime)}`;
+  const newFormatted = `${formatRescheduleDate(newDate)}, ${formatRescheduleTime(newTime)}`;
+  
+  const newLinkBlock = newMeetLink ? `${bullet}New link: ${newMeetLink}\n\n` : '';
+
+  const message =
+    `Hey, Your session has been rescheduled.\n\n` +
+    `${bullet}Old: ${oldFormatted}\n` +
+    `${bullet}New: ${newFormatted}\n` +
+    newLinkBlock +
+    `We're looking forward to seeing you at the new time.\n\n` +
+    `— Little Care 💜`;
+
+  return await sendWhatsAppTextWithRetry(toPhoneE164, message);
+}
+
+/**
+ * Format date as: "22 Jan 2026" (DD MMM YYYY format)
+ * @param {string} dateStr - Date string (YYYY-MM-DD)
+ * @returns {string} Formatted date
+ */
+function formatNoShowDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(`${dateStr}T00:00:00+05:30`);
+    const day = d.getDate().toString().padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = monthNames[d.getMonth()];
+    const year = d.getFullYear();
+    return `${day} ${month} ${year}`;
+  } catch {
+    return dateStr;
+  }
+}
+
+/**
+ * Format time as: "9:00 AM" (12-hour format)
+ * @param {string} timeStr - Time string (HH:MM)
+ * @returns {string} Formatted time
+ */
+function formatNoShowTime(timeStr) {
+  if (!timeStr) return '';
+  try {
+    const [h, m] = timeStr.split(':');
+    const hours = parseInt(h, 10);
+    const minutes = parseInt(m || '0', 10);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    return `${displayHours}:${displayMinutes} ${period}`;
+  } catch {
+    return timeStr;
+  }
+}
+
+/**
+ * Format phone number for display (removes + and formats as "91 99999999")
+ * @param {string} phoneE164 - Phone number in E.164 format
+ * @returns {string} Formatted phone number
+ */
+function formatPhoneForDisplay(phoneE164) {
+  if (!phoneE164) return '';
+  // Remove + and spaces, then format as "91 99999999"
+  const cleaned = phoneE164.replace(/[+\s]/g, '');
+  if (cleaned.startsWith('91') && cleaned.length === 12) {
+    return `91 ${cleaned.slice(2)}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Send no-show notification WhatsApp message
+ * @param {string} toPhoneE164 - Phone number in E.164 format
+ * @param {Object} details - { psychologistName, date, time, supportPhone? }
+ * @returns {Promise<Object>} - { success: boolean, ... }
+ */
+async function sendNoShowNotification(toPhoneE164, details) {
+  const {
+    psychologistName,
+    date,
+    time,
+    supportPhone
+  } = details || {};
+
+  const formattedDate = formatNoShowDate(date);
+  const formattedTime = formatNoShowTime(time);
+  const supportPhoneDisplay = supportPhone 
+    ? formatPhoneForDisplay(supportPhone)
+    : '91 95390 07766'; // Default support number
+
+  const message =
+    `Hey,\n\n` +
+    `Your session with ${psychologistName || 'our specialist'} on ${formattedDate} at ${formattedTime} was missed.\n` +
+    `If you need support our Little Care team is here to help, ${supportPhoneDisplay}\n\n` +
+    `— Little Care 💜`;
+
+  return await sendWhatsAppTextWithRetry(toPhoneE164, message);
+}
+
+/**
+ * Send session completion WhatsApp message with feedback and booking links
+ * @param {string} toPhoneE164 - Phone number in E.164 format
+ * @param {Object} details - { psychologistName, bookingLink, feedbackLink }
+ * @returns {Promise<Object>} - { success: boolean, ... }
+ */
+async function sendSessionCompletionNotification(toPhoneE164, details) {
+  const {
+    psychologistName,
+    bookingLink,
+    feedbackLink
+  } = details || {};
+
+  const specialist = psychologistName && psychologistName.trim() 
+    ? psychologistName.trim() 
+    : 'our specialist';
+
+  const bookingLinkText = bookingLink || 'https://www.little.care/psychologists';
+  const feedbackLinkText = feedbackLink || 'https://www.little.care/profile/reports';
+
+  const message =
+    `Hey,\n\n` +
+    `We hope your session with ${specialist} went well.\n\n` +
+    `Would you like to book a follow-up session?\n` +
+    `You can reply here or book directly:\n` +
+    `${bookingLinkText}\n\n` +
+    `We'd love your feedback:\n` +
+    `How was your session? Reply with 1–5 (1 = Poor, 5 = Excellent) or click here:\n` +
+    `${feedbackLinkText}\n\n` +
+    `— Little Care 💜`;
+
+  return await sendWhatsAppTextWithRetry(toPhoneE164, message);
 }
 
 module.exports = {
   sendWhatsAppText,
   sendWhatsAppTextWithRetry,
   sendBookingConfirmation,
+  sendRescheduleConfirmation,
+  sendNoShowNotification,
+  sendSessionCompletionNotification,
   formatPhoneNumber,
   normalizePhoneNumber, // Export for testing if needed
 };

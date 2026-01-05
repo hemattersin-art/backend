@@ -56,12 +56,9 @@ const processStructuredContent = (structuredContent) => {
             : []
         };
       
-      case 'link':
+      case 'spacer':
         return {
-          type: 'link',
-          href: sanitizeUrl(block.href || '#'),
-          text: sanitizeText(block.text || ''),
-          target: block.target === '_blank' ? '_blank' : '_self'
+          type: 'spacer'
         };
       
       case 'quote':
@@ -107,13 +104,34 @@ const sanitizeText = (text) => {
  * @returns {string} Sanitized URL
  */
 const sanitizeUrl = (url) => {
-  if (typeof url !== 'string') {
+  if (typeof url !== 'string' || !url.trim()) {
     return '';
   }
 
-  // Basic URL validation and sanitization
+  const trimmedUrl = url.trim();
+
+  // If it's a relative path, return as is
+  if (trimmedUrl.startsWith('/') || trimmedUrl.startsWith('./') || trimmedUrl.startsWith('../')) {
+    return trimmedUrl;
+  }
+
+  // Normalize URL by adding protocol if missing
+  let normalizedUrl = trimmedUrl;
+  
+  // If it already has a protocol, validate it
+  if (trimmedUrl.match(/^https?:\/\//i)) {
+    normalizedUrl = trimmedUrl;
+  } else if (trimmedUrl.startsWith('//')) {
+    // Protocol-relative URL, add https:
+    normalizedUrl = `https:${trimmedUrl}`;
+  } else if (trimmedUrl.includes('.') && !trimmedUrl.includes(' ')) {
+    // Looks like a domain, add https://
+    normalizedUrl = `https://${trimmedUrl}`;
+  }
+
+  // Validate the normalized URL
   try {
-    const parsedUrl = new URL(url);
+    const parsedUrl = new URL(normalizedUrl);
     
     // Only allow http and https protocols
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
@@ -122,10 +140,7 @@ const sanitizeUrl = (url) => {
 
     return parsedUrl.toString();
   } catch (error) {
-    // If URL parsing fails, check if it's a relative path
-    if (url.startsWith('/') || url.startsWith('./') || url.startsWith('../')) {
-      return url;
-    }
+    // If URL parsing still fails, return empty string
     return '';
   }
 };

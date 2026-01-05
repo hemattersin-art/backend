@@ -215,12 +215,21 @@ class EmailService {
         throw new Error('Email service not properly initialized');
       }
       
-      // Format date (without year)
+      // Format date (without year) - for display in email
       const sessionDateObj = new Date(`${finalSessionDate}T00:00:00`);
       const formattedDate = sessionDateObj.toLocaleDateString('en-IN', {
         weekday: 'long',
         month: 'long',
         day: 'numeric',
+        timeZone: 'Asia/Kolkata'
+      });
+      
+      // Format date as "Mon, 12 Jan 2026" for email template
+      const formattedDateShort = sessionDateObj.toLocaleDateString('en-IN', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
         timeZone: 'Asia/Kolkata'
       });
       
@@ -268,15 +277,15 @@ class EmailService {
           to: clientEmail,
           clientName,
           psychologistName,
-          scheduledDate: formattedDate,
+          scheduledDate: formattedDateShort, // Use short format for email template
           scheduledTime: formattedTime,
           googleMeetLink: finalMeetLink,
           calendarInvite: calendarInvites.client,
           googleCalendarLink,
           outlookCalendarLink,
           price: finalPrice || 0,
-          receiptPdfBuffer: receiptPdfBuffer || null, // Receipt PDF buffer to attach
-          receiptFileName: receiptFileName, // Receipt filename for attachment
+          receiptPdfBuffer: receiptPdfBuffer || null, // Receipt PDF buffer to attach (not used anymore)
+          receiptFileName: receiptFileName, // Receipt filename for attachment (not used anymore)
           packageInfo: packageInfo || null // Package information
         });
       } else {
@@ -352,6 +361,25 @@ class EmailService {
     const contactEmail = 'hey@little.care';
     const contactPhone = '+91-9539007766';
 
+    // Extract first name from clientName
+    const firstName = clientName ? clientName.split(' ')[0] : 'there';
+
+    // scheduledDate is already in short format "Mon, 12 Jan 2026" from sendSessionConfirmation
+    const formattedDateShort = scheduledDate;
+    
+    // Package line for display
+    let packageLine = '';
+    if (packageInfo && packageInfo.totalSessions) {
+      const total = packageInfo.totalSessions || 0;
+      const completed = packageInfo.completedSessions || 0;
+      const booked = Math.min(total, completed + 1);
+      const left = Math.max(total - booked, 0);
+      packageLine = `•⁠  ⁠Package: ${booked} of ${total} sessions booked, ${left} left<br>`;
+    }
+
+    // Receipt link (always show, no PDF attachment)
+    const receiptLink = `${frontendUrl}/profile/receipts`;
+
     const mailOptions = {
       from: {
         name: 'LittleCare',
@@ -373,117 +401,57 @@ class EmailService {
             <tr>
               <td style="padding: 20px 10px;">
                 <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                  <!-- Header with Logo -->
-                  <tr>
-                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
-                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
-                        <tr>
-                          <td align="center" style="padding-bottom: 15px;">
-                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
-                          </td>
-                        </tr>
-                        <tr>
-                          <td align="center">
-                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Confirmed!</h1>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                  
                   <!-- Main Content -->
                   <tr>
-                    <td style="padding: 30px 20px;">
-                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${clientName},</h2>
+                    <td style="padding: 40px 30px;">
+                      <p style="color: #1a202c; margin: 0 0 20px 0; font-size: 18px; font-weight: 500;">Hey ${firstName},</p>
                       
-                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your therapy session has been successfully scheduled. Here are the details:</p>
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                        Your session with <span style="font-style: italic; color: #3f2e73; font-weight: 600;">Little Care</span> is scheduled.
+                      </p>
                       
-                      <!-- Session Details Card -->
-                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
-                        <tr>
-                          <td style="padding: 0 0 20px 0;">
-                            <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
-                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledDate}</td>
-                              </tr>
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
-                              </tr>
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Therapist:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${psychologistName}</td>
-                              </tr>
-                              ${packageInfo && packageInfo.totalSessions ? `
-                              <tr>
-                                <td colspan="2" style="padding: 15px 0 8px 0;">
-                                  <p style="margin: 0; color: #3f2e73; font-weight: 600; font-size: 14px;">📦 Package Session</p>
-                                  <p style="margin: 5px 0 0 0; color: #4a5568; font-size: 13px;">
-                                    <strong>Progress:</strong> ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} sessions completed, ${packageInfo.remainingSessions || 0} remaining
-                                  </p>
-                                </td>
-                              </tr>
-                              ` : ''}
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Session Fee:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-weight: 600;">${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">Here are the details:</p>
                       
-                      ${receiptPdfBuffer ? `
-                      <!-- Receipt Info -->
+                      <!-- Session Details -->
+                      <div style="color: #4a5568; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                        •⁠  ⁠Specialist: ${psychologistName}<br>
+                        ${packageLine}
+                        •⁠  ⁠Date: ${formattedDateShort}<br>
+                        •⁠  ⁠Time: ${scheduledTime}<br>
+                        ${price && !packageInfo ? `•⁠  ⁠Price: ₹${price}<br>` : ''}
+                      </div>
+                      
+                      ${googleMeetLink ? `
+                      <!-- Join Session Section -->
                       <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
                         <tr>
                           <td style="padding: 0 0 20px 0; text-align: center;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📄 Payment Receipt</h3>
-                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Your payment receipt has been attached to this email.</p>
+                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
+                              Join Your Session
+                            </a>
+                            <p style="color: #4a5568; font-size: 13px; margin: 15px 0 0 0; word-break: break-all;">
+                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
+                            </p>
                           </td>
                         </tr>
                       </table>
                       ` : ''}
                       
                       ${googleCalendarLink || outlookCalendarLink ? `
-                      <!-- Calendar Section -->
-                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
-                        <tr>
-                          <td style="padding: 0 0 20px 0;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">📅 Add to Your Calendar</h3>
-                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Don't forget your appointment! Add it to your calendar:</p>
-                            <div style="text-align: center;">
-                              ${googleCalendarLink ? `
-                              <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
-                                📅 Google Calendar
-                              </a>
-                              ` : ''}
-                              ${outlookCalendarLink ? `
-                              <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
-                                📅 Outlook
-                              </a>
-                              ` : ''}
-                            </div>
-                          </td>
-                        </tr>
-                      </table>
-                      ` : ''}
-                      
-                      ${googleMeetLink ? `
-                      <!-- Google Meet Section -->
+                      <!-- Add to Calendar Section -->
                       <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
                         <tr>
                           <td style="padding: 0 0 20px 0; text-align: center;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
-                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
-                            <a href="${googleMeetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
-                              Join Google Meet
+                            ${googleCalendarLink ? `
+                            <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                              📅 Add to Google Calendar
                             </a>
-                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
-                              Or copy this link: <a href="${googleMeetLink}" style="color: #3f2e73; text-decoration: underline;">${googleMeetLink}</a>
-                            </p>
+                            ` : ''}
+                            ${outlookCalendarLink ? `
+                            <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                              📅 Add to Outlook
+                            </a>
+                            ` : ''}
                           </td>
                         </tr>
                       </table>
@@ -493,9 +461,9 @@ class EmailService {
                       <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
                         <tr>
                           <td style="padding: 0 0 20px 0;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Important Reminders</h3>
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Reminders</h3>
                             <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
-                              <li>Please join the session 5 minutes before the scheduled time</li>
+                              <li>Please join the session 10 minutes before the scheduled time</li>
                               <li>Ensure you have a stable internet connection</li>
                               <li>Find a quiet, private space for your session</li>
                               <li>Have any relevant documents or notes ready</li>
@@ -504,24 +472,25 @@ class EmailService {
                         </tr>
                       </table>
                       
-                      <!-- Footer Text -->
-                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We look forward to supporting you on your wellness journey!</p>
+                      <!-- Receipt Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            <p style="color: #4a5568; font-size: 15px; margin: 0;">
+                              Your payment receipt is ready for download, <a href="${receiptLink}" style="color: #3f2e73; text-decoration: underline; font-weight: 600;">Click Here</a>
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
                       
-                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We're looking forward to seeing you on the scheduled time</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
                       
                       <p style="color: #2d3748; font-size: 15px; margin: 0;">
                         Best regards,<br>
-                        <strong style="color: #3f2e73;">The Little Care Team</strong>
-                      </p>
-                    </td>
-                  </tr>
-                  
-                  <!-- Footer -->
-                  <tr>
-                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
-                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
-                        This email was sent to confirm your therapy session.<br>
-                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                        <strong style="color: #3f2e73;">The <span style="font-style: italic; color: #3f2e73;">Little Care</span> Team</strong>
                       </p>
                     </td>
                   </tr>
@@ -537,12 +506,8 @@ class EmailService {
           filename: calendarInvite.filename,
           content: calendarInvite.content,
           contentType: calendarInvite.contentType
-        }] : []),
-        ...(receiptPdfBuffer ? [{
-          filename: receiptFileName || 'Receipt.pdf',
-          content: receiptPdfBuffer,
-          contentType: 'application/pdf'
         }] : [])
+        // NO PDF attachment - receipt is available via link
       ]
     };
 
@@ -983,6 +948,29 @@ class EmailService {
     const contactEmail = 'hey@little.care';
     const contactPhone = '+91-9539007766';
 
+    // Extract first name from name
+    const firstName = name ? name.split(' ')[0] : 'there';
+
+    // Format dates as "Mon, 12 Jan 2026"
+    const formatDateShort = (dateStr) => {
+      if (!dateStr) return '';
+      try {
+        const d = new Date(`${dateStr}T00:00:00+05:30`);
+        return d.toLocaleDateString('en-IN', {
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'Asia/Kolkata'
+        });
+      } catch {
+        return dateStr;
+      }
+    };
+
+    const formattedOldDate = formatDateShort(oldDate);
+    const formattedNewDate = formatDateShort(newDate);
+
     const mailOptions = {
       from: {
         name: 'LittleCare',
@@ -1024,64 +1012,30 @@ class EmailService {
                   
                   <!-- Main Content -->
                   <tr>
-                    <td style="padding: 30px 20px;">
-                      <h2 style="color: #1a202c; margin: 0 0 20px 0; font-size: 24px; font-weight: 600;">Hello ${name},</h2>
+                    <td style="padding: 40px 30px;">
+                      <p style="color: #1a202c; margin: 0 0 20px 0; font-size: 18px; font-weight: 500;">Hey ${firstName},</p>
                       
-                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Your ${sessionType} has been rescheduled. Here are the updated details:</p>
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">
+                        Your session with <span style="font-style: italic; color: #3f2e73; font-weight: 600;">Little Care</span> has been rescheduled.
+                      </p>
                       
-                      <!-- Previous Schedule -->
-                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 20px 0;">
-                        <tr>
-                          <td style="padding: 0 0 20px 0;">
-                            <h3 style="color: #3f2e73; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Previous Schedule</h3>
-                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${oldDate}</td>
-                              </tr>
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${oldTime}</td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
+                      <p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">Here are the updated details:</p>
                       
-                      <!-- New Schedule -->
-                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
-                        <tr>
-                          <td style="padding: 0 0 20px 0;">
-                            <h3 style="color: #3f2e73; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">New Schedule</h3>
-                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${newDate}</td>
-                              </tr>
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${newTime}</td>
-                              </tr>
-                              <tr>
-                                <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Type:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${sessionTypeTitle}</td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
+                      <!-- Session Details -->
+                      <div style="color: #4a5568; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                        •⁠  ⁠Old: ${formattedOldDate}, ${oldTime}<br>
+                        •⁠  ⁠New: ${formattedNewDate}, ${newTime}<br>
+                      </div>
                       
                       ${meetLink ? `
-                      <!-- Google Meet Section -->
+                      <!-- Join Session Section -->
                       <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
                         <tr>
                           <td style="padding: 0 0 20px 0; text-align: center;">
-                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Join Your Session</h3>
-                            <p style="color: #4a5568; font-size: 14px; margin: 0 0 20px 0;">Click the button below to join your Google Meet session:</p>
                             <a href="${meetLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin-bottom: 15px;">
-                              Join Google Meet
+                              Join Your Session
                             </a>
-                            <p style="color: #4a5568; font-size: 12px; margin: 15px 0 0 0; word-break: break-all;">
+                            <p style="color: #4a5568; font-size: 13px; margin: 15px 0 0 0; word-break: break-all;">
                               Or copy this link: <a href="${meetLink}" style="color: #3f2e73; text-decoration: underline;">${meetLink}</a>
                             </p>
                           </td>
@@ -1090,23 +1044,13 @@ class EmailService {
                       ` : ''}
                       
                       <!-- Footer Text -->
-                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">Please update your calendar and ensure you're available at the new time.</p>
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We're looking forward to seeing you on the scheduled time</p>
                       
-                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a></p>
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
                       
                       <p style="color: #2d3748; font-size: 15px; margin: 0;">
                         Best regards,<br>
-                        <strong style="color: #3f2e73;">The Little Care Team</strong>
-                      </p>
-                    </td>
-                  </tr>
-                  
-                  <!-- Footer -->
-                  <tr>
-                    <td style="background: #f7fafc; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
-                      <p style="color: #718096; font-size: 13px; margin: 0; line-height: 1.6;">
-                        This email confirms your session has been rescheduled. Please note the new date and time.<br>
-                        If you have any questions, please contact <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or <a href="https://wa.me/919539007766" style="color: #3f2e73; text-decoration: none;">${contactPhone}</a>
+                        <strong style="color: #3f2e73;">The <span style="font-style: italic; color: #3f2e73;">Little Care</span> Team</strong>
                       </p>
                     </td>
                   </tr>
