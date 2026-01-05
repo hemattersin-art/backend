@@ -1388,10 +1388,21 @@ const completeSession = async (req, res) => {
         finalReport.trim();
     }
 
-    // First, try to find it as a regular session
+    // First, try to find it as a regular session with client data (for notifications)
     const { data: regularSession } = await supabaseAdmin
       .from('sessions')
-      .select('*')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          user_id,
+          phone_number,
+          user:users(email)
+        )
+      `)
       .eq('id', sessionId)
       .eq('psychologist_id', psychologistId)
       .single();
@@ -1411,6 +1422,88 @@ const completeSession = async (req, res) => {
         return res.status(500).json(
           errorResponse('Failed to complete session')
         );
+      }
+
+      console.log(`📋 Session ${sessionId} updated successfully, proceeding to send notifications...`);
+      console.log(`📋 Session client data available:`, {
+        hasClient: !!regularSession.client,
+        clientId: regularSession.client?.id,
+        userId: regularSession.client?.user_id,
+        hasPhoneNumber: !!regularSession.client?.phone_number
+      });
+
+      // Send completion notification to client
+      console.log(`🔔 Starting completion notification process for session ${sessionId}...`);
+      try {
+        // Create in-app notification
+        if (regularSession.client?.user_id) {
+          const clientNotificationData = {
+            user_id: regularSession.client.user_id,
+            title: 'Session Completed',
+            message: `Your session has been completed. You can now view the summary and report.`,
+            type: 'success',
+            related_id: sessionId,
+            related_type: 'session'
+          };
+
+          console.log(`📬 Creating in-app notification for user ${regularSession.client.user_id}...`);
+          await supabaseAdmin
+            .from('notifications')
+            .insert([clientNotificationData]);
+          console.log(`✅ In-app notification created successfully`);
+        }
+
+        // Send WhatsApp notification to client
+        try {
+          const { sendSessionCompletionNotification } = require('../utils/whatsappService');
+          const clientPhone = regularSession.client?.phone_number || null;
+          
+          console.log(`📱 WhatsApp sending attempt for session ${sessionId} (package: ${regularSession.package_id || 'none'})`);
+          console.log(`📱 Client data:`, {
+            hasClient: !!regularSession.client,
+            clientId: regularSession.client?.id,
+            phoneNumber: clientPhone ? `${clientPhone.substring(0, 3)}***` : 'NOT FOUND',
+            sessionType: regularSession.session_type,
+            isPackage: !!regularSession.package_id
+          });
+          
+          if (clientPhone) {
+            const psychologistName = `${req.user.first_name || ''} ${req.user.last_name || ''}`.trim() || 'our specialist';
+            const isFreeAssessment = regularSession.session_type === 'free_assessment';
+            const frontendUrl = (
+              process.env.FRONTEND_URL ||
+              process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') ||
+              'https://www.little.care'
+            ).replace(/\/$/, '');
+            const bookingLink = `${frontendUrl}/psychologists`;
+            const feedbackLink = isFreeAssessment 
+              ? `${frontendUrl}/profile/sessions?tab=completed`
+              : `${frontendUrl}/profile/reports`;
+
+            const sessionTypeLabel = regularSession.package_id ? 'package session' : (isFreeAssessment ? 'free assessment' : 'therapy session');
+            console.log(`📱 Attempting to send WhatsApp completion for ${sessionTypeLabel} (Session ID: ${sessionId}) to client: ${clientPhone.substring(0, 3)}***`);
+            const clientResult = await sendSessionCompletionNotification(clientPhone, {
+              psychologistName: psychologistName,
+              bookingLink: bookingLink,
+              feedbackLink: feedbackLink
+            });
+            if (clientResult?.success) {
+              console.log(`✅ Session completion WhatsApp sent to client for ${sessionTypeLabel} (Session ID: ${sessionId})`);
+            } else {
+              console.warn(`⚠️ Failed to send session completion WhatsApp to client for ${sessionTypeLabel} (Session ID: ${sessionId}). Error: ${clientResult?.error || 'Unknown error'}`);
+            }
+          } else {
+            console.warn(`⚠️ Skipping WhatsApp completion for session ${sessionId} (${regularSession.package_id ? 'package session' : 'regular session'}): Client phone number not found.`);
+            console.warn(`⚠️ Session client data:`, regularSession.client ? { id: regularSession.client.id, hasPhone: !!regularSession.client.phone_number } : 'No client data');
+          }
+        } catch (waError) {
+          console.error(`❌ Error sending session completion WhatsApp for session ${sessionId}:`, waError);
+          console.error(`❌ Error stack:`, waError.stack);
+          // Don't fail the request if WhatsApp fails
+        }
+      } catch (notificationError) {
+        console.error('Error sending completion notification:', notificationError);
+        // Don't fail the request if notification fails
       }
 
       return res.json(

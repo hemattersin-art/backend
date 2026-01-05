@@ -4032,33 +4032,55 @@ const handleRescheduleRequest = async (req, res) => {
           try {
             const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
             
-            const originalDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
-              timeZone: 'Asia/Kolkata',
-              dateStyle: 'long',
-              timeStyle: 'short'
-            });
-            const newDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
-              timeZone: 'Asia/Kolkata',
-              dateStyle: 'long',
-              timeStyle: 'short'
-            });
+            // Format date as: "12 Jan-26" (DD MMM-YY format) - same as reschedule confirmation
+            const formatRescheduleDate = (dateStr) => {
+              if (!dateStr) return '';
+              try {
+                const d = new Date(`${dateStr}T00:00:00+05:30`);
+                const day = d.getDate().toString().padStart(2, '0');
+                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                const month = monthNames[d.getMonth()];
+                const year = d.getFullYear().toString().slice(-2);
+                return `${day} ${month}-${year}`;
+              } catch {
+                return dateStr;
+              }
+            };
 
-            const isFreeAssessment = session.session_type === 'free_assessment';
-            const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
+            // Format time as: "3:00 PM" (12-hour format) - same as reschedule confirmation
+            const formatRescheduleTime = (timeStr) => {
+              if (!timeStr) return '';
+              try {
+                const [h, m] = timeStr.split(':');
+                const hours = parseInt(h, 10);
+                const minutes = parseInt(m || '0', 10);
+                const period = hours >= 12 ? 'PM' : 'AM';
+                const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+                const displayMinutes = minutes.toString().padStart(2, '0');
+                return `${displayHours}:${displayMinutes} ${period}`;
+              } catch {
+                return timeStr;
+              }
+            };
 
-            // Send WhatsApp to client
+            const bullet = '•⁠  ⁠';
+            const oldFormatted = `${formatRescheduleDate(session.scheduled_date)}, ${formatRescheduleTime(session.scheduled_time)}`;
+            const newFormatted = `${formatRescheduleDate(updatedSession.scheduled_date)}, ${formatRescheduleTime(updatedSession.scheduled_time)}`;
+            
+            const newLinkBlock = meetLink ? `${bullet}New link: ${meetLink}\n\n` : '';
+
+            // Send WhatsApp to client - same format as reschedule confirmation
             if (clientDetails?.phone_number) {
-              const clientMessage = `✅ Your reschedule request has been approved!\n\n` +
-                `❌ Old: ${originalDateTime}\n` +
-                `✅ New: ${newDateTime}\n\n` +
-                (meetLink 
-                  ? `🔗 Google Meet Link: ${meetLink}\n\n`
-                  : '') +
-                `Your ${sessionType} has been successfully rescheduled. We look forward to seeing you at the new time!`;
+              const clientMessage = `Hey, Your reschedule request has been approved!\n\n` +
+                `${bullet}Old: ${oldFormatted}\n` +
+                `${bullet}New: ${newFormatted}\n` +
+                newLinkBlock +
+                `We're looking forward to seeing you at the new time.\n\n` +
+                `— Little Care 💜`;
 
               const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
               if (clientResult?.success) {
-                console.log(`✅ Reschedule approval WhatsApp sent to client (${sessionType})`);
+                console.log(`✅ Reschedule approval WhatsApp sent to client`);
               } else {
                 console.warn('⚠️ Failed to send reschedule approval WhatsApp to client');
               }
@@ -4068,8 +4090,8 @@ const handleRescheduleRequest = async (req, res) => {
             if (psychologistDetails?.phone) {
               const psychologistMessage = `✅ Reschedule request approved by admin.\n\n` +
                 `👤 Client: ${clientName}\n` +
-                `❌ Old: ${originalDateTime}\n` +
-                `✅ New: ${newDateTime}\n\n` +
+                `❌ Old: ${oldFormatted}\n` +
+                `✅ New: ${newFormatted}\n\n` +
                 (meetLink 
                   ? `🔗 Google Meet Link: ${meetLink}\n\n`
                   : '\n') +
@@ -4077,7 +4099,7 @@ const handleRescheduleRequest = async (req, res) => {
 
               const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
               if (psychologistResult?.success) {
-                console.log(`✅ Reschedule approval WhatsApp sent to psychologist (${sessionType})`);
+                console.log(`✅ Reschedule approval WhatsApp sent to psychologist`);
               } else {
                 console.warn('⚠️ Failed to send reschedule approval WhatsApp to psychologist');
               }

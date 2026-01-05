@@ -2084,7 +2084,7 @@ const rescheduleSession = async (req, res) => {
     // Get client and psychologist details for Meet link and notifications
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name, phone_number, email')
+      .select('first_name, last_name, child_name, phone_number, user:users(email)')
       .eq('id', client.id)
       .single();
 
@@ -2176,6 +2176,39 @@ const rescheduleSession = async (req, res) => {
       // Check if this is a free assessment session
       const isFreeAssessment = session.session_type === 'free_assessment';
       
+      // Convert new_time from 12-hour format (e.g., "6:00 PM") to 24-hour format (e.g., "18:00")
+      // for Google Calendar API compatibility
+      const convertTo24Hour = (time12Hour) => {
+        if (!time12Hour || typeof time12Hour !== 'string') {
+          return '00:00';
+        }
+        
+        // If already in 24-hour format, return as is
+        if (!time12Hour.includes('AM') && !time12Hour.includes('PM')) {
+          const [hours, minutes] = time12Hour.split(':');
+          return `${hours.padStart(2, '0')}:${minutes || '00'}`;
+        }
+        
+        // Handle 12-hour format with AM/PM
+        const [time, period] = time12Hour.split(' ');
+        if (!time || !period) {
+          return '00:00';
+        }
+        
+        const [hours, minutes] = time.split(':');
+        let hour24 = parseInt(hours);
+        
+        if (period === 'PM' && hour24 !== 12) {
+          hour24 += 12;
+        } else if (period === 'AM' && hour24 === 12) {
+          hour24 = 0;
+        }
+        
+        return `${hour24.toString().padStart(2, '0')}:${minutes || '00'}`;
+      };
+      
+      const newTime24Hour = convertTo24Hour(new_time);
+      
       const sessionDataForMeet = {
         summary: isFreeAssessment 
           ? `Free Assessment - ${clientDetails?.child_name || clientDetails?.first_name}`
@@ -2184,10 +2217,10 @@ const rescheduleSession = async (req, res) => {
           ? `Rescheduled free 20-minute assessment session`
           : `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
         startDate: new_date,
-        startTime: new_time,
+        startTime: newTime24Hour,
         endTime: isFreeAssessment 
-          ? addMinutesToTime(formatTime(new_time), 20)
-          : addMinutesToTime(formatTime(new_time), 60),
+          ? addMinutesToTime(newTime24Hour, 20)
+          : addMinutesToTime(newTime24Hour, 60),
         clientEmail: clientDetails?.email,
         psychologistEmail: psychologistDetails?.email,
         attendees: []
@@ -2484,61 +2517,102 @@ const rescheduleSession = async (req, res) => {
     // Send email notifications
     try {
       const emailService = require('../utils/emailService');
-      await emailService.sendRescheduleNotification(
-        {
-          clientName: clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim(),
-          psychologistName: `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim(),
-          clientEmail: clientDetails?.email,
-          psychologistEmail: psychologistDetails?.email,
-          scheduledDate: updatedSession.scheduled_date,
-          scheduledTime: updatedSession.scheduled_time,
-          sessionId: updatedSession.id,
-          meetLink: meetData?.meetLink,
-          isFreeAssessment: session.session_type === 'free_assessment'
-        },
-        session.scheduled_date,
-        session.scheduled_time
-      );
-      console.log('✅ Reschedule emails sent successfully');
+      const clientEmail = clientDetails?.user?.email;
+      const psychologistEmail = psychologistDetails?.email;
+      
+      console.log('📧 Preparing to send reschedule emails...');
+      console.log(`   Client Email: ${clientEmail || 'NOT FOUND'}`);
+      console.log(`   Psychologist Email: ${psychologistEmail || 'NOT FOUND'}`);
+      
+      if (!clientEmail && !psychologistEmail) {
+        console.warn('⚠️ No email addresses found - skipping email notifications');
+      } else {
+        await emailService.sendRescheduleNotification(
+          {
+            clientName: clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim(),
+            psychologistName: `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim(),
+            clientEmail: clientEmail,
+            psychologistEmail: psychologistEmail,
+            scheduledDate: updatedSession.scheduled_date,
+            scheduledTime: updatedSession.scheduled_time,
+            sessionId: updatedSession.id,
+            meetLink: meetData?.meetLink,
+            isFreeAssessment: session.session_type === 'free_assessment'
+          },
+          session.scheduled_date,
+          session.scheduled_time
+        );
+        console.log('✅ Reschedule emails sent successfully');
+      }
     } catch (emailError) {
-      console.error('Error sending reschedule emails:', emailError);
+      console.error('❌ Error sending reschedule emails:', emailError);
       // Continue even if email fails
     }
 
-    // Send WhatsApp notifications for reschedule
-    try {
-      console.log('📱 Sending WhatsApp notifications for reschedule...');
-      const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-      
-      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
-      const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
-      
-      const originalDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        dateStyle: 'long',
-        timeStyle: 'short'
-      });
-      const newDateTime = new Date(`${updatedSession.scheduled_date}T${updatedSession.scheduled_time}`).toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        dateStyle: 'long',
-        timeStyle: 'short'
-      });
+      // Send WhatsApp notifications for reschedule
+      try {
+        console.log('📱 Sending WhatsApp notifications for reschedule...');
+        const { sendRescheduleConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+        
+        const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+        const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
+        
+        // Check if this is a free assessment session
+        const isFreeAssessment = session.session_type === 'free_assessment';
+        const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
 
-      // Check if this is a free assessment session
-      const isFreeAssessment = session.session_type === 'free_assessment';
-      const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
+        // Helper function to format time to IST 12-hour format (same as whatsappService)
+        const formatFriendlyTime = (timeStr) => {
+          if (!timeStr) return '';
+          try {
+            const [h, m] = timeStr.split(':');
+            const hours = parseInt(h, 10);
+            const minutes = parseInt(m || '0', 10);
+            const period = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+            const displayMinutes = minutes.toString().padStart(2, '0');
+            return `${displayHours}:${displayMinutes} ${period}`;
+          } catch {
+            return timeStr;
+          }
+        };
 
-      // Send WhatsApp to client
+        // Helper function to format date to friendly format in IST
+        const formatFriendlyDate = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'long',
+              month: 'long',
+              day: 'numeric',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+
+        // Format date and time for WhatsApp messages in IST 12-hour format
+        const originalDateFormatted = formatFriendlyDate(session.scheduled_date);
+        const originalTimeFormatted = formatFriendlyTime(session.scheduled_time);
+        const newDateFormatted = formatFriendlyDate(updatedSession.scheduled_date);
+        const newTimeFormatted = formatFriendlyTime(updatedSession.scheduled_time);
+        
+        const originalDateTime = `${originalDateFormatted} at ${originalTimeFormatted} IST`;
+        const newDateTime = `${newDateFormatted} at ${newTimeFormatted} IST`;
+
+      // Send WhatsApp to client using the standardized format
       if (clientDetails?.phone_number) {
-        const clientMessage = `🔄 Your ${sessionType} has been rescheduled.\n\n` +
-          `❌ Old: ${originalDateTime}\n` +
-          `✅ New: ${newDateTime}\n\n` +
-          (meetData?.meetLink 
-            ? `🔗 New Google Meet Link: ${meetData.meetLink}\n\n`
-            : '') +
-          `Please update your calendar. We look forward to seeing you at the new time!`;
-
-        const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
+        const clientResult = await sendRescheduleConfirmation(clientDetails.phone_number, {
+          oldDate: session.scheduled_date,
+          oldTime: session.scheduled_time,
+          newDate: updatedSession.scheduled_date,
+          newTime: updatedSession.scheduled_time,
+          newMeetLink: meetData?.meetLink || null
+        });
+        
         if (clientResult?.success) {
           console.log(`✅ Reschedule WhatsApp sent to client (${sessionType})`);
         } else {
@@ -2700,14 +2774,36 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
                       `${clientDetails?.first_name || 'Client'} ${clientDetails?.last_name || ''}`.trim();
 
     // Get psychologist user_id (required for notifications table)
+    // Psychologists can exist standalone or with a linked user_id
     const { data: psychologistUser } = await supabaseAdmin
       .from('psychologists')
-      .select('user_id')
+      .select('user_id, email')
       .eq('id', updatedSession.psychologist_id)
       .single();
 
-    if (!psychologistUser?.user_id) {
-      console.warn('⚠️ Cannot create psychologist notification: No user_id found for psychologist');
+    let targetUserId = psychologistUser?.user_id;
+
+    // If psychologist doesn't have user_id, try to find user by email
+    if (!targetUserId && psychologistUser?.email) {
+      const { data: userByEmail } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', psychologistUser.email)
+        .single();
+
+      if (userByEmail?.id) {
+        targetUserId = userByEmail.id;
+        // Optionally backfill psychologist.user_id for future use
+        await supabaseAdmin
+          .from('psychologists')
+          .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
+          .eq('id', updatedSession.psychologist_id);
+        console.log('✅ Found and linked user_id for psychologist via email');
+      }
+    }
+
+    if (!targetUserId) {
+      console.warn('⚠️ Cannot create psychologist notification: No user_id found for psychologist. Email and WhatsApp notifications were still sent successfully.');
       return;
     }
 
@@ -2736,7 +2832,7 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
     // Create notification record using correct schema
     // Schema: user_id (NOT NULL), title, message, type, is_read, related_id, related_type, created_at, updated_at
     const notificationData = {
-      user_id: psychologistUser.user_id, // NOT NULL - required
+      user_id: targetUserId, // NOT NULL - required
       title: 'Session Rescheduled',
       message: `${clientName} has rescheduled their session from ${originalSession.scheduled_date} at ${originalSession.scheduled_time} to ${updatedSession.scheduled_date} at ${updatedSession.scheduled_time}`,
       type: 'info', // Must be one of: 'info', 'success', 'warning', 'error' per schema constraint
@@ -3274,12 +3370,18 @@ const getClientPackages = async (req, res) => {
       .eq('client_id', clientId)
       .not('package_id', 'is', null);
 
-    // Group sessions by package_id and count completed ones
+    // Group sessions by package_id and count completed and booked ones
     const completedCountsByPackage = {};
+    const bookedCountsByPackage = {};
     if (!packageSessionsCountError && allPackageSessionsForCount) {
       allPackageSessionsForCount.forEach(session => {
-        if (session.package_id && session.status === 'completed') {
-          completedCountsByPackage[session.package_id] = (completedCountsByPackage[session.package_id] || 0) + 1;
+        if (session.package_id) {
+          if (session.status === 'completed') {
+            completedCountsByPackage[session.package_id] = (completedCountsByPackage[session.package_id] || 0) + 1;
+          } else if (session.status !== 'cancelled' && session.status !== 'no_show' && session.status !== 'noshow') {
+            // Count booked/scheduled/rescheduled sessions (not completed, not cancelled, not no-show)
+            bookedCountsByPackage[session.package_id] = (bookedCountsByPackage[session.package_id] || 0) + 1;
+          }
         }
       });
     }
@@ -3290,21 +3392,25 @@ const getClientPackages = async (req, res) => {
       // Calculate completed_sessions by counting actual completed sessions
       const completedSessions = completedCountsByPackage[pkg.package_id] || 0;
       
+      // Calculate booked (but not completed) sessions
+      const bookedSessions = bookedCountsByPackage[pkg.package_id] || 0;
+      
       // Calculate remaining_sessions for display: total - completed (sessions left to complete)
       // This is different from the database remaining_sessions which tracks sessions left to book
       const remainingSessionsForDisplay = Math.max(totalSessions - completedSessions, 0);
       
-      // Keep the database remaining_sessions for booking logic (sessions left to book)
-      const remainingSessionsForBooking = Number.isFinite(pkg.remaining_sessions) && pkg.remaining_sessions >= 0
-        ? pkg.remaining_sessions
-        : Math.max(totalSessions - 1, 0);
+      // Calculate remaining_sessions_for_booking: total - completed - booked (sessions left to book)
+      // This represents how many more sessions can be booked
+      // total = completed + booked + remaining_for_booking
+      // So: remaining_for_booking = total - completed - booked
+      const remainingSessionsForBooking = Math.max(totalSessions - completedSessions - bookedSessions, 0);
 
       return {
         ...pkg,
         total_sessions: totalSessions,
         completed_sessions: completedSessions,
         remaining_sessions: remainingSessionsForDisplay, // For display: sessions left to complete
-        remaining_sessions_for_booking: remainingSessionsForBooking, // For booking logic: sessions left to book
+        remaining_sessions_for_booking: remainingSessionsForBooking, // For booking logic: sessions left to book (calculated from completed + booked)
         status: remainingSessionsForDisplay === 0 ? 'completed' : (pkg.status || 'active'),
         currency: pkg.currency || 'INR' // Default to INR (can be enhanced to fetch from payment later)
       };
@@ -3404,8 +3510,34 @@ const bookRemainingSession = async (req, res) => {
       );
     }
 
-    // Check if package has remaining sessions
-    if (clientPackage.remaining_sessions <= 0) {
+    const totalSessionsCount = clientPackage.package?.session_count || 0;
+    
+    // Calculate remaining sessions based on actual completed and booked sessions (same logic as getClientPackages)
+    const { data: packageSessionsForCheck, error: sessionsCountError } = await supabaseAdmin
+      .from('sessions')
+      .select('id, status')
+      .eq('package_id', clientPackage.package.id)
+      .eq('client_id', clientId);
+
+    let completedCount = 0;
+    let bookedCount = 0;
+    
+    if (!sessionsCountError && packageSessionsForCheck) {
+      packageSessionsForCheck.forEach(session => {
+        if (session.status === 'completed') {
+          completedCount++;
+        } else if (session.status !== 'cancelled' && session.status !== 'no_show' && session.status !== 'noshow') {
+          // Count booked/scheduled/rescheduled sessions (not completed, not cancelled, not no-show)
+          bookedCount++;
+        }
+      });
+    }
+
+    // Calculate remaining sessions for booking: total - completed - booked
+    const remainingSessionsForBooking = Math.max(totalSessionsCount - completedCount - bookedCount, 0);
+
+    // Check if package has remaining sessions to book
+    if (remainingSessionsForBooking <= 0) {
       return res.status(400).json(
         errorResponse('No remaining sessions in this package')
       );
@@ -3660,7 +3792,7 @@ const bookRemainingSession = async (req, res) => {
             scheduledDate: scheduled_date,
             scheduledTime: scheduled_time,
             meetLink: fallbackMeetLink, // Will be updated async if real link is created
-            price: 0,
+            price: null, // null for package sessions (already paid as part of package)
             status: 'booked',
             psychologistId: psychologistId,
             clientId: clientId,

@@ -192,7 +192,10 @@ class EmailService {
       const finalSessionDate = sessionDate || scheduledDate;
       const finalSessionTime = sessionTime || scheduledTime;
       const finalMeetLink = meetLink || googleMeetLink;
-      const finalPrice = price || amount; // Use 'price' or 'amount'
+      // Use nullish coalescing to properly handle 0 as a valid price (for already-paid package sessions)
+      const finalPrice = price ?? amount; // Use 'price' if provided (including 0), otherwise use 'amount'
+      // Format price for display (convert to number if string, then format with commas)
+      const formattedPrice = finalPrice ? (typeof finalPrice === 'number' ? finalPrice.toLocaleString('en-IN') : Number(finalPrice).toLocaleString('en-IN')) : null;
       
       console.log('📧 Email Service - Final values:', {
         clientName,
@@ -401,6 +404,24 @@ class EmailService {
             <tr>
               <td style="padding: 20px 10px;">
                 <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                  <!-- Header with Logo -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #3f2e73 0%, #5a4a8a 100%); padding: 30px 40px; text-align: center;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="padding-bottom: 15px;">
+                            <img src="${logoUrl}" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 600;">Session Confirmed</h1>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
                   <!-- Main Content -->
                   <tr>
                     <td style="padding: 40px 30px;">
@@ -418,7 +439,7 @@ class EmailService {
                         ${packageLine}
                         •⁠  ⁠Date: ${formattedDateShort}<br>
                         •⁠  ⁠Time: ${scheduledTime}<br>
-                        ${price && !packageInfo ? `•⁠  ⁠Price: ₹${price}<br>` : ''}
+                        ${formattedPrice ? `•⁠  ⁠Price: ₹${formattedPrice}<br>` : ''}
                       </div>
                       
                       ${googleMeetLink ? `
@@ -444,12 +465,12 @@ class EmailService {
                           <td style="padding: 0 0 20px 0; text-align: center;">
                             ${googleCalendarLink ? `
                             <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
-                              📅 Add to Google Calendar
+                              Add to Google Calendar
                             </a>
                             ` : ''}
                             ${outlookCalendarLink ? `
                             <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
-                              📅 Add to Outlook
+                              Add to Outlook
                             </a>
                             ` : ''}
                           </td>
@@ -484,9 +505,9 @@ class EmailService {
                       </table>
                       
                       <!-- Footer Text -->
-                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We're looking forward to seeing you on the scheduled time</p>
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0; text-align: center;">We're looking forward to seeing you on the scheduled time</p>
                       
-                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0; text-align: center;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
                       
                       <p style="color: #2d3748; font-size: 15px; margin: 0;">
                         Best regards,<br>
@@ -540,6 +561,9 @@ class EmailService {
       price,
       packageInfo
     } = emailData;
+    
+    // Format price for display (convert to number if string, then format with commas)
+    const formattedPrice = price ? (typeof price === 'number' ? price.toLocaleString('en-IN') : Number(price).toLocaleString('en-IN')) : null;
 
     const contactEmail = 'hey@little.care';
     const contactPhone = '+91-9539007766';
@@ -620,7 +644,7 @@ class EmailService {
                               ` : ''}
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Session Fee:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-weight: 600;">${packageInfo ? 'Included in Package' : `₹${price || 'TBD'}`}</td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right; font-weight: 600;">${formattedPrice ? `₹${formattedPrice}` : 'TBD'}</td>
                               </tr>
                             </table>
                           </td>
@@ -880,27 +904,66 @@ class EmailService {
         isFreeAssessment = false
       } = sessionData;
 
-      // Format dates
-      const oldDateObj = new Date(`${oldDate}T00:00:00`);
-      const newDateObj = new Date(`${scheduledDate}T00:00:00`);
+      // Format dates as "Mon, 12 Jan 2026" for email
+      const formatDateShort = (dateStr) => {
+        if (!dateStr) return '';
+        try {
+          const d = new Date(`${dateStr}T00:00:00+05:30`);
+          return d.toLocaleDateString('en-IN', {
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            timeZone: 'Asia/Kolkata'
+          });
+        } catch {
+          return dateStr;
+        }
+      };
 
-      const formattedOldDate = oldDateObj.toLocaleDateString('en-IN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        timeZone: 'Asia/Kolkata'
-      });
-      const formattedOldTime = formatTimeFromString(oldTime);
+      const formattedOldDate = formatDateShort(oldDate);
+      const formattedNewDate = formatDateShort(scheduledDate);
+      
+      // Format time to 12-hour format with IST
+      const formatTimeForEmail = (timeStr) => {
+        if (!timeStr) return '';
+        try {
+          const [h, m] = timeStr.split(':');
+          const hours = parseInt(h, 10);
+          const minutes = parseInt(m || '0', 10);
+          const period = hours >= 12 ? 'PM' : 'AM';
+          const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+          const displayMinutes = minutes.toString().padStart(2, '0');
+          return `${displayHours}:${displayMinutes} ${period} (IST)`;
+        } catch {
+          return timeStr;
+        }
+      };
 
-      const formattedNewDate = newDateObj.toLocaleDateString('en-IN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        timeZone: 'Asia/Kolkata'
-      });
-      const formattedNewTime = formatTimeFromString(scheduledTime);
+      const formattedOldTime = formatTimeForEmail(oldTime);
+      const formattedNewTime = formatTimeForEmail(scheduledTime);
+
+      // Generate calendar links for the new session
+      let googleCalendarLink = null;
+      let outlookCalendarLink = null;
+      if (meetLink && scheduledDate && scheduledTime) {
+        try {
+          const { generateGoogleCalendarLink, generateOutlookCalendarLink } = require('./calendarInviteGenerator');
+          const calendarData = {
+            clientName: clientName || 'Client',
+            psychologistName: psychologistName || 'Specialist',
+            sessionDate: scheduledDate,
+            sessionTime: scheduledTime,
+            meetLink: meetLink,
+            duration: 60 // Default 60 minutes
+          };
+          googleCalendarLink = generateGoogleCalendarLink(calendarData);
+          outlookCalendarLink = generateOutlookCalendarLink(calendarData);
+        } catch (calendarError) {
+          console.warn('⚠️ Failed to generate calendar links for reschedule email:', calendarError);
+          // Continue without calendar links
+        }
+      }
 
       // Send reschedule notifications
       if (clientEmail) {
@@ -914,7 +977,10 @@ class EmailService {
           sessionId,
           meetLink,
           type: 'client',
-          isFreeAssessment
+          isFreeAssessment,
+          googleCalendarLink,
+          outlookCalendarLink,
+          psychologistName
         });
       }
 
@@ -929,7 +995,10 @@ class EmailService {
           sessionId,
           meetLink,
           type: 'psychologist',
-          isFreeAssessment
+          isFreeAssessment,
+          googleCalendarLink,
+          outlookCalendarLink,
+          psychologistName
         });
       }
 
@@ -941,12 +1010,16 @@ class EmailService {
   }
 
   async sendRescheduleEmail(emailData) {
-    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, meetLink, type, isFreeAssessment = false } = emailData;
+    const { to, name, oldDate, oldTime, newDate, newTime, sessionId, meetLink, type, isFreeAssessment = false, googleCalendarLink, outlookCalendarLink, psychologistName } = emailData;
     const sessionType = isFreeAssessment ? 'free assessment' : 'therapy session';
     const sessionTypeTitle = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
     const contactEmail = 'hey@little.care';
     const contactPhone = '+91-9539007766';
+
+    // Get logo URL - use favicon for email compatibility
+    const frontendUrl = process.env.FRONTEND_URL || process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') || 'https://www.little.care';
+    const logoUrl = `https://www.little.care/favicon.png`;
 
     // Extract first name from name
     const firstName = name ? name.split(' ')[0] : 'there';
@@ -968,8 +1041,26 @@ class EmailService {
       }
     };
 
+    // Format time to 12-hour format with IST
+    const formatTimeForEmail = (timeStr) => {
+      if (!timeStr) return '';
+      try {
+        const [h, m] = timeStr.split(':');
+        const hours = parseInt(h, 10);
+        const minutes = parseInt(m || '0', 10);
+        const period = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+        const displayMinutes = minutes.toString().padStart(2, '0');
+        return `${displayHours}:${displayMinutes} ${period} (IST)`;
+      } catch {
+        return timeStr;
+      }
+    };
+
     const formattedOldDate = formatDateShort(oldDate);
     const formattedNewDate = formatDateShort(newDate);
+    const formattedOldTime = formatTimeForEmail(oldTime);
+    const formattedNewTime = formatTimeForEmail(newTime);
 
     const mailOptions = {
       from: {
@@ -998,7 +1089,7 @@ class EmailService {
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin: 0 auto;">
                         <tr>
                           <td align="center" style="padding-bottom: 15px;">
-                            <img src="https://www.little.care/favicon.png" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
+                            <img src="${logoUrl}" alt="Little Care" width="60" height="60" border="0" style="display: block; max-width: 60px; width: 60px; height: auto; margin: 0 auto;" />
                           </td>
                         </tr>
                         <tr>
@@ -1023,8 +1114,9 @@ class EmailService {
                       
                       <!-- Session Details -->
                       <div style="color: #4a5568; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
-                        •⁠  ⁠Old: ${formattedOldDate}, ${oldTime}<br>
-                        •⁠  ⁠New: ${formattedNewDate}, ${newTime}<br>
+                        •⁠  ⁠Old: ${formattedOldDate}, ${formattedOldTime}<br>
+                        •⁠  ⁠New: ${formattedNewDate}, ${formattedNewTime}<br>
+                        ${psychologistName ? `•⁠  ⁠Specialist: ${psychologistName}<br>` : ''}
                       </div>
                       
                       ${meetLink ? `
@@ -1043,10 +1135,45 @@ class EmailService {
                       </table>
                       ` : ''}
                       
-                      <!-- Footer Text -->
-                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0;">We're looking forward to seeing you on the scheduled time</p>
+                      ${googleCalendarLink || outlookCalendarLink ? `
+                      <!-- Add to Calendar Section -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0; text-align: center;">
+                            ${googleCalendarLink ? `
+                            <a href="${googleCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                              Add to Google Calendar
+                            </a>
+                            ` : ''}
+                            ${outlookCalendarLink ? `
+                            <a href="${outlookCalendarLink}" target="_blank" style="display: inline-block; background: #3f2e73; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 5px; font-weight: 600; font-size: 14px;">
+                              Add to Outlook
+                            </a>
+                            ` : ''}
+                          </td>
+                        </tr>
+                      </table>
+                      ` : ''}
                       
-                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
+                      <!-- Important Reminders -->
+                      <table role="presentation" style="width: 100%; border-collapse: collapse; margin: 0 0 30px 0;">
+                        <tr>
+                          <td style="padding: 0 0 20px 0;">
+                            <h3 style="color: #2d3748; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">Reminders</h3>
+                            <ul style="color: #4a5568; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                              <li>Please join the session 10 minutes before the scheduled time</li>
+                              <li>Ensure you have a stable internet connection</li>
+                              <li>Find a quiet, private space for your session</li>
+                              <li>Have any relevant documents or notes ready</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Footer Text -->
+                      <p style="color: #4a5568; font-size: 15px; line-height: 1.6; margin: 0 0 20px 0; text-align: center;">We're looking forward to seeing you on the scheduled time</p>
+                      
+                      <p style="color: #4a5568; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0; text-align: center;">If you have any questions, please contact us at <a href="mailto:${contactEmail}" style="color: #3f2e73; text-decoration: none;">${contactEmail}</a> or ${contactPhone}</p>
                       
                       <p style="color: #2d3748; font-size: 15px; margin: 0;">
                         Best regards,<br>

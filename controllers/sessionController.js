@@ -1823,7 +1823,16 @@ const completeSession = async (req, res) => {
       // Don't fail the request if commission calculation fails
     }
 
+    console.log(`📋 Session ${sessionId} updated successfully, proceeding to send notifications...`);
+    console.log(`📋 Session client data available:`, {
+      hasClient: !!session.client,
+      clientId: session.client?.id,
+      userId: session.client?.user_id,
+      hasPhoneNumber: !!session.client?.phone_number
+    });
+
     // Send completion notification to client
+    console.log(`🔔 Starting completion notification process for session ${sessionId}...`);
     try {
       const clientNotificationData = {
         user_id: session.client.user_id,
@@ -1834,14 +1843,27 @@ const completeSession = async (req, res) => {
         related_type: 'session'
       };
 
+      console.log(`📬 Creating in-app notification for user ${session.client.user_id}...`);
       await supabaseAdmin
         .from('notifications')
         .insert([clientNotificationData]);
+      console.log(`✅ In-app notification created successfully`);
 
       // Send WhatsApp notification to client (NO EMAIL for session completion)
+      // This applies to ALL sessions including package sessions
       try {
         const { sendSessionCompletionNotification } = require('../utils/whatsappService');
-        const clientPhone = session.client.phone_number || null;
+        const clientPhone = session.client?.phone_number || null;
+        
+        console.log(`📱 WhatsApp sending attempt for session ${sessionId} (package: ${session.package_id || 'none'})`);
+        console.log(`📱 Client data:`, {
+          hasClient: !!session.client,
+          clientId: session.client?.id,
+          phoneNumber: clientPhone ? `${clientPhone.substring(0, 3)}***` : 'NOT FOUND',
+          sessionType: session.session_type,
+          isPackage: !!session.package_id
+        });
+        
         if (clientPhone) {
           // For free assessments, use "our specialist", otherwise use psychologist name
           const psychologistName = isFreeAssessment 
@@ -1854,24 +1876,30 @@ const completeSession = async (req, res) => {
           ).replace(/\/$/, '');
           const bookingLink = `${frontendUrl}/psychologists`;
           // For free assessments, use sessions page (they don't have reports)
-          // For regular sessions, use reports page
+          // For regular sessions (including package sessions), use reports page
           const feedbackLink = isFreeAssessment 
             ? `${frontendUrl}/profile/sessions?tab=completed`
             : `${frontendUrl}/profile/reports`;
 
+          const sessionTypeLabel = session.package_id ? 'package session' : (isFreeAssessment ? 'free assessment' : 'therapy session');
+          console.log(`📱 Attempting to send WhatsApp completion for ${sessionTypeLabel} (Session ID: ${sessionId}) to client: ${clientPhone.substring(0, 3)}***`);
           const clientResult = await sendSessionCompletionNotification(clientPhone, {
             psychologistName: psychologistName,
             bookingLink: bookingLink,
             feedbackLink: feedbackLink
           });
           if (clientResult?.success) {
-            console.log('✅ Session completion WhatsApp sent to client');
+            console.log(`✅ Session completion WhatsApp sent to client for ${sessionTypeLabel} (Session ID: ${sessionId})`);
           } else {
-            console.warn('⚠️ Failed to send session completion WhatsApp to client');
+            console.warn(`⚠️ Failed to send session completion WhatsApp to client for ${sessionTypeLabel} (Session ID: ${sessionId}). Error: ${clientResult?.error || 'Unknown error'}`);
           }
+        } else {
+          console.warn(`⚠️ Skipping WhatsApp completion for session ${sessionId} (${session.package_id ? 'package session' : 'regular session'}): Client phone number not found.`);
+          console.warn(`⚠️ Session client data:`, session.client ? { id: session.client.id, hasPhone: !!session.client.phone_number } : 'No client data');
         }
       } catch (waError) {
-        console.error('Error sending session completion WhatsApp:', waError);
+        console.error(`❌ Error sending session completion WhatsApp for session ${sessionId}${session.package_id ? ' (package session)' : ''}:`, waError);
+        console.error(`❌ Error stack:`, waError.stack);
         // Don't fail the request if WhatsApp fails
       }
     } catch (notificationError) {

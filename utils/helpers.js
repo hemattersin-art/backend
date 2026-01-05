@@ -159,16 +159,23 @@ const errorResponse = (message, error = null, statusCode = 400) => {
 };
 
 // Add minutes to time string (HH:MM format)
+// Returns time in HH:MM:SS format for Google Calendar API
+// Handles day rollover (e.g., 23:00 + 60 minutes = 00:00:00)
 const addMinutesToTime = (timeString, minutes) => {
   try {
     // Handle both HH:MM and HH:MM:SS formats
     const timeParts = timeString.split(':');
     const hours = parseInt(timeParts[0]);
-    const mins = parseInt(timeParts[1]);
+    const mins = parseInt(timeParts[1] || '0');
     
     const totalMinutes = hours * 60 + mins + minutes;
-    const newHours = Math.floor(totalMinutes / 60);
+    let newHours = Math.floor(totalMinutes / 60);
     const newMins = totalMinutes % 60;
+    
+    // Handle day rollover (24 hours = next day, reset to 00)
+    if (newHours >= 24) {
+      newHours = newHours % 24;
+    }
     
     // Always return HH:MM:SS format for Google Calendar API
     return `${newHours.toString().padStart(2, '0')}:${newMins.toString().padStart(2, '0')}:00`;
