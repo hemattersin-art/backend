@@ -1544,19 +1544,48 @@ const updatePsychologist = async (req, res) => {
       psychologistUpdateData.display_order = psychologistUpdateData.display_order ? parseInt(psychologistUpdateData.display_order) : null;
     }
 
-    // Update psychologist profile
-    const { data: updatedPsychologist, error: updateError } = await supabaseAdmin
-      .from('psychologists')
-      .update(psychologistUpdateData)
-      .eq('id', psychologistId)
-      .select('*')
-      .single();
+    // Remove undefined/null values from update data
+    Object.keys(psychologistUpdateData).forEach(key => {
+      if (psychologistUpdateData[key] === undefined || psychologistUpdateData[key] === null) {
+        delete psychologistUpdateData[key];
+      }
+    });
 
-    if (updateError) {
-      console.error('Update psychologist error:', updateError);
-      return res.status(500).json(
-        errorResponse('Failed to update psychologist profile')
-      );
+    // Only update psychologist profile if there are fields to update
+    let updatedPsychologist = psychologist; // Default to existing psychologist data
+    
+    // Check if there are any fields to update
+    const hasFieldsToUpdate = Object.keys(psychologistUpdateData).length > 0;
+
+    if (hasFieldsToUpdate) {
+      // Update psychologist profile
+      const { data: updatedData, error: updateError } = await supabaseAdmin
+        .from('psychologists')
+        .update(psychologistUpdateData)
+        .eq('id', psychologistId)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Update psychologist error:', updateError);
+        // If error is PGRST116 (0 rows), it means the update didn't affect any rows
+        // This can happen if the update data is invalid or the row doesn't exist
+        if (updateError.code === 'PGRST116') {
+          console.error('Update returned 0 rows - psychologist may not exist or update data is invalid');
+          return res.status(404).json(
+            errorResponse('Psychologist not found or update data is invalid')
+          );
+        }
+        return res.status(500).json(
+          errorResponse('Failed to update psychologist profile')
+        );
+      }
+      
+      if (updatedData) {
+        updatedPsychologist = updatedData;
+      }
+    } else {
+      console.log('No psychologist profile fields to update, skipping profile update');
     }
 
     // If admin requested a password change, update the linked user password
@@ -1670,13 +1699,13 @@ const updatePsychologist = async (req, res) => {
 
     // Handle package updates
     if (packages && Array.isArray(packages)) {
-      console.log('📦 Packages provided for update:', packages);
+      console.log('📦 Packages provided for update:', JSON.stringify(packages, null, 2));
       
       try {
         // Get existing packages for this psychologist
         const { data: existingPackagesData, error: fetchError } = await supabaseAdmin
           .from('packages')
-          .select('id, name, session_count')
+          .select('id, name, session_count, price')
           .eq('psychologist_id', psychologistId);
 
         let existingPackages = existingPackagesData || [];
@@ -1684,7 +1713,7 @@ const updatePsychologist = async (req, res) => {
         if (fetchError) {
           console.error('Error fetching existing packages:', fetchError);
         } else {
-          console.log('📦 Existing packages:', existingPackages);
+          console.log('📦 Existing packages from DB:', JSON.stringify(existingPackages, null, 2));
           
           // Extract valid package IDs from the request
             const updatedPackageIds = packages
@@ -1746,41 +1775,96 @@ const updatePsychologist = async (req, res) => {
           // Process each package
           for (const pkg of packages) {
             // Skip individual session packages (sessions = 1) as they're handled by individual_session_price
-            if (pkg.sessions === 1) {
+            if (pkg.sessions === 1 || pkg.sessions === '1') {
               console.log(`📦 Skipping individual session package: ${pkg.name}`);
               continue;
             }
 
-            // Check if this is an existing package (has numeric ID) or new package (has temp ID)
-            const isExistingPackage = pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0;
+            // Check if this is an existing package (has valid ID - can be UUID or integer) or new package (has temp ID)
+            const isExistingPackage = pkg.id && !pkg.id.toString().startsWith('pkg-');
+            
+            console.log(`📦 Processing package:`, { 
+              id: pkg.id, 
+              idType: typeof pkg.id, 
+              isExisting: isExistingPackage,
+              name: pkg.name, 
+              price: pkg.price, 
+              priceType: typeof pkg.price,
+              sessions: pkg.sessions 
+            });
             
             if (isExistingPackage) {
               // Update existing package - check if it still exists (wasn't deleted)
-              const existingPackage = existingPackages.find(ep => ep.id === parseInt(pkg.id));
+              // Keep ID as-is (could be UUID string or integer)
+              const packageId = pkg.id;
+              const packagePrice = parseInt(pkg.price);
               
-              // Skip if package was deleted
-              if (!existingPackage) {
-                console.log(`📦 Package ${pkg.id} was deleted or not found, skipping update`);
+              if (isNaN(packagePrice) || packagePrice <= 0) {
+                console.error(`❌ Invalid price for package ${packageId}: ${pkg.price}`);
                 continue;
               }
               
-                console.log(`📦 Updating existing package ${pkg.id} (${pkg.name}) with price $${pkg.price}`);
-                
-              const { error: updateError } = await supabaseAdmin
+              console.log(`🔍 PACKAGE UPDATE - ID: ${packageId}, Current Price: ${pkg.price}, New Price: ${packagePrice}`);
+              
+              // Find existing package - handle both UUID and integer ID types
+              const existingPackage = existingPackages.find(ep => {
+                // Compare as strings to handle both UUIDs and integers
+                return String(ep.id) === String(packageId);
+              });
+              
+              // Skip if package was deleted
+              if (!existingPackage) {
+                console.error(`❌ PACKAGE NOT FOUND - ID: ${packageId}`);
+                console.error(`❌ Available package IDs in DB:`, existingPackages.map(ep => ({ id: ep.id, idType: typeof ep.id, name: ep.name })));
+                continue;
+              }
+              
+              console.log(`✅ PACKAGE FOUND - Current DB price: ₹${existingPackage.price}, Updating to: ₹${packagePrice}`);
+              console.log(`🔍 Update query: UPDATE packages SET price = ${packagePrice} WHERE id = '${packageId}'`);
+              
+              // Use the EXACT same method as individual price update
+              const { data: updateResult, error: updateError } = await supabaseAdmin
                   .from('packages')
                   .update({ 
-                    price: parseInt(pkg.price),
-                    name: pkg.name || existingPackage.name,
-                    description: pkg.description || `${pkg.sessions} therapy sessions`,
-                    session_count: pkg.sessions
+                    price: packagePrice
                   })
-                  .eq('id', pkg.id);
+                  .eq('id', packageId)
+                  .select('id, price');
 
-                if (updateError) {
-                  console.error(`❌ Error updating package ${pkg.id}:`, updateError);
-                // Don't throw - continue with other packages
+              if (updateError) {
+                console.error(`❌❌❌ UPDATE FAILED - Package ${packageId}:`, updateError);
+                console.error(`❌ Error details:`, JSON.stringify(updateError, null, 2));
+              } else {
+                console.log(`📦 Update result:`, updateResult);
+                
+                // Check if any rows were actually updated
+                if (!updateResult || updateResult.length === 0) {
+                  console.error(`❌❌❌ NO ROWS UPDATED! Package ID ${packageId} not found in database or update query matched 0 rows`);
+                  console.error(`❌ This means the WHERE clause didn't match any rows. Check if the UUID is correct.`);
                 } else {
-                  console.log(`✅ Package ${pkg.id} updated successfully`);
+                  console.log(`✅ Update affected ${updateResult.length} row(s)`);
+                  console.log(`✅ Updated package data:`, updateResult[0]);
+                  
+                  // Verify the update by fetching the package
+                  const { data: verifyPackage, error: verifyError } = await supabaseAdmin
+                    .from('packages')
+                    .select('id, price')
+                    .eq('id', packageId)
+                    .single();
+                  
+                  if (verifyError) {
+                    console.error(`❌ Verification failed for package ${packageId}:`, verifyError);
+                  } else if (verifyPackage) {
+                    console.log(`✅✅✅ PACKAGE UPDATED & VERIFIED - ID: ${packageId}, Price in DB: ₹${verifyPackage.price}`);
+                    if (verifyPackage.price !== packagePrice) {
+                      console.error(`❌❌❌ PRICE MISMATCH! Expected: ₹${packagePrice}, Got: ₹${verifyPackage.price}`);
+                    } else {
+                      console.log(`✅✅✅ PRICE MATCHES! Update successful!`);
+                    }
+                  } else {
+                    console.error(`❌ Verification returned no data for package ${packageId}`);
+                  }
+                }
               }
             } else {
               // Create new package
@@ -2016,6 +2100,23 @@ const updatePsychologist = async (req, res) => {
       }
     }
 
+    // Fetch updated packages to include in response
+    let updatedPackages = [];
+    try {
+      const { data: packagesData, error: packagesError } = await supabaseAdmin
+        .from('packages')
+        .select('*')
+        .eq('psychologist_id', psychologistId)
+        .order('session_count', { ascending: true });
+      
+      if (!packagesError && packagesData) {
+        updatedPackages = packagesData;
+        console.log('📦 Fetched updated packages for response:', updatedPackages.length);
+      }
+    } catch (error) {
+      console.error('Error fetching packages for response:', error);
+    }
+
     // Invalidate frontend cache by updating cache version timestamp
     // This will force frontend to refresh cached psychologist data
     const cacheInvalidationTimestamp = Date.now();
@@ -2024,6 +2125,7 @@ const updatePsychologist = async (req, res) => {
     res.json(
       successResponse({
         ...updatedPsychologist,
+        packages: updatedPackages,
         cache_invalidated: true,
         cache_timestamp: cacheInvalidationTimestamp
       }, 'Psychologist updated successfully')

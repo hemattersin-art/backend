@@ -1470,11 +1470,20 @@ const completeSession = async (req, res) => {
           if (clientPhone) {
             const psychologistName = `${req.user.first_name || ''} ${req.user.last_name || ''}`.trim() || 'our specialist';
             const isFreeAssessment = regularSession.session_type === 'free_assessment';
-            const frontendUrl = (
-              process.env.FRONTEND_URL ||
-              process.env.RAZORPAY_SUCCESS_URL?.replace(/\/payment-success.*$/, '') ||
-              'https://www.little.care'
-            ).replace(/\/$/, '');
+            // Get frontend URL - never use localhost in production
+            let frontendUrl = process.env.FRONTEND_URL;
+            if (!frontendUrl && process.env.RAZORPAY_SUCCESS_URL) {
+              const extractedUrl = process.env.RAZORPAY_SUCCESS_URL.replace(/\/payment-success.*$/, '');
+              // Only use extracted URL if it's not localhost
+              if (!extractedUrl.includes('localhost') && !extractedUrl.includes('127.0.0.1')) {
+                frontendUrl = extractedUrl;
+              }
+            }
+            // Fallback to production URL
+            if (!frontendUrl || frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
+              frontendUrl = 'https://www.little.care';
+            }
+            frontendUrl = frontendUrl.replace(/\/$/, '');
             const bookingLink = `${frontendUrl}/psychologists`;
             const feedbackLink = isFreeAssessment 
               ? `${frontendUrl}/profile/sessions?tab=completed`
