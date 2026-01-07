@@ -373,6 +373,7 @@ app.get('/api/public/psychologists', async (req, res) => {
     const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com').toLowerCase();
     
     // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
+    // Only show active psychologists on client-facing pages
     const { data: psychologists, error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .select(`
@@ -402,6 +403,7 @@ app.get('/api/public/psychologists', async (req, res) => {
         faq_answer_3
       `)
       .neq('email', assessmentEmail)
+      .eq('active', true) // Only show active psychologists on client-facing pages
       .order('created_at', { ascending: false });
 
     if (psychologistsError) {

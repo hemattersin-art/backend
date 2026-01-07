@@ -566,7 +566,8 @@ const getAllPsychologists = async (req, res) => {
       faq_question_2: psych.faq_question_2 || null,
       faq_answer_2: psych.faq_answer_2 || null,
       faq_question_3: psych.faq_question_3 || null,
-      faq_answer_3: psych.faq_answer_3 || null
+      faq_answer_3: psych.faq_answer_3 || null,
+      active: psych.active !== undefined ? psych.active : true // Include active field, default to true
     }));
 
     // Extract individual price from dedicated field or description field
@@ -1350,7 +1351,8 @@ const createPsychologist = async (req, res) => {
         faq_question_2: faq_question_2 || null,
         faq_answer_2: faq_answer_2 || null,
         faq_question_3: faq_question_3 || null,
-        faq_answer_3: faq_answer_3 || null
+        faq_answer_3: faq_answer_3 || null,
+        active: true // New psychologists are active by default
       }])
       .select('*')
       .single();
