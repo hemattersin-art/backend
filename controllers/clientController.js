@@ -854,30 +854,30 @@ const bookSession = async (req, res) => {
     console.log('📦 Package ID type:', typeof package_id);
     console.log('📦 Package ID truthiness:', !!package_id);
 
-    let package = null;
+    let packageData = null;
 
     // Only validate package if package_id is provided and not null/undefined (and not individual)
     if (package_id && package_id !== 'null' && package_id !== 'undefined' && package_id !== 'individual') {
       console.log('📦 Validating package...');
       // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
-      const { data: packageData, error: packageError } = await supabaseAdmin
+      const { data: packageDataResult, error: packageError } = await supabaseAdmin
         .from('packages')
         .select('*')
         .eq('id', package_id)
         .eq('psychologist_id', psychologist_id)
         .single();
 
-      console.log('📦 Package lookup result:', packageData);
+      console.log('📦 Package lookup result:', packageDataResult);
       console.log('📦 Package lookup error:', packageError);
 
-      if (!packageData) {
+      if (!packageDataResult) {
         console.log('❌ Package validation failed');
         return res.status(400).json(
           errorResponse('Package not found or does not belong to this psychologist')
         );
       }
 
-      package = packageData;
+      packageData = packageDataResult;
       console.log('✅ Package validation passed');
     } else {
       console.log('📦 No package validation needed (package_id not provided)');
@@ -990,7 +990,7 @@ const bookSession = async (req, res) => {
       google_calendar_event_id: meetData.eventId,
       google_meet_link: meetData.meetLink,
       google_calendar_link: meetData.calendarLink,
-      price: price || (package?.price || 100) // Default to $100 for individual sessions
+      price: price || (packageData?.price || 100) // Default to $100 for individual sessions
     };
 
     // Only add package_id if it's provided and valid (not individual)
@@ -1055,20 +1055,20 @@ const bookSession = async (req, res) => {
     }
 
     // Step 7: If this is a package purchase, create client package record
-    if (package && package.session_count > 1 && package.id !== 'individual') {
+    if (packageData && packageData.session_count > 1 && packageData.id !== 'individual') {
       console.log('🔍 Step 7: Creating client package record...');
-      console.log('📦 Package details:', package);
+      console.log('📦 Package details:', packageData);
       
       try {
         const clientPackageData = {
           client_id: clientId,
           psychologist_id,
-          package_id: package.id,
-          package_type: package.package_type,
-          total_sessions: package.session_count,
-          remaining_sessions: package.session_count - 1, // First session already booked
-          total_amount: package.price,
-          amount_paid: package.price,
+          package_id: packageData.id,
+          package_type: packageData.package_type,
+          total_sessions: packageData.session_count,
+          remaining_sessions: packageData.session_count - 1, // First session already booked
+          total_amount: packageData.price,
+          amount_paid: packageData.price,
           status: 'active',
           purchased_at: new Date().toISOString(),
           first_session_id: session.id
@@ -1084,7 +1084,7 @@ const bookSession = async (req, res) => {
           // Continue even if client package creation fails
         } else {
           console.log('✅ Client package record created successfully');
-          console.log('   - Remaining sessions:', package.session_count - 1);
+          console.log('   - Remaining sessions:', packageData.session_count - 1);
         }
       } catch (packageError) {
         console.error('❌ Exception while creating client package:', packageError);
@@ -1374,10 +1374,10 @@ const bookSession = async (req, res) => {
         session,
         meetLink: meetData.meetLink,
         calendarLink: meetData.calendarLink,
-        package: package && package.id !== 'individual' ? {
-          type: package.package_type,
-          remaining_sessions: package.session_count - 1,
-          total_amount: package.price
+        package: packageData && packageData.id !== 'individual' ? {
+          type: packageData.package_type,
+          remaining_sessions: packageData.session_count - 1,
+          total_amount: packageData.price
         } : null
       }, 'Session booked successfully')
     );

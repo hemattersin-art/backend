@@ -16,6 +16,7 @@ jest.mock('../config/supabase', () => ({
 
 jest.mock('../utils/tokenRevocation', () => ({
   isTokenRevoked: jest.fn(() => Promise.resolve(false)),
+  isUserRevoked: jest.fn(() => Promise.resolve(false)),
 }));
 
 // Set environment variables before requiring auth middleware
@@ -72,11 +73,49 @@ describe('Authentication Middleware', () => {
     const token = jwt.sign({ userId, role }, process.env.JWT_SECRET, { expiresIn: '1h' });
     req.headers.authorization = `Bearer ${token}`;
 
+    // Mock database lookup - first check psychologists (returns null), then users table
+    const { supabaseAdmin } = require('../config/supabase');
+    const mockUser = {
+      id: userId,
+      email: 'test@example.com',
+      role: role
+    };
+    
+    // Mock psychologists lookup (returns null/error)
+    const mockPsychologistChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'Not found' }
+      })
+    };
+    
+    // Mock users lookup (returns user)
+    const mockUserChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: mockUser,
+        error: null
+      })
+    };
+    
+    // Return different chains based on table name
+    supabaseAdmin.from.mockImplementation((table) => {
+      if (table === 'psychologists') {
+        return mockPsychologistChain;
+      } else if (table === 'users') {
+        return mockUserChain;
+      }
+      return mockUserChain;
+    });
+
     await authenticateToken(req, res, next);
 
     expect(next).toHaveBeenCalled();
     expect(req.user).toBeDefined();
-    expect(req.user.userId).toBe(userId);
+    expect(req.user.id).toBe(userId);
     expect(req.user.role).toBe(role);
   });
 

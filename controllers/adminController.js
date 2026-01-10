@@ -5246,13 +5246,13 @@ const deletePackage = async (req, res) => {
     const { packageId } = req.params;
 
     // Check if package exists
-    const { data: package, error: packageError } = await supabaseAdmin
+    const { data: packageData, error: packageError } = await supabaseAdmin
       .from('packages')
       .select('id, psychologist_id, name, session_count')
       .eq('id', packageId)
       .single();
 
-    if (packageError || !package) {
+    if (packageError || !packageData) {
       return res.status(404).json(
         errorResponse('Package not found')
       );
