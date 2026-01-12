@@ -28,8 +28,16 @@ function normalizePhoneNumber(phoneNumber, defaultCountryCode = '+91') {
     return null;
   }
 
-  // If already starts with +, use as is
+  // If already starts with +, validate it
   if (cleaned.startsWith('+')) {
+    // For Indian numbers (+91), validate that it has exactly 10 digits after country code
+    if (cleaned.startsWith('+91')) {
+      const digitsAfterCountryCode = cleaned.substring(3);
+      if (digitsAfterCountryCode.length !== 10) {
+        console.warn(`⚠️ Invalid Indian phone number format: ${cleaned} (expected 10 digits after +91, got ${digitsAfterCountryCode.length})`);
+        // Still return it - let WhatsApp API reject it with a clearer error
+      }
+    }
     return cleaned;
   }
 
@@ -150,7 +158,13 @@ async function sendWhatsAppText(toPhoneE164, message) {
               console.log('✅ WhatsApp message sent via WASenderApi:', jsonData);
               resolve({ success: true, data: jsonData });
             } else {
-              console.error('❌ WASenderApi error:', jsonData);
+              // Provide more helpful error messages
+              const errorMessage = jsonData.message || 'Unknown error';
+              if (errorMessage.includes('JID does not exist') || errorMessage.includes('does not exist on WhatsApp')) {
+                console.error(`❌ WASenderApi error: Phone number ${formattedPhone} is not registered with WhatsApp or is invalid. Please verify the phone number in the database.`, jsonData);
+              } else {
+                console.error('❌ WASenderApi error:', jsonData);
+              }
               resolve({ success: false, error: jsonData });
             }
           } catch (parseErr) {

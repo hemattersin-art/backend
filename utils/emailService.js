@@ -380,6 +380,9 @@ class EmailService {
       packageLine = `•⁠  ⁠Package: ${booked} of ${total} sessions booked, ${left} left<br>`;
     }
 
+    // Format price for display
+    const formattedPrice = price ? (typeof price === 'number' ? price.toLocaleString('en-IN') : Number(price).toLocaleString('en-IN')) : null;
+
     // Receipt link (always show, no PDF attachment)
     const receiptLink = `${frontendUrl}/profile/receipts`;
 
