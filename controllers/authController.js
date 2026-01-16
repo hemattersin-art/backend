@@ -20,6 +20,15 @@ const register = async (req, res) => {
       email = email.trim().toLowerCase();
     }
 
+    // SECURITY FIX: Prevent public registration of admin/superadmin roles
+    // Admin users must be created via /api/superadmin/create-admin (superadmin only)
+    // Superadmin users must be created manually via database or secure setup script
+    if (role === 'admin' || role === 'superadmin') {
+      return res.status(403).json(
+        errorResponse('Admin and superadmin accounts cannot be created through public registration. Please contact system administrator.')
+      );
+    }
+
     // Check if user already exists
     // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
     const { supabaseAdmin } = require('../config/supabase');
