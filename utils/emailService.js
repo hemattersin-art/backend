@@ -629,7 +629,7 @@ class EmailService {
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}${scheduledTime && !scheduledTime.includes('(IST)') ? ' (IST)' : ''}</td>
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>
@@ -1520,7 +1520,7 @@ The Little Care Team
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentTime}</td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${assessmentTime}${assessmentTime && !assessmentTime.includes('(IST)') ? ' (IST)' : ''}</td>
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Duration:</strong></td>

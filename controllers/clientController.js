@@ -1579,10 +1579,13 @@ const cancelSession = async (req, res) => {
 
       // Send WhatsApp to psychologist
       if (psychologistDetails?.phone) {
-        const psychologistMessage = `❌ Session cancelled with ${clientName}.\n\n` +
-          `📅 Date: ${sessionDateTime}\n` +
-          `👤 Client: ${clientName}\n` +
-          `Session ID: ${session.id}`;
+        const bullet = '•⁠  ⁠';
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `Session cancelled with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${sessionDateTime}\n\n` +
+          `— Little Care 💜`;
 
         const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
         if (psychologistResult?.success) {
@@ -2622,14 +2625,41 @@ const rescheduleSession = async (req, res) => {
 
       // Send WhatsApp to psychologist
       if (psychologistDetails?.phone) {
-        const psychologistMessage = `🔄 ${isFreeAssessment ? 'Free assessment' : 'Session'} rescheduled with ${clientName}.\n\n` +
-          `❌ Old: ${originalDateTime}\n` +
-          `✅ New: ${newDateTime}\n\n` +
-          `👤 Client: ${clientName}\n` +
-          (meetData?.meetLink 
-            ? `🔗 New Google Meet Link: ${meetData.meetLink}\n\n`
-            : '\n') +
-          `Session ID: ${session.id}`;
+        // Format date in short format for consistency
+        const formatBookingDateShort = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+        
+        const oldDateFormatted = formatBookingDateShort(session.scheduled_date);
+        const newDateFormatted = formatBookingDateShort(updatedSession.scheduled_date);
+        const oldDateTime = `${oldDateFormatted} at ${originalTimeFormatted} (IST)`;
+        const newDateTime = `${newDateFormatted} at ${newTimeFormatted} (IST)`;
+        
+        const bullet = '•⁠  ⁠';
+        const meetLinkLine = meetData?.meetLink ? `Join link:\n${meetData.meetLink}\n\n` : '';
+        
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `${isFreeAssessment ? 'Free assessment' : 'Session'} rescheduled with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Old: ${oldDateTime}\n` +
+          `${bullet}New: ${newDateTime}\n\n` +
+          meetLinkLine +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: +91 95390 07766\n\n` +
+          `— Little Care 💜`;
 
         const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
         if (psychologistResult?.success) {

@@ -141,21 +141,57 @@ async function sendAssessmentWhatsapps({ session, clientName, meetLink }) {
   }
 
   if (psychologistPhone) {
+    // Format date and time using the same functions as client messages
+    const formatBookingDateShort = (dateStr) => {
+      if (!dateStr) return '';
+      try {
+        const d = new Date(`${dateStr}T00:00:00+05:30`);
+        return d.toLocaleDateString('en-IN', {
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'Asia/Kolkata'
+        });
+      } catch {
+        return dateStr;
+      }
+    };
+    
+    const formatFriendlyTime = (timeStr) => {
+      if (!timeStr) return '';
+      try {
+        const [h, m] = timeStr.split(':');
+        const hours = parseInt(h, 10);
+        const minutes = parseInt(m || '0', 10);
+        const period = hours >= 12 ? 'PM' : 'AM';
+        const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+        const displayMinutes = minutes.toString().padStart(2, '0');
+        return `${displayHours}:${displayMinutes} ${period}`;
+      } catch {
+        return timeStr;
+      }
+    };
+    
     const assessmentName = session.assessment?.hero_title ||
       session.assessment?.seo_title ||
       'Assessment session';
     const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+    const bullet = '•⁠  ⁠';
+    const formattedDate = formatBookingDateShort(scheduledDate);
+    const formattedTime = formatFriendlyTime(scheduledTime);
+    
     const message =
-      `🧸 New assessment session booked.\n\n` +
-      `Session details:\n\n` +
-      `👧 Client: ${clientName}\n\n` +
-      `📝 Assessment: ${assessmentName}\n\n` +
-      `📅 Date: ${scheduledDate}\n\n` +
-      `⏰ Time: ${scheduledTime} (IST)\n\n` +
-      `🔗 Google Meet: ${meetLink}\n\n` +
-      `🆔 Session ID: ${session.id}\n\n` +
-      `📞 For support or scheduling issues, contact Little Care support:\n` +
-      `WhatsApp / Call: ${supportPhone}`;
+      `Hey 👋\n\n` +
+      `New free assessment session booked with Little Care.\n\n` +
+      `${bullet}Client: ${clientName}\n` +
+      `${bullet}Assessment: ${assessmentName}\n` +
+      `${bullet}Date: ${formattedDate}\n` +
+      `${bullet}Time: ${formattedTime} (IST)\n\n` +
+      `Join link:\n${meetLink}\n\n` +
+      `Please be ready 5 mins early.\n\n` +
+      `For help: ${supportPhone}\n\n` +
+      `— Little Care 💜`;
 
     try {
       await sendWhatsAppTextWithRetry(psychologistPhone, message);

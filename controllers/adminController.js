@@ -4192,14 +4192,19 @@ const handleRescheduleRequest = async (req, res) => {
 
             // Send WhatsApp to psychologist
             if (psychologistDetails?.phone) {
-              const psychologistMessage = `✅ Reschedule request approved by admin.\n\n` +
-                `👤 Client: ${clientName}\n` +
-                `❌ Old: ${oldFormatted}\n` +
-                `✅ New: ${newFormatted}\n\n` +
-                (meetLink 
-                  ? `🔗 Google Meet Link: ${meetLink}\n\n`
-                  : '\n') +
-                `Session ID: ${session.id}`;
+              const bullet = '•⁠  ⁠';
+              const meetLinkLine = meetLink ? `Join link:\n${meetLink}\n\n` : '';
+              
+              const psychologistMessage =
+                `Hey 👋\n\n` +
+                `Reschedule request approved by admin.\n\n` +
+                `${bullet}Client: ${clientName}\n` +
+                `${bullet}Old: ${oldFormatted}\n` +
+                `${bullet}New: ${newFormatted}\n\n` +
+                meetLinkLine +
+                `Please be ready 5 mins early.\n\n` +
+                `For help: +91 95390 07766\n\n` +
+                `— Little Care 💜`;
 
               const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
               if (psychologistResult?.success) {

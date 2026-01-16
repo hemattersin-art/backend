@@ -329,12 +329,19 @@ class SessionReminderService {
 
       // Send reminder to psychologist
       if (psychologist.phone) {
-        const psychologistMessage = `🔔 Reminder: You have a session with ${clientName}.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
-          `👤 Client: ${clientName}\n` +
-          (session.google_meet_link 
-            ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
-            : '\n') +
-          `Session ID: ${session.id}`;
+        const bullet = '•⁠  ⁠';
+        const meetLinkLine = session.google_meet_link ? `Join link:\n${session.google_meet_link}\n\n` : '';
+        
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `Reminder: You have a session with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${formattedDate}\n` +
+          `${bullet}Time: ${formattedTime} (IST)\n\n` +
+          meetLinkLine +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: +91 95390 07766\n\n` +
+          `— Little Care 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage)
