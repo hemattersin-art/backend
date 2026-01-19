@@ -64,13 +64,37 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
       return existingCommission;
     }
 
+    // Check if this is the client's first session or a follow-up session
+    // Exclude free sessions from this check
+    const clientId = session.client_id;
+    let isFirstSession = true;
+    
+    if (clientId) {
+      // Check if client has any other paid sessions (excluding free sessions)
+      // We check for sessions with a price > 0 or with payment_id
+      const { data: previousSessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id, price, payment_id, session_type, scheduled_date, created_at')
+        .eq('client_id', clientId)
+        .neq('id', sessionId) // Exclude current session
+        .neq('session_type', 'free_assessment') // Exclude free assessments
+        .gt('price', 0) // Only paid sessions
+        .order('created_at', { ascending: true })
+        .limit(1);
+      
+      // If client has any previous paid sessions, this is a follow-up session
+      if (previousSessions && previousSessions.length > 0) {
+        isFirstSession = false;
+      }
+    }
+
     // Determine session type
     const sessionType = session.package_id || session.session_type === 'Package Session' ? 'package' : 'individual';
 
-    // Get doctor's commission (fixed amount per session type)
+    // Get doctor's commission (fixed amount per session type) including first/follow-up fields
     const { data: commissionRecord } = await supabaseAdmin
       .from('doctor_commissions')
-      .select('commission_amount_individual, commission_amount_package, commission_percentage, commission_amounts')
+      .select('commission_amount_individual, commission_amount_package, commission_percentage, commission_amounts, doctor_commission_first_session, doctor_commission_followup, doctor_commission_individual, doctor_commission_first_session_package, doctor_commission_followup_package')
       .eq('psychologist_id', psychologistId)
       .eq('is_active', true)
       .order('effective_from', { ascending: false })
@@ -79,10 +103,10 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
 
     // Get fixed commission amount based on session type
     let commissionAmount = 0;
+    let packageType = 'individual';
     
     if (commissionRecord) {
       // Get package type if it's a package session
-      let packageType = 'individual';
       if (sessionType === 'package' && session.package_id) {
         // Fetch package to get its type
         const { data: packageData } = await supabaseAdmin
@@ -118,11 +142,65 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
     // If no commission record exists, default to 0 (company keeps all)
     // This ensures sessions can still be completed even without commission setup
 
+    // Apply first session vs follow-up session logic:
+    // - First session: Use first session commission if set, otherwise use regular commission
+    // - Follow-up session: Use follow-up commission if set, otherwise use 2x commission (for backward compatibility)
+    let finalCommissionAmount = commissionAmount;
+    
+    if (sessionType === 'individual') {
+      // Individual session logic
+      if (isFirstSession) {
+        // First session: use doctor_commission_first_session if set, otherwise use regular commission
+        if (commissionRecord?.doctor_commission_first_session !== null && commissionRecord?.doctor_commission_first_session !== undefined) {
+          // doctor_commission_first_session is what doctor gets, so company gets: sessionAmount - doctor_commission
+          const doctorCommissionFirst = parseFloat(commissionRecord.doctor_commission_first_session) || 0;
+          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFirst);
+        } else {
+          // Fallback to regular commission amount
+          finalCommissionAmount = commissionAmount;
+        }
+      } else {
+        // Follow-up session: use doctor_commission_followup if set, otherwise use 2x commission (backward compatibility)
+        if (commissionRecord?.doctor_commission_followup !== null && commissionRecord?.doctor_commission_followup !== undefined) {
+          // doctor_commission_followup is what doctor gets, so company gets: sessionAmount - doctor_commission
+          const doctorCommissionFollowup = parseFloat(commissionRecord.doctor_commission_followup) || 0;
+          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFollowup);
+        } else {
+          // Fallback to 2x commission (backward compatibility)
+          finalCommissionAmount = commissionAmount * 2;
+        }
+      }
+    } else {
+      // Package session logic
+      // For packages, use package-specific first/follow-up commission fields
+      if (isFirstSession) {
+        // First session package: use doctor_commission_first_session_package if set, otherwise use regular commission
+        if (commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
+          // doctor_commission_first_session_package is what doctor gets, so company gets: sessionAmount - doctor_commission
+          const doctorCommissionFirstPackage = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
+          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFirstPackage);
+        } else {
+          // Fallback to regular commission amount
+          finalCommissionAmount = commissionAmount;
+        }
+      } else {
+        // Follow-up session package: use doctor_commission_followup_package if set, otherwise use 2x commission (backward compatibility)
+        if (commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
+          // doctor_commission_followup_package is what doctor gets, so company gets: sessionAmount - doctor_commission
+          const doctorCommissionFollowupPackage = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
+          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFollowupPackage);
+        } else {
+          // Fallback to 2x commission (backward compatibility)
+          finalCommissionAmount = commissionAmount * 2;
+        }
+      }
+    }
+
     // Commission calculation (Fixed Amount System):
-    // commissionAmount = fixed amount (e.g., ₹300) = what COMPANY gets as commission
-    // doctorWalletAmount = sessionAmount - commissionAmount (e.g., ₹1000 - ₹300 = ₹700) = what DOCTOR gets
-    const doctorWalletAmount = Math.max(0, sessionAmount - commissionAmount);
-    const companyCommission = commissionAmount; // Company gets this fixed commission amount
+    // finalCommissionAmount = commission amount based on first/follow-up = what COMPANY gets as commission
+    // doctorWalletAmount = sessionAmount - finalCommissionAmount = what DOCTOR gets
+    const doctorWalletAmount = Math.max(0, sessionAmount - finalCommissionAmount);
+    const companyCommission = finalCommissionAmount; // Company gets this commission amount
 
     // Get GST settings
     const { data: gstSettings } = await supabaseAdmin
@@ -138,7 +216,7 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
     const netCompanyRevenue = companyCommission - gstAmount;
 
     // Create commission history record
-    // commission_amount = fixed commission amount = what COMPANY gets (e.g., ₹300)
+    // commission_amount = final commission amount (first session = 1x, follow-up = 2x) = what COMPANY gets
     // company_revenue = commission_amount (what company receives as commission)
     // Note: doctor_wallet = session_amount - commission_amount (calculated, not stored)
     const { data: commissionHistoryRecord, error: commissionError } = await supabaseAdmin
@@ -150,8 +228,8 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
         session_date: session.scheduled_date,
         session_amount: sessionAmount,
         commission_percentage: 0, // Not used in fixed amount system
-        commission_amount: commissionAmount, // Fixed commission = what COMPANY gets (e.g., ₹300)
-        commission_amount_fixed: commissionAmount, // Store fixed amount
+        commission_amount: finalCommissionAmount, // Final commission (1x for first, 2x for follow-up) = what COMPANY gets
+        commission_amount_fixed: commissionAmount, // Store base fixed amount (before first/follow-up multiplier)
         company_revenue: companyCommission, // Company gets this commission amount
         gst_amount: gstAmount,
         net_company_revenue: netCompanyRevenue,
@@ -191,8 +269,23 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
 
     console.log(`✅ Commission calculated for session ${sessionId}:`);
     console.log(`   Session type: ${sessionType}`);
+    console.log(`   Session order: ${isFirstSession ? 'First Session' : 'Follow-up Session'}`);
     console.log(`   Session amount: ₹${sessionAmount.toFixed(2)}`);
-    console.log(`   Company commission (fixed): ₹${commissionAmount.toFixed(2)}`);
+    console.log(`   Base commission: ₹${commissionAmount.toFixed(2)}`);
+    if (sessionType === 'individual') {
+      if (isFirstSession && commissionRecord?.doctor_commission_first_session !== null && commissionRecord?.doctor_commission_first_session !== undefined) {
+        console.log(`   Using first session doctor commission (individual): ₹${parseFloat(commissionRecord.doctor_commission_first_session).toFixed(2)}`);
+      } else if (!isFirstSession && commissionRecord?.doctor_commission_followup !== null && commissionRecord?.doctor_commission_followup !== undefined) {
+        console.log(`   Using follow-up doctor commission (individual): ₹${parseFloat(commissionRecord.doctor_commission_followup).toFixed(2)}`);
+      }
+    } else {
+      if (isFirstSession && commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
+        console.log(`   Using first session doctor commission (package): ₹${parseFloat(commissionRecord.doctor_commission_first_session_package).toFixed(2)}`);
+      } else if (!isFirstSession && commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
+        console.log(`   Using follow-up doctor commission (package): ₹${parseFloat(commissionRecord.doctor_commission_followup_package).toFixed(2)}`);
+      }
+    }
+    console.log(`   Final company commission: ₹${finalCommissionAmount.toFixed(2)}`);
     console.log(`   Doctor wallet: ₹${doctorWalletAmount.toFixed(2)}`);
     console.log(`   GST: ₹${gstAmount.toFixed(2)} (${gstRate}%)`);
     console.log(`   Net company revenue: ₹${netCompanyRevenue.toFixed(2)}`);

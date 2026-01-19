@@ -277,31 +277,6 @@ const register = async (req, res) => {
       }, 'User registered successfully')
     );
 
-    // Send account creation email asynchronously (low priority, non-blocking)
-    // Only for client registrations
-    if (role === 'client' && req.body.password) {
-      // Use setImmediate to ensure response is sent first, then send email
-      setImmediate(async () => {
-        try {
-          const emailService = require('../utils/emailService');
-          
-          // Get user's name for email (check fullName first, then first_name, then profileData)
-          const userName = req.body.fullName?.trim() || 
-                          req.body.first_name || 
-                          (profileData?.first_name ? `${profileData.first_name} ${profileData.last_name || ''}`.trim() : 'User');
-          
-          await emailService.sendAccountCreationEmail({
-            email: user.email,
-            password: req.body.password, // Plain text password (only sent once)
-            name: userName
-          });
-        } catch (emailError) {
-          // Already logged in sendAccountCreationEmail, just continue
-          console.log('📧 Account creation email will be sent asynchronously');
-        }
-      });
-    }
-
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json(

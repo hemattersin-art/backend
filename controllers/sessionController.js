@@ -283,11 +283,11 @@ const getAllSessions = async (req, res) => {
   try {
     console.log('getAllSessions called with user:', req.user);
     
-    // Check if user is admin
-    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
+    // Check if user is admin, superadmin, or finance
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'finance')) {
       console.log('Access denied - user role:', req.user?.role);
       return res.status(403).json(
-        errorResponse('Access denied. Admin role required.')
+        errorResponse('Access denied. Admin, Superadmin, or Finance role required.')
       );
     }
 

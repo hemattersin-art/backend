@@ -1553,17 +1553,43 @@ const updatePsychologist = async (req, res) => {
       }
     });
 
+    // Only update fields that have actually changed (compare with existing values)
+    const optimizedUpdateData = {};
+    Object.keys(psychologistUpdateData).forEach(key => {
+      const newValue = psychologistUpdateData[key];
+      const existingValue = psychologist[key];
+      
+      // Compare values (handle different types)
+      if (newValue !== existingValue) {
+        // Special handling for arrays/objects (convert to JSON for comparison)
+        if (Array.isArray(newValue) || Array.isArray(existingValue)) {
+          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
+            optimizedUpdateData[key] = newValue;
+          }
+        } else if (typeof newValue === 'object' && typeof existingValue === 'object' && newValue !== null && existingValue !== null) {
+          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
+            optimizedUpdateData[key] = newValue;
+          }
+        } else {
+          optimizedUpdateData[key] = newValue;
+        }
+      }
+    });
+
     // Only update psychologist profile if there are fields to update
     let updatedPsychologist = psychologist; // Default to existing psychologist data
     
-    // Check if there are any fields to update
-    const hasFieldsToUpdate = Object.keys(psychologistUpdateData).length > 0;
+    // Check if there are any fields to update (besides updated_at)
+    const hasFieldsToUpdate = Object.keys(optimizedUpdateData).length > 0;
 
     if (hasFieldsToUpdate) {
+      // Add updated_at timestamp
+      optimizedUpdateData.updated_at = new Date().toISOString();
+      
       // Update psychologist profile
       const { data: updatedData, error: updateError } = await supabaseAdmin
         .from('psychologists')
-        .update(psychologistUpdateData)
+        .update(optimizedUpdateData)
         .eq('id', psychologistId)
         .select('*')
         .single();
@@ -2319,9 +2345,43 @@ const updateUser = async (req, res) => {
 
     // Update user profile based on role
     if (user.role === 'client') {
+      // Get existing client data to compare
+      const { data: existingClient, error: clientFetchError } = await supabaseAdmin
+        .from('clients')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (clientFetchError || !existingClient) {
+        return res.status(404).json(
+          errorResponse('Client profile not found')
+        );
+      }
+
+      // Only update fields that have actually changed
+      const optimizedUpdateData = {};
+      Object.keys(updateData).forEach(key => {
+        const newValue = updateData[key];
+        const existingValue = existingClient[key];
+        
+        if (newValue !== existingValue) {
+          optimizedUpdateData[key] = newValue;
+        }
+      });
+
+      // Only perform update if there are actual changes (besides updated_at)
+      if (Object.keys(optimizedUpdateData).length === 0) {
+        return res.json(
+          successResponse(existingClient, 'No changes detected')
+        );
+      }
+
+      // Add updated_at timestamp
+      optimizedUpdateData.updated_at = new Date().toISOString();
+
       const { data: updatedClient, error: updateError } = await supabaseAdmin
         .from('clients')
-        .update(updateData)
+        .update(optimizedUpdateData)
         .eq('id', userId)
         .select('*')
         .single();
@@ -2885,16 +2945,36 @@ const approveAssessmentRescheduleRequest = async (req, res) => {
       );
     }
 
-    // Update assessment session
+    // Update assessment session - only include fields that have actually changed
     const rescheduleCount = assessmentSession.reschedule_count || 0;
-    const updateData = {
-      scheduled_date: rescheduleDate,
-      scheduled_time: rescheduleTime,
-      status: 'rescheduled',
-      reschedule_count: rescheduleCount + 1,
-      psychologist_id: targetPsychologistId,
-      updated_at: new Date().toISOString()
-    };
+    const updateData = {};
+
+    if (rescheduleDate !== assessmentSession.scheduled_date) {
+      updateData.scheduled_date = rescheduleDate;
+    }
+    if (rescheduleTime !== assessmentSession.scheduled_time) {
+      updateData.scheduled_time = rescheduleTime;
+    }
+    if (assessmentSession.status !== 'rescheduled') {
+      updateData.status = 'rescheduled';
+    }
+    if ((rescheduleCount + 1) !== assessmentSession.reschedule_count) {
+      updateData.reschedule_count = rescheduleCount + 1;
+    }
+    if (targetPsychologistId !== assessmentSession.psychologist_id) {
+      updateData.psychologist_id = targetPsychologistId;
+    }
+
+    // Only perform update if there are actual changes (besides updated_at)
+    if (Object.keys(updateData).length === 0) {
+      // Return existing session if no changes
+      return res.json(
+        successResponse(assessmentSession, 'No changes detected')
+      );
+    }
+
+    // Add updated_at timestamp
+    updateData.updated_at = new Date().toISOString();
 
     const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('assessment_sessions')
@@ -3049,16 +3129,61 @@ const rescheduleSession = async (req, res) => {
       time: session.scheduled_time
     };
 
+    // Prepare update data - only include fields that have actually changed
+    const formattedDate = formatDate(new_date);
+    const formattedTime = formatTime(new_time);
+    const sessionUpdateData = {};
+
+    if (formattedDate !== session.scheduled_date) {
+      sessionUpdateData.scheduled_date = formattedDate;
+    }
+    if (formattedTime !== session.scheduled_time) {
+      sessionUpdateData.scheduled_time = formattedTime;
+    }
+    if (session.status !== 'rescheduled') {
+      sessionUpdateData.status = 'rescheduled';
+    }
+    if (session.reminder_sent !== false) {
+      sessionUpdateData.reminder_sent = false; // Reset reminder flag when rescheduled
+    }
+
+    // Only perform update if there are actual changes (besides updated_at)
+    if (Object.keys(sessionUpdateData).length === 0) {
+      // Fetch full session data to return
+      const { data: fullSession } = await supabaseAdmin
+        .from('sessions')
+        .select(`
+          *,
+          clients!inner(
+            id,
+            first_name,
+            last_name,
+            child_name,
+            user_id,
+            users!inner(email)
+          ),
+          psychologists!inner(
+            id,
+            first_name,
+            last_name,
+            email
+          )
+        `)
+        .eq('id', sessionId)
+        .single();
+
+      return res.json(
+        successResponse(fullSession || session, 'No changes detected')
+      );
+    }
+
+    // Add updated_at timestamp
+    sessionUpdateData.updated_at = new Date().toISOString();
+
     // Update session with new date/time (reset reminder_sent since it's rescheduled)
     const { data: updatedSession, error: updateError } = await supabaseAdmin
       .from('sessions')
-      .update({
-        scheduled_date: formatDate(new_date),
-        scheduled_time: formatTime(new_time),
-        status: 'rescheduled',
-        reminder_sent: false, // Reset reminder flag when rescheduled
-        updated_at: new Date().toISOString()
-      })
+      .update(sessionUpdateData)
       .eq('id', sessionId)
       .select(`
         *,
@@ -3939,16 +4064,39 @@ const handleRescheduleRequest = async (req, res) => {
         );
       }
 
-      // Update session with new date/time - use supabaseAdmin
+      // Update session with new date/time - only include fields that have actually changed
+      const formattedDate = formatDate(newDate);
+      const formattedTime = formatTime(newTime);
+      const newRescheduleCount = (session.reschedule_count || 0) + 1;
+      const sessionUpdateData = {};
+
+      if (formattedDate !== session.scheduled_date) {
+        sessionUpdateData.scheduled_date = formattedDate;
+      }
+      if (formattedTime !== session.scheduled_time) {
+        sessionUpdateData.scheduled_time = formattedTime;
+      }
+      if (session.status !== 'rescheduled') {
+        sessionUpdateData.status = 'rescheduled';
+      }
+      if (newRescheduleCount !== (session.reschedule_count || 0)) {
+        sessionUpdateData.reschedule_count = newRescheduleCount;
+      }
+
+      // Only perform update if there are actual changes (besides updated_at)
+      if (Object.keys(sessionUpdateData).length === 0) {
+        // Return existing session if no changes
+        return res.json(
+          successResponse(session, 'No changes detected')
+        );
+      }
+
+      // Add updated_at timestamp
+      sessionUpdateData.updated_at = new Date().toISOString();
+
       const { data: updatedSession, error: updateError } = await supabaseAdmin
         .from('sessions')
-        .update({
-          scheduled_date: formatDate(newDate),
-          scheduled_time: formatTime(newTime),
-          status: 'rescheduled',
-          reschedule_count: (session.reschedule_count || 0) + 1,
-          updated_at: new Date().toISOString()
-        })
+        .update(sessionUpdateData)
         .eq('id', session.id)
         .select('*')
         .single();
@@ -5372,25 +5520,69 @@ const updateSessionPayment = async (req, res) => {
       );
     }
 
-    // Prepare update data
-    const paymentUpdateData = {
-      transaction_id: transaction_id.trim(),
-      updated_at: new Date().toISOString()
-    };
+    // Get existing payment data to compare
+    const { data: existingPayment, error: paymentFetchError } = await supabaseAdmin
+      .from('payments')
+      .select('*')
+      .eq('id', session.payment_id)
+      .single();
 
-    // Add payment_method if provided
-    if (payment_method) {
-      paymentUpdateData.payment_method = payment_method.toLowerCase();
+    if (paymentFetchError || !existingPayment) {
+      return res.status(404).json(
+        errorResponse('Payment record not found')
+      );
     }
 
-    // Add Razorpay fields if provided
+    // Prepare update data - only include fields that have actually changed
+    const paymentUpdateData = {};
+    const trimmedTransactionId = transaction_id.trim();
+
+    if (trimmedTransactionId !== existingPayment.transaction_id) {
+      paymentUpdateData.transaction_id = trimmedTransactionId;
+    }
+
+    // Add payment_method if provided and changed
+    if (payment_method) {
+      const normalizedPaymentMethod = payment_method.toLowerCase();
+      if (normalizedPaymentMethod !== existingPayment.payment_method) {
+        paymentUpdateData.payment_method = normalizedPaymentMethod;
+      }
+    }
+
+    // Add Razorpay fields if provided and changed
     if (razorpay_order_id !== undefined) {
-      paymentUpdateData.razorpay_order_id = razorpay_order_id?.trim() || null;
+      const trimmedRazorpayOrderId = razorpay_order_id?.trim() || null;
+      if (trimmedRazorpayOrderId !== existingPayment.razorpay_order_id) {
+        paymentUpdateData.razorpay_order_id = trimmedRazorpayOrderId;
+      }
     }
 
     if (razorpay_payment_id !== undefined) {
-      paymentUpdateData.razorpay_payment_id = razorpay_payment_id?.trim() || null;
+      const trimmedRazorpayPaymentId = razorpay_payment_id?.trim() || null;
+      if (trimmedRazorpayPaymentId !== existingPayment.razorpay_payment_id) {
+        paymentUpdateData.razorpay_payment_id = trimmedRazorpayPaymentId;
+      }
     }
+
+    // Only perform update if there are actual changes (besides updated_at)
+    if (Object.keys(paymentUpdateData).length === 0) {
+      // Fetch updated session with payment details
+      const { data: updatedSession } = await supabaseAdmin
+        .from('sessions')
+        .select(`
+          *,
+          payment:payments(*)
+        `)
+        .eq('id', sessionId)
+        .single();
+
+      return res.json(
+        successResponse(updatedSession || { payment: existingPayment }, 'No changes detected')
+      );
+    }
+
+    // Add updated_at timestamp
+    paymentUpdateData.updated_at = new Date().toISOString();
 
     // Update payment record
     const { data: updatedPayment, error: paymentUpdateError } = await supabaseAdmin
@@ -5505,12 +5697,10 @@ const updateSession = async (req, res) => {
       );
     }
 
-    // Prepare session update data
-    const sessionUpdateData = {
-      updated_at: new Date().toISOString()
-    };
+    // Prepare session update data - only include fields that have actually changed
+    const sessionUpdateData = {};
 
-    // Update psychologist if provided
+    // Update psychologist if provided and changed
     if (psychologist_id !== undefined && psychologist_id !== null) {
       // Verify psychologist exists
       const { data: psychologist, error: psychError } = await supabaseAdmin
@@ -5524,10 +5714,12 @@ const updateSession = async (req, res) => {
           errorResponse('Psychologist not found')
         );
       }
-      sessionUpdateData.psychologist_id = psychologist_id;
+      if (psychologist_id !== session.psychologist_id) {
+        sessionUpdateData.psychologist_id = psychologist_id;
+      }
     }
 
-    // Update client if provided
+    // Update client if provided and changed
     if (client_id !== undefined && client_id !== null) {
       // Verify client exists
       const { data: client, error: clientError } = await supabaseAdmin
@@ -5541,26 +5733,66 @@ const updateSession = async (req, res) => {
           errorResponse('Client not found')
         );
       }
-      sessionUpdateData.client_id = client_id;
+      if (client_id !== session.client_id) {
+        sessionUpdateData.client_id = client_id;
+      }
     }
 
-    // Update date/time if provided
-    if (scheduled_date) {
+    // Update date/time if provided and changed
+    if (scheduled_date && scheduled_date !== session.scheduled_date) {
       sessionUpdateData.scheduled_date = scheduled_date;
     }
-    if (scheduled_time) {
+    if (scheduled_time && scheduled_time !== session.scheduled_time) {
       sessionUpdateData.scheduled_time = scheduled_time;
     }
 
-    // Update status if provided
-    if (status) {
+    // Update status if provided and changed
+    if (status && status !== session.status) {
       sessionUpdateData.status = status;
     }
 
-    // Update price if provided
+    // Update price if provided and changed
     if (price !== undefined && price !== null) {
-      sessionUpdateData.price = parseFloat(price);
+      const newPrice = parseFloat(price);
+      if (newPrice !== parseFloat(session.price || 0)) {
+        sessionUpdateData.price = newPrice;
+      }
     }
+
+    // Only perform update if there are actual changes (besides updated_at)
+    if (Object.keys(sessionUpdateData).length === 0) {
+      // Fetch full session data to return
+      const { data: fullSession } = await supabaseAdmin
+        .from('sessions')
+        .select(`
+          *,
+          client:clients(
+            id,
+            first_name,
+            last_name,
+            child_name,
+            child_age,
+            phone_number,
+            user:users(email)
+          ),
+          psychologist:psychologists(
+            id,
+            first_name,
+            last_name,
+            email,
+            phone
+          )
+        `)
+        .eq('id', sessionId)
+        .single();
+
+      return res.json(
+        successResponse(fullSession || session, 'No changes detected')
+      );
+    }
+
+    // Add updated_at timestamp
+    sessionUpdateData.updated_at = new Date().toISOString();
 
     // Check for conflicts if date/time/psychologist changed
     if ((scheduled_date || scheduled_time || psychologist_id !== undefined) && sessionUpdateData.psychologist_id) {

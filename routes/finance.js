@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken, requireFinance } = require('../middleware/auth');
 const financeController = require('../controllers/financeController');
+const sessionController = require('../controllers/sessionController');
 const { createRateLimiters } = require('../middleware/security');
 
 // Apply rate limiting
@@ -26,6 +27,7 @@ router.get('/dashboard', financeController.getDashboard);
 
 // Sessions Management
 router.get('/sessions', financeController.getSessions);
+router.get('/sessions/all', sessionController.getAllSessions); // Use same method as admin for consistency
 router.get('/sessions/:sessionId', financeController.getSessionDetails);
 
 // Free Assessments Management
@@ -50,12 +52,6 @@ router.get('/income', financeController.getIncome);
 router.post('/income', financeController.createIncome);
 router.put('/income/:incomeId', financeController.updateIncome);
 router.delete('/income/:incomeId', financeController.deleteIncome);
-
-// GST & Tax Management
-router.get('/gst', financeController.getGSTRecords);
-router.get('/gst/settings', financeController.getGSTSettings);
-router.put('/gst/settings', financeController.updateGSTSettings);
-// router.get('/gst/reports', financeController.getGSTReports);
 
 // Financial Reports
 // router.get('/reports', financeController.getReports);
@@ -83,6 +79,7 @@ router.post('/settings/income-sources', financeController.createIncomeSource);
 // Payouts & Payments
 router.get('/payouts', financeController.getPayouts);
 router.get('/payouts/pending', financeController.getPendingPayouts);
+router.get('/payouts/doctors', financeController.getDoctorPayouts);
 router.get('/payouts/:payoutId', financeController.getPayoutDetails);
 router.post('/payouts', financeController.processPayout);
 router.post('/payouts/mark-paid', financeController.markPayoutAsPaid);
