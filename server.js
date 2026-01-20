@@ -37,7 +37,8 @@ const googleCalendarRoutes = require('./routes/googleCalendar');
 const blogRoutes = require('./routes/blogs');
 const counsellingRoutes = require('./routes/counselling');
 const assessmentsRoutes = require('./routes/assessments');
-const securityRoutes = require('./routes/security');
+// Security routes removed - security page removed from admin dashboard
+// const securityRoutes = require('./routes/security');
 const betterParentingRoutes = require('./routes/betterParenting');
 const financeRoutes = require('./routes/finance');
 
@@ -177,30 +178,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Security monitoring endpoint (admin only)
-app.get('/api/security/status', async (req, res) => {
-  try {
-    // Refresh metrics from database
-    await securityMonitor.loadMetrics();
-    const summary = securityMonitor.getSecuritySummary();
-    const recentEvents = await securityMonitor.getRecentEvents(20);
-    
-    res.json({
-      success: true,
-      data: {
-        summary,
-        recentEvents,
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching security status:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch security status'
-    });
-  }
-});
+// Security status endpoint removed - security page removed from admin dashboard
 
 
 // OAuth callback handler for Google Meet integration
@@ -852,7 +830,6 @@ app.use('/api/blogs', blogRoutes);
 app.use('/api/counselling', counsellingRoutes);
 app.use('/api/assessments', assessmentsRoutes);
 app.use('/api/better-parenting', betterParentingRoutes);
-app.use('/api/security', securityRoutes);
 app.use('/api/finance', financeRoutes);
 
 // 404 handler

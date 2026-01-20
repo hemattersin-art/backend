@@ -24,7 +24,7 @@ dayjs.extend(timezone);
 class CalendarConflictMonitorService {
   constructor() {
     this.isRunning = false;
-    this.adminEmail = 'abhishekravi063@gmail.com';
+    this.adminEmail = 'koottfordeveloper@gmail.com';
     this.adminWhatsApp = '+91 8281540004';
   }
 

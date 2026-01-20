@@ -64,37 +64,111 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
       return existingCommission;
     }
 
-    // Check if this is the client's first session or a follow-up session
-    // Exclude free sessions from this check
-    const clientId = session.client_id;
-    let isFirstSession = true;
-    
-    if (clientId) {
-      // Check if client has any other paid sessions (excluding free sessions)
-      // We check for sessions with a price > 0 or with payment_id
-      const { data: previousSessions } = await supabaseAdmin
-        .from('sessions')
-        .select('id, price, payment_id, session_type, scheduled_date, created_at')
-        .eq('client_id', clientId)
-        .neq('id', sessionId) // Exclude current session
-        .neq('session_type', 'free_assessment') // Exclude free assessments
-        .gt('price', 0) // Only paid sessions
-        .order('created_at', { ascending: true })
-        .limit(1);
-      
-      // If client has any previous paid sessions, this is a follow-up session
-      if (previousSessions && previousSessions.length > 0) {
-        isFirstSession = false;
-      }
-    }
-
     // Determine session type
     const sessionType = session.package_id || session.session_type === 'Package Session' ? 'package' : 'individual';
+    
+    // Check if this is the first session in the package (for packages) or first session overall (for individual)
+    const clientId = session.client_id;
+    let isFirstSessionInPackage = false;
+    let isFirstSessionOverall = true;
+    
+    if (sessionType === 'package' && session.package_id) {
+      // For packages: Commission is only added ONCE when ALL sessions in the package are completed
+      // Check if all sessions in this package are completed
+      const { data: packageData } = await supabaseAdmin
+        .from('packages')
+        .select('session_count')
+        .eq('id', session.package_id)
+        .single();
+      
+      const totalSessions = packageData?.session_count || 0;
+      
+      // Get all sessions for this package
+      const { data: packageSessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id, status')
+        .eq('package_id', session.package_id)
+        .eq('client_id', clientId);
+      
+      // Count completed sessions (including current session)
+      const completedSessions = packageSessions?.filter(s => 
+        s.status === 'completed' || s.id === sessionId
+      ).length || 0;
+      
+      // Check if commission has already been added for this package
+      const { data: existingCommission } = await supabaseAdmin
+        .from('commission_history')
+        .select('id')
+        .eq('psychologist_id', psychologistId)
+        .eq('package_id', session.package_id)
+        .maybeSingle();
+      
+      // Only add commission if:
+      // 1. All sessions are completed (completedSessions === totalSessions)
+      // 2. Commission hasn't been added yet (no existing commission record)
+      if (completedSessions < totalSessions) {
+        console.log(`⏭️  Skipping commission calculation for session ${sessionId} - package ${session.package_id} not fully completed (${completedSessions}/${totalSessions} sessions)`);
+        return null;
+      }
+      
+      if (existingCommission) {
+        console.log(`⏭️  Skipping commission calculation for session ${sessionId} - commission already added for package ${session.package_id}`);
+        return null;
+      }
+      
+      // All sessions completed and commission not yet added - proceed with calculation
+      // Check if this is the client's FIRST package/session ever (new client) or FOLLOW-UP (existing client)
+      // For packages: Use First Session Commission if new client, Follow-up Commission if existing client
+      
+      // Check if client has any previous completed sessions (individual or package)
+      const { data: previousSessions } = await supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('client_id', clientId)
+        .neq('id', sessionId)
+        .neq('session_type', 'free_assessment')
+        .eq('status', 'completed')
+        .limit(1);
+      
+      // Also check if client has any previous packages (even if not all sessions completed)
+      const { data: previousPackages } = await supabaseAdmin
+        .from('client_packages')
+        .select('id')
+        .eq('client_id', clientId)
+        .neq('package_id', session.package_id)
+        .limit(1);
+      
+      // If client has NO previous completed sessions AND NO previous packages, this is a NEW client
+      const isNewClient = (!previousSessions || previousSessions.length === 0) && 
+                          (!previousPackages || previousPackages.length === 0);
+      
+      isFirstSessionInPackage = isNewClient; // Use First Session Commission for new clients, Follow-up for existing
+    } else {
+      // For individual sessions: Check if this is the client's first paid session overall
+      if (clientId) {
+        const { data: previousSessions } = await supabaseAdmin
+          .from('sessions')
+          .select('id, price, payment_id, session_type, scheduled_date, created_at')
+          .eq('client_id', clientId)
+          .neq('id', sessionId)
+          .neq('session_type', 'free_assessment')
+          .gt('price', 0)
+          .order('created_at', { ascending: true })
+          .limit(1);
+        
+        if (previousSessions && previousSessions.length > 0) {
+          isFirstSessionOverall = false;
+        }
+      }
+    }
+    
+    // Use the appropriate flag based on session type
+    const isFirstSession = sessionType === 'package' ? isFirstSessionInPackage : isFirstSessionOverall;
 
     // Get doctor's commission (fixed amount per session type) including first/follow-up fields
     const { data: commissionRecord } = await supabaseAdmin
       .from('doctor_commissions')
-      .select('commission_amount_individual, commission_amount_package, commission_percentage, commission_amounts, doctor_commission_first_session, doctor_commission_followup, doctor_commission_individual, doctor_commission_first_session_package, doctor_commission_followup_package')
+      .select('commission_amount_individual, commission_amount_package, commission_percentage, commission_amounts, doctor_commission_first_session, doctor_commission_followup, doctor_commission_individual, doctor_commission_first_session_package, doctor_commission_followup_package, doctor_commission_packages')
       .eq('psychologist_id', psychologistId)
       .eq('is_active', true)
       .order('effective_from', { ascending: false })
@@ -107,16 +181,22 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
     
     if (commissionRecord) {
       // Get package type if it's a package session
+      let packageSessionCount = null;
       if (sessionType === 'package' && session.package_id) {
-        // Fetch package to get its type
+        // Fetch package to get its type and session count
         const { data: packageData } = await supabaseAdmin
           .from('packages')
-          .select('package_type')
+          .select('package_type, session_count')
           .eq('id', session.package_id)
           .single();
         
-        if (packageData && packageData.package_type) {
-          packageType = packageData.package_type;
+        if (packageData) {
+          if (packageData.package_type) {
+            packageType = packageData.package_type;
+          } else {
+            packageType = 'package'; // Fallback to generic package
+          }
+          packageSessionCount = packageData.session_count || null;
         } else {
           packageType = 'package'; // Fallback to generic package
         }
@@ -172,28 +252,87 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
       }
     } else {
       // Package session logic
-      // For packages, use package-specific first/follow-up commission fields
-      if (isFirstSession) {
-        // First session package: use doctor_commission_first_session_package if set, otherwise use regular commission
-        if (commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
-          // doctor_commission_first_session_package is what doctor gets, so company gets: sessionAmount - doctor_commission
-          const doctorCommissionFirstPackage = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
-          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFirstPackage);
+      // IMPORTANT: For packages, commission is added ONCE when ALL sessions in the package are completed
+      // - NEW CLIENT (first package): Use First Session Commission (ONE TIME for whole package)
+      // - EXISTING CLIENT (follow-up package): Use Follow-up Commission (ONE TIME for whole package)
+      
+      const doctorCommissionPackages = commissionRecord?.doctor_commission_packages || {};
+      let doctorCommissionAmount = null; // Use null to distinguish between "not set" and "set to 0"
+      
+      if (isFirstSessionInPackage) {
+        // NEW CLIENT: Use First Session Commission (ONE TIME for entire package)
+        const packageFirstSessionKey = `${packageType}_first_session`;
+        console.log(`🔍 Looking for first session commission with key: ${packageFirstSessionKey}`);
+        console.log(`   doctor_commission_packages:`, JSON.stringify(doctorCommissionPackages));
+        
+        if (doctorCommissionPackages[packageFirstSessionKey] !== null && doctorCommissionPackages[packageFirstSessionKey] !== undefined) {
+          doctorCommissionAmount = parseFloat(doctorCommissionPackages[packageFirstSessionKey]) || 0;
+          console.log(`✅ Found in doctor_commission_packages: ₹${doctorCommissionAmount}`);
+        } else if (commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
+          doctorCommissionAmount = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
+          console.log(`✅ Found in legacy field doctor_commission_first_session_package: ₹${doctorCommissionAmount}`);
         } else {
-          // Fallback to regular commission amount
-          finalCommissionAmount = commissionAmount;
+          console.log(`⚠️ First session commission NOT FOUND for package type: ${packageType}`);
         }
       } else {
-        // Follow-up session package: use doctor_commission_followup_package if set, otherwise use 2x commission (backward compatibility)
-        if (commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
-          // doctor_commission_followup_package is what doctor gets, so company gets: sessionAmount - doctor_commission
-          const doctorCommissionFollowupPackage = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
-          finalCommissionAmount = Math.max(0, sessionAmount - doctorCommissionFollowupPackage);
+        // EXISTING CLIENT: Use Follow-up Commission (ONE TIME for entire package)
+        const packageFollowupKey = `${packageType}_followup`;
+        console.log(`🔍 Looking for follow-up commission with key: ${packageFollowupKey}`);
+        console.log(`   doctor_commission_packages:`, JSON.stringify(doctorCommissionPackages));
+        
+        if (doctorCommissionPackages[packageFollowupKey] !== null && doctorCommissionPackages[packageFollowupKey] !== undefined) {
+          doctorCommissionAmount = parseFloat(doctorCommissionPackages[packageFollowupKey]) || 0;
+          console.log(`✅ Found in doctor_commission_packages: ₹${doctorCommissionAmount}`);
+        } else if (commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
+          doctorCommissionAmount = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
+          console.log(`✅ Found in legacy field doctor_commission_followup_package: ₹${doctorCommissionAmount}`);
         } else {
-          // Fallback to 2x commission (backward compatibility)
-          finalCommissionAmount = commissionAmount * 2;
+          console.log(`⚠️ Follow-up commission NOT FOUND for package type: ${packageType}`);
         }
       }
+      
+      // If doctor commission is not found, throw an error - we should not proceed
+      if (doctorCommissionAmount === null) {
+        throw new Error(`Doctor commission not configured for ${isFirstSessionInPackage ? 'first session' : 'follow-up'} package type: ${packageType}. Please set commission in finance dashboard.`);
+      }
+      
+      // Get total package amount from packages table (this is the actual package price)
+      // Fallback to summing session prices if package price not available
+      let totalPackageAmount = sessionAmount;
+      
+      // First, try to get package price from packages table
+      const { data: packageData } = await supabaseAdmin
+        .from('packages')
+        .select('price')
+        .eq('id', session.package_id)
+        .single();
+      
+      if (packageData?.price) {
+        totalPackageAmount = parseFloat(packageData.price) || 0;
+        console.log(`📦 Package price from packages table: ₹${totalPackageAmount}`);
+      } else {
+        // Fallback: sum all session prices in the package
+        const { data: allPackageSessions } = await supabaseAdmin
+          .from('sessions')
+          .select('price')
+          .eq('package_id', session.package_id)
+          .eq('client_id', clientId);
+        
+        totalPackageAmount = allPackageSessions?.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) || sessionAmount;
+        console.log(`📦 Package price from summing sessions: ₹${totalPackageAmount}`);
+      }
+      
+      console.log(`💰 Package Commission Calculation:`);
+      console.log(`   Total Package Amount: ₹${totalPackageAmount}`);
+      console.log(`   Doctor Commission: ₹${doctorCommissionAmount}`);
+      console.log(`   Company Commission: ₹${totalPackageAmount - doctorCommissionAmount}`);
+      console.log(`   Doctor Wallet: ₹${doctorCommissionAmount}`);
+      
+      // Company commission = Total package amount - Doctor commission (ONE TIME for whole package)
+      finalCommissionAmount = Math.max(0, totalPackageAmount - doctorCommissionAmount);
+      
+      // Update sessionAmount to total package amount for commission history
+      sessionAmount = totalPackageAmount;
     }
 
     // Commission calculation (Fixed Amount System):

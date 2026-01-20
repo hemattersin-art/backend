@@ -159,7 +159,7 @@ const updateProfile = async (req, res) => {
     
     // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
     const allowedFields = [
-      'first_name', 'last_name', 'phone', 'ug_college', 'pg_college', 'phd_college',
+      'first_name', 'last_name', 'phone', 'ug_college', 'pg_college', 'mphil_college', 'phd_college',
       'area_of_expertise', 'description', 'experience_years', 'cover_image_url',
       'personality_traits', 'display_order', 'faq_question_1', 'faq_answer_1',
       'faq_question_2', 'faq_answer_2', 'faq_question_3', 'faq_answer_3'

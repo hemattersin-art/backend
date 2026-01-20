@@ -477,7 +477,7 @@ const getDashboard = async (req, res) => {
         // Get commission settings (same as doctors page)
         const { data: commissions } = await supabaseAdmin
           .from('doctor_commissions')
-          .select('psychologist_id, commission_amounts, commission_amount_individual, commission_amount_package, doctor_commission_first_session, doctor_commission_followup, doctor_commission_individual, doctor_commission_first_session_package, doctor_commission_followup_package')
+          .select('psychologist_id, commission_amounts, commission_amount_individual, commission_amount_package, doctor_commission_first_session, doctor_commission_followup, doctor_commission_individual, doctor_commission_first_session_package, doctor_commission_followup_package, doctor_commission_packages')
           .eq('is_active', true)
           .in('psychologist_id', allPsychIds)
           .order('effective_from', { ascending: false });
@@ -586,6 +586,10 @@ const getDashboard = async (req, res) => {
           return date >= dateFrom && date <= dateTo;
         };
         
+        // Track packages that have been processed for pending payout (to avoid duplicates)
+        const processedPackagesForPending = new Set();
+        const processedPackagesForCompleted = new Set();
+        
         for (const s of sessionsToProcess) {
           if (!s.psychologist_id) continue;
           
@@ -640,37 +644,67 @@ const getDashboard = async (req, res) => {
           
           if (isCompleted) {
             // Completed session
-            if (historyRecord) {
-              // Use commission_history if it exists (already calculated)
-              const commissionAmount = parseFloat(historyRecord.commission_amount || 0);
-              const sessionAmount = parseFloat(historyRecord.session_amount || sessionPrice);
-              commissionToCompany = commissionAmount;
-              toDoctorWallet = sessionAmount - commissionAmount;
-            } else {
-              // Commission history doesn't exist yet - calculate from commission settings
-              const commissionAmounts = commissionAmountsMap[s.psychologist_id];
-              const commissionRecord = commissionRecordsMap[s.psychologist_id] || {};
+            const isPackage = s.package_id && s.package_id !== 'null' && s.package_id !== 'undefined' && s.package_id !== 'individual' ||
+                             s.session_type === 'Package Session' || 
+                             (s.session_type && s.session_type.toLowerCase().includes('package'));
+            
+            if (isPackage && s.package_id) {
+              // For packages: Commission is only in commission_history when ALL sessions are completed
+              // Check if this package has already been processed for completed payout
+              const packageKey = `${s.psychologist_id}_${s.package_id}`;
               
-              const isPackage = s.package_id && s.package_id !== 'null' && s.package_id !== 'undefined' && s.package_id !== 'individual' ||
-                               s.session_type === 'Package Session' || 
-                               (s.session_type && s.session_type.toLowerCase().includes('package'));
-              
-              let doctorCommission = 0;
-              
-              if (isPackage) {
-                // Package session
-                if (isFirstSession && commissionRecord.doctor_commission_first_session_package !== null && commissionRecord.doctor_commission_first_session_package !== undefined) {
-                  doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
-                } else if (!isFirstSession && commissionRecord.doctor_commission_followup_package !== null && commissionRecord.doctor_commission_followup_package !== undefined) {
-                  doctorCommission = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
-                } else {
-                  // Fallback to package commission calculation
+              if (!processedPackagesForCompleted.has(packageKey) && shouldIncludeForCompleted) {
+                // Check if commission_history exists for this package (means all sessions completed)
+                const { data: packageCommissionHistory } = await supabaseAdmin
+                  .from('commission_history')
+                  .select('commission_amount, session_amount')
+                  .eq('psychologist_id', s.psychologist_id)
+                  .eq('package_id', s.package_id)
+                  .limit(1)
+                  .single();
+                
+                if (packageCommissionHistory) {
+                  // Commission already calculated and stored (all sessions completed)
+                  const commissionAmount = parseFloat(packageCommissionHistory.commission_amount || 0);
+                  const totalPackageAmount = parseFloat(packageCommissionHistory.session_amount || sessionPrice);
+                  commissionToCompany = commissionAmount;
+                  toDoctorWallet = totalPackageAmount - commissionAmount;
+                  
+                  // Get package session count
                   const pkg = packagePricesMap[s.psychologist_id]?.find(p => p.id === s.package_id);
-                  const packageType = pkg?.type || packageTypeMap[s.package_id] || 'package';
-                  const commissionAmount = parseFloat(commissionAmounts?.[packageType] || commissionAmounts?.package || 0);
-                  doctorCommission = sessionPrice - commissionAmount;
+                  const totalSessions = pkg?.session_count || 1;
+                  
+                  // Mark package as processed
+                  processedPackagesForCompleted.add(packageKey);
+                  
+                  // Add to completed payout ONCE per package
+                  totalCompanyCommissionCompleted += commissionToCompany;
+                  payout += toDoctorWallet;
+                  completedSessionsCount += totalSessions;
+                } else {
+                  // Commission not yet calculated (not all sessions completed)
+                  // Don't add to completed payout yet
+                  continue;
                 }
               } else {
+                // Package already processed, skip
+                continue;
+              }
+            } else {
+              // Individual session
+              if (historyRecord) {
+                // Use commission_history if it exists (already calculated)
+                const commissionAmount = parseFloat(historyRecord.commission_amount || 0);
+                const sessionAmount = parseFloat(historyRecord.session_amount || sessionPrice);
+                commissionToCompany = commissionAmount;
+                toDoctorWallet = sessionAmount - commissionAmount;
+              } else {
+                // Commission history doesn't exist yet - calculate from commission settings
+                const commissionAmounts = commissionAmountsMap[s.psychologist_id];
+                const commissionRecord = commissionRecordsMap[s.psychologist_id] || {};
+                
+                let doctorCommission = 0;
+                
                 // Individual session
                 if (isFirstSession && commissionRecord.doctor_commission_first_session !== null && commissionRecord.doctor_commission_first_session !== undefined) {
                   doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session) || 0;
@@ -681,18 +715,18 @@ const getDashboard = async (req, res) => {
                   const commissionAmount = parseFloat(commissionAmounts?.individual || 0);
                   doctorCommission = sessionPrice - commissionAmount;
                 }
+                
+                commissionToCompany = sessionPrice - doctorCommission;
+                toDoctorWallet = doctorCommission;
               }
               
-              commissionToCompany = sessionPrice - doctorCommission;
-              toDoctorWallet = doctorCommission;
-            }
-            
-            // Add to completed company commission (for net profit calculation) - only if in date range
-            if (shouldIncludeForCompleted) {
-              totalCompanyCommissionCompleted += commissionToCompany;
-              // Add to payout (completed sessions only) - based on completion date
-              payout += toDoctorWallet;
-              completedSessionsCount++;
+              // Add to completed company commission (for net profit calculation) - only if in date range
+              if (shouldIncludeForCompleted) {
+                totalCompanyCommissionCompleted += commissionToCompany;
+                // Add to payout (completed sessions only) - based on completion date
+                payout += toDoctorWallet;
+                completedSessionsCount++;
+              }
             }
           } else {
             // Booked/Non-completed - calculate from commission settings (pending payout)
@@ -705,18 +739,110 @@ const getDashboard = async (req, res) => {
             
             let doctorCommission = 0;
             
-            if (isPackage) {
-              // Package session
-              if (isFirstSession && commissionRecord.doctor_commission_first_session_package !== null && commissionRecord.doctor_commission_first_session_package !== undefined) {
-                doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
-              } else if (!isFirstSession && commissionRecord.doctor_commission_followup_package !== null && commissionRecord.doctor_commission_followup_package !== undefined) {
-                doctorCommission = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
-              } else {
-                // Fallback to package commission calculation
+            if (isPackage && s.package_id) {
+              // For packages: Commission is calculated ONCE per package (first + follow-up)
+              // Check if this package has already been processed for pending payout
+              const packageKey = `${s.psychologist_id}_${s.package_id}`;
+              
+              if (!processedPackagesForPending.has(packageKey) && shouldIncludeForPending) {
+                // Get package details
                 const pkg = packagePricesMap[s.psychologist_id]?.find(p => p.id === s.package_id);
                 const packageType = pkg?.type || packageTypeMap[s.package_id] || 'package';
-                const commissionAmount = parseFloat(commissionAmounts?.[packageType] || commissionAmounts?.package || 0);
-                doctorCommission = sessionPrice - commissionAmount;
+                
+                // Check if all sessions in this package are completed
+                const { data: packageSessions } = await supabaseAdmin
+                  .from('sessions')
+                  .select('id, status')
+                  .eq('package_id', s.package_id)
+                  .eq('client_id', s.client_id);
+                
+                const totalSessions = pkg?.session_count || 0;
+                const completedSessions = packageSessions?.filter(ps => ps.status === 'completed').length || 0;
+                const allSessionsCompleted = completedSessions >= totalSessions;
+                
+                // If all sessions are completed, skip pending payout (it will be in completed payout)
+                if (allSessionsCompleted) {
+                  processedPackagesForPending.add(packageKey);
+                  continue;
+                }
+                
+                // Check if this is a NEW client (first package) or EXISTING client (follow-up package)
+                // Check if client has any previous completed sessions or packages
+                const { data: previousSessions } = await supabaseAdmin
+                  .from('sessions')
+                  .select('id')
+                  .eq('client_id', s.client_id)
+                  .neq('package_id', s.package_id)
+                  .neq('session_type', 'free_assessment')
+                  .eq('status', 'completed')
+                  .limit(1);
+                
+                const { data: previousPackages } = await supabaseAdmin
+                  .from('client_packages')
+                  .select('id')
+                  .eq('client_id', s.client_id)
+                  .neq('package_id', s.package_id)
+                  .limit(1);
+                
+                const isNewClient = (!previousSessions || previousSessions.length === 0) && 
+                                    (!previousPackages || previousPackages.length === 0);
+                
+                // Get package-specific doctor commissions
+                const doctorCommissionPackages = commissionRecord?.doctor_commission_packages || {};
+                
+                if (isNewClient) {
+                  // NEW CLIENT: Use First Session Commission (ONE TIME for entire package)
+                  const packageFirstSessionKey = `${packageType}_first_session`;
+                  if (doctorCommissionPackages[packageFirstSessionKey] !== null && doctorCommissionPackages[packageFirstSessionKey] !== undefined) {
+                    doctorCommission = parseFloat(doctorCommissionPackages[packageFirstSessionKey]) || 0;
+                  } else if (commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
+                    doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
+                  }
+                } else {
+                  // EXISTING CLIENT: Use Follow-up Commission (ONE TIME for entire package)
+                  const packageFollowupKey = `${packageType}_followup`;
+                  if (doctorCommissionPackages[packageFollowupKey] !== null && doctorCommissionPackages[packageFollowupKey] !== undefined) {
+                    doctorCommission = parseFloat(doctorCommissionPackages[packageFollowupKey]) || 0;
+                  } else if (commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
+                    doctorCommission = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
+                  }
+                }
+                
+                // Get total package amount from packages table (this is the actual package price)
+                // Fallback to summing session prices if package price not available
+                let totalPackageAmount = sessionPrice;
+                
+                // First, try to get package price from packages table
+                const { data: packagePriceData } = await supabaseAdmin
+                  .from('packages')
+                  .select('price')
+                  .eq('id', s.package_id)
+                  .single();
+                
+                if (packagePriceData?.price) {
+                  totalPackageAmount = parseFloat(packagePriceData.price) || 0;
+                } else {
+                  // Fallback: sum all session prices in the package
+                  totalPackageAmount = packageSessions?.reduce((sum, ps) => {
+                    const psPrice = parseFloat(ps.price) || 0;
+                    return sum + psPrice;
+                  }, 0) || sessionPrice;
+                }
+                
+                commissionToCompany = totalPackageAmount - doctorCommission;
+                toDoctorWallet = doctorCommission;
+                
+                // Mark package as processed
+                processedPackagesForPending.add(packageKey);
+                
+                // Add to pending payout ONCE per package
+                if (shouldIncludeForPending) {
+                  pendingPayout += toDoctorWallet;
+                  pendingSessionsCount += totalSessions - completedSessions; // Count remaining sessions
+                }
+              } else {
+                // Package already processed, skip
+                continue;
               }
             } else {
               // Individual session
@@ -729,15 +855,15 @@ const getDashboard = async (req, res) => {
                 const commissionAmount = parseFloat(commissionAmounts?.individual || 0);
                 doctorCommission = sessionPrice - commissionAmount;
               }
-            }
-            
-            commissionToCompany = sessionPrice - doctorCommission;
-            toDoctorWallet = doctorCommission;
-            
-            // Add to pending payout (non-completed sessions) - only if payment date is in range
-            if (shouldIncludeForPending) {
-              pendingPayout += toDoctorWallet;
-              pendingSessionsCount++;
+              
+              commissionToCompany = sessionPrice - doctorCommission;
+              toDoctorWallet = doctorCommission;
+              
+              // Add to pending payout (non-completed sessions) - only if payment date is in range
+              if (shouldIncludeForPending) {
+                pendingPayout += toDoctorWallet;
+                pendingSessionsCount++;
+              }
             }
           }
           
@@ -942,7 +1068,7 @@ const getDoctorPayouts = async (req, res) => {
     // Get commission settings
     const { data: commissions } = await supabaseAdmin
       .from('doctor_commissions')
-      .select('psychologist_id, commission_amounts, commission_amount_individual, commission_amount_package, doctor_commission_first_session, doctor_commission_followup, doctor_commission_first_session_package, doctor_commission_followup_package')
+      .select('psychologist_id, commission_amounts, commission_amount_individual, commission_amount_package, doctor_commission_first_session, doctor_commission_followup, doctor_commission_first_session_package, doctor_commission_followup_package, doctor_commission_packages')
       .eq('is_active', true)
       .in('psychologist_id', allPsychIds)
       .order('effective_from', { ascending: false });
@@ -1343,7 +1469,7 @@ const getSessions = async (req, res) => {
     if (sessionIds.length > 0) {
       const { data: commissionData, error: commissionError } = await supabaseAdmin
         .from('commission_history')
-        .select('session_id, commission_amount, company_revenue, net_company_revenue')
+        .select('session_id, commission_amount, company_revenue, net_company_revenue, payment_status')
         .in('session_id', sessionIds);
       
       if (!commissionError && commissionData) {
@@ -1399,7 +1525,8 @@ const getSessions = async (req, res) => {
         } : null,
         commission_amount: commission?.commission_amount || 0,
         company_revenue: commission?.company_revenue || 0,
-        net_company_revenue: commission?.net_company_revenue || 0
+        net_company_revenue: commission?.net_company_revenue || 0,
+        commission_payment_status: commission?.payment_status || null
       };
     }).filter(Boolean);
     
@@ -2577,7 +2704,7 @@ const getCommissions = async (req, res) => {
       // Calculate revenue and commissions for all sessions
       // For completed sessions: use commission_history if available, otherwise calculate
       // For booked sessions: calculate expected commission based on doctor's commission settings
-      const sessionPrice = parseFloat(s.price) || 0;
+      let sessionPrice = parseFloat(s.price) || 0; // Use let instead of const to allow modification for packages
       const isCompleted = s.status === 'completed';
       const historyRecord = commissionHistoryMap[s.id];
       const isFirstSession = clientFirstSessions.has(s.id); // Check if this is the first session for the client
@@ -2603,19 +2730,48 @@ const getCommissions = async (req, res) => {
         
         let doctorCommission = 0;
         
-        if (isPackage) {
-          // Package session
-          if (isFirstSession && commissionRecord.doctor_commission_first_session_package !== null && commissionRecord.doctor_commission_first_session_package !== undefined) {
-            doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
-          } else if (!isFirstSession && commissionRecord.doctor_commission_followup_package !== null && commissionRecord.doctor_commission_followup_package !== undefined) {
-            doctorCommission = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
+        if (isPackage && s.package_id) {
+          // Package session - commission is calculated ONCE per package, not per session
+          const pkg = packagePricesMap[s.psychologist_id]?.find(p => p.id === s.package_id);
+          const packageType = pkg?.type || packageTypeMap[s.package_id] || 'package';
+          
+          // Get package price from packages table (full package price, not per session)
+          const packagePrice = pkg?.price || sessionPrice;
+          
+          // Get package-specific doctor commissions from JSONB field
+          const doctorCommissionPackages = commissionRecord?.doctor_commission_packages || {};
+          
+          if (isFirstSession) {
+            // NEW CLIENT: Use First Session Commission (ONE TIME for entire package)
+            const packageFirstSessionKey = `${packageType}_first_session`;
+            if (doctorCommissionPackages[packageFirstSessionKey] !== null && doctorCommissionPackages[packageFirstSessionKey] !== undefined) {
+              doctorCommission = parseFloat(doctorCommissionPackages[packageFirstSessionKey]) || 0;
+            } else if (commissionRecord?.doctor_commission_first_session_package !== null && commissionRecord?.doctor_commission_first_session_package !== undefined) {
+              doctorCommission = parseFloat(commissionRecord.doctor_commission_first_session_package) || 0;
+            }
           } else {
-            // Fallback to package commission calculation
-            const pkg = packagePricesMap[s.psychologist_id]?.find(p => p.id === s.package_id);
-            const packageType = pkg?.type || packageTypeMap[s.package_id] || 'package';
-            const commissionAmount = parseFloat(commissionAmounts?.[packageType] || commissionAmounts?.package || 0);
-            doctorCommission = sessionPrice - commissionAmount;
+            // EXISTING CLIENT: Use Follow-up Commission (ONE TIME for entire package)
+            const packageFollowupKey = `${packageType}_followup`;
+            if (doctorCommissionPackages[packageFollowupKey] !== null && doctorCommissionPackages[packageFollowupKey] !== undefined) {
+              doctorCommission = parseFloat(doctorCommissionPackages[packageFollowupKey]) || 0;
+            } else if (commissionRecord?.doctor_commission_followup_package !== null && commissionRecord?.doctor_commission_followup_package !== undefined) {
+              doctorCommission = parseFloat(commissionRecord.doctor_commission_followup_package) || 0;
+            }
           }
+          
+          // If doctor commission not found, use fallback (but this should not happen if properly configured)
+          if (doctorCommission === 0) {
+            const commissionAmount = parseFloat(commissionAmounts?.[packageType] || commissionAmounts?.package || 0);
+            doctorCommission = packagePrice - commissionAmount;
+          }
+          
+          // For packages, use package price (not session price) for calculation
+          // Company commission = Package price - Doctor commission
+          commissionToCompany = packagePrice - doctorCommission;
+          toDoctorWallet = doctorCommission;
+          
+          // Update sessionPrice to package price for revenue calculation
+          sessionPrice = packagePrice;
         } else {
           // Individual session
           if (isFirstSession && commissionRecord.doctor_commission_first_session !== null && commissionRecord.doctor_commission_first_session !== undefined) {
@@ -2627,10 +2783,11 @@ const getCommissions = async (req, res) => {
             const commissionAmount = parseFloat(commissionAmounts?.individual || 0);
             doctorCommission = sessionPrice - commissionAmount;
           }
+          
+          // For individual sessions
+          commissionToCompany = sessionPrice - doctorCommission;
+          toDoctorWallet = doctorCommission;
         }
-        
-        commissionToCompany = sessionPrice - doctorCommission;
-        toDoctorWallet = doctorCommission;
       }
 
       // Add to total stats (for all sessions - booked sessions show expected amounts, completed show actual)
@@ -2716,6 +2873,7 @@ const getCommissions = async (req, res) => {
         doctor_commission_individual: commissionRecord.doctor_commission_individual || null,
         doctor_commission_first_session_package: commissionRecord.doctor_commission_first_session_package || null,
         doctor_commission_followup_package: commissionRecord.doctor_commission_followup_package || null,
+        doctor_commission_packages: commissionRecord.doctor_commission_packages || {}, // Package-specific doctor commissions
         package_commissions: packageCommissions, // Packages with their commission amounts
         individual_sessions: stats.individual_sessions,
         package_sessions: stats.package_sessions,
@@ -2782,8 +2940,9 @@ const updateCommissionRate = async (req, res) => {
       doctor_commission_first_session, // Doctor commission for first session (individual)
       doctor_commission_followup, // Doctor commission for follow-up session (individual)
       doctor_commission_individual, // Doctor commission for individual session (base)
-      doctor_commission_first_session_package, // Doctor commission for first session (package)
-      doctor_commission_followup_package, // Doctor commission for follow-up session (package)
+      doctor_commission_first_session_package, // Doctor commission for first session (package) - legacy
+      doctor_commission_followup_package, // Doctor commission for follow-up session (package) - legacy
+      doctor_commission_packages, // Package-specific doctor commissions JSONB: { "package_3_first_session": 100, "package_3_followup": 150, ... }
       effective_from, 
       notes 
     } = req.body;
@@ -2927,6 +3086,21 @@ const updateCommissionRate = async (req, res) => {
       }
       commissionData.doctor_commission_followup_package = amount;
     }
+    
+    // Handle package-specific doctor commissions (JSONB object)
+    if (doctor_commission_packages && typeof doctor_commission_packages === 'object') {
+      // Validate all values are valid numbers ≥ 0
+      for (const [key, value] of Object.entries(doctor_commission_packages)) {
+        const amount = parseFloat(value);
+        if (isNaN(amount) || amount < 0) {
+          return res.status(400).json(
+            errorResponse(`Invalid doctor commission amount for ${key}: must be ≥ 0`)
+          );
+        }
+        doctor_commission_packages[key] = amount; // Ensure it's a number
+      }
+      commissionData.doctor_commission_packages = doctor_commission_packages;
+    }
 
     let newCommission;
     let error;
@@ -2968,6 +3142,9 @@ const updateCommissionRate = async (req, res) => {
       }
       if (commissionData.doctor_commission_followup_package !== undefined && commissionData.doctor_commission_followup_package !== existingCommissionData?.doctor_commission_followup_package) {
         updateData.doctor_commission_followup_package = commissionData.doctor_commission_followup_package;
+      }
+      if (commissionData.doctor_commission_packages && JSON.stringify(commissionData.doctor_commission_packages) !== JSON.stringify(existingCommissionData?.doctor_commission_packages)) {
+        updateData.doctor_commission_packages = commissionData.doctor_commission_packages;
       }
       if (commissionData.notes !== undefined && commissionData.notes !== existingCommissionData?.notes) {
         updateData.notes = commissionData.notes;
@@ -3239,32 +3416,106 @@ const getPendingPayouts = async (req, res) => {
 
     // Group by psychologist
     const payoutsByDoctor = {};
+    const processedPackages = new Set(); // Track packages already processed
     
-    unpaidSessions.forEach(session => {
+    // Use for...of loop instead of forEach to support await
+    for (const session of unpaidSessions) {
       const psychId = session.psychologist_id;
       let commission = commissionMap[session.id];
       
-      // If no commission history, calculate from session price
-      if (!commission && sessionPriceMap[session.id] !== undefined) {
-        const sessionAmount = sessionPriceMap[session.id];
-        // Default commission rate: 30% (can be made configurable per doctor later)
-        const defaultCommissionRate = 0.30;
-        const commissionAmount = sessionAmount * defaultCommissionRate;
+      // For packages: Only process once per package (when all sessions are completed)
+      if (session.package_id) {
+        const packageKey = `${psychId}_${session.package_id}`;
         
-        commission = {
-          session_id: session.id,
-          psychologist_id: psychId,
-          session_amount: sessionAmount,
-          commission_amount: commissionAmount,
-          session_type: session.session_type || 'individual',
-          payment_status: 'pending'
-        };
+        // Skip if package already processed
+        if (processedPackages.has(packageKey)) {
+          continue;
+        }
+        
+        // Check if all sessions in this package are completed
+        const { data: allPackageSessions } = await supabaseAdmin
+          .from('sessions')
+          .select('id, status, client_id')
+          .eq('package_id', session.package_id);
+        
+        // Group by client_id to check each client's package separately
+        const sessionsByClient = {};
+        allPackageSessions?.forEach(ps => {
+          const cId = ps.client_id || 'unknown';
+          if (!sessionsByClient[cId]) {
+            sessionsByClient[cId] = [];
+          }
+          sessionsByClient[cId].push(ps);
+        });
+        
+        // Check if this specific client's package is fully completed
+        const clientSessions = sessionsByClient[session.client_id] || [];
+        const pkg = packagesMap[session.package_id];
+        const totalSessions = pkg?.session_count || 0;
+        const completedSessions = clientSessions.filter(ps => ps.status === 'completed').length;
+        const allSessionsCompleted = completedSessions >= totalSessions;
+        
+        // Only process if all sessions are completed
+        if (!allSessionsCompleted) {
+          continue; // Skip if not all completed
+        }
+        
+        processedPackages.add(packageKey);
+        
+        // Get commission from commission_history (should exist if all sessions completed)
+        // Commission is stored for the package when all sessions complete
+        if (!commission) {
+          // Try to find commission history for any session in this package
+          const packageSessionIds = clientSessions.map(ps => ps.id);
+          const { data: packageCommissionHistory } = await supabaseAdmin
+            .from('commission_history')
+            .select('commission_amount, session_amount')
+            .in('session_id', packageSessionIds)
+            .eq('package_id', session.package_id)
+            .limit(1)
+            .single();
+          
+          if (packageCommissionHistory) {
+            commission = {
+              session_id: session.id,
+              psychologist_id: psychId,
+              session_amount: parseFloat(packageCommissionHistory.session_amount || 0),
+              commission_amount: parseFloat(packageCommissionHistory.commission_amount || 0),
+              session_type: 'package',
+              payment_status: 'pending'
+            };
+          }
+        }
+        
+        // If still no commission, skip
+        if (!commission) {
+          console.warn(`No commission history for completed package ${session.package_id}, skipping`);
+          continue;
+        }
+      } else {
+        // Individual session
+        // If no commission history, calculate from session price
+        if (!commission && sessionPriceMap[session.id] !== undefined) {
+          const sessionAmount = sessionPriceMap[session.id];
+          // Default commission rate: 30% (can be made configurable per doctor later)
+          const defaultCommissionRate = 0.30;
+          const commissionAmount = sessionAmount * defaultCommissionRate;
+          
+          commission = {
+            session_id: session.id,
+            psychologist_id: psychId,
+            session_amount: sessionAmount,
+            commission_amount: commissionAmount,
+            session_type: session.session_type || 'individual',
+            payment_status: 'pending'
+          };
+        }
       }
       
-      // Skip if still no commission data (shouldn't happen for paid sessions)
+      // Skip if still no commission data
       if (!commission) {
         console.warn(`No commission data for session ${session.id}, skipping`);
-        return;
+        continue;
       }
 
       if (!payoutsByDoctor[psychId]) {
@@ -3314,7 +3565,7 @@ const getPendingPayouts = async (req, res) => {
         doctor_wallet: doctorWallet,
         company_commission: commissionAmount
       });
-    });
+    }
 
     // Convert to array and format for frontend
     const payouts = Object.values(payoutsByDoctor).map(payout => ({

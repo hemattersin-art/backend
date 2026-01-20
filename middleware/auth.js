@@ -392,7 +392,7 @@ const requireRole = (roles) => {
 
 // Specific role middlewares
 const requireClient = requireRole(['client']);
-const requirePsychologist = requireRole(['psychologist']);
+const requirePsychologist = requireRole(['psychologist', 'superadmin']); // Superadmin can access psychologist routes
 const requireAdmin = requireRole(['admin', 'superadmin']);
 const requireSuperAdmin = requireRole(['superadmin']);
 const requireFinance = requireRole(['finance', 'admin', 'superadmin']); // Finance can access finance routes, admins can too

@@ -143,6 +143,7 @@ const getAllUsers = async (req, res) => {
         phone: psych.phone || '',
         ug_college: psych.ug_college || '',
         pg_college: psych.pg_college || '',
+        mphil_college: psych.mphil_college || '',
         phd_college: psych.phd_college || '',
         description: psych.description || '',
         experience_years: psych.experience_years || 0,
@@ -552,6 +553,7 @@ const getAllPsychologists = async (req, res) => {
       phone: psych.phone || '',
       ug_college: psych.ug_college || '',
       pg_college: psych.pg_college || '',
+      mphil_college: psych.mphil_college || '',
       phd_college: psych.phd_college || '',
       description: psych.description || '',
       experience_years: psych.experience_years || 0,
@@ -1288,6 +1290,7 @@ const createPsychologist = async (req, res) => {
       phone, 
       ug_college, 
       pg_college, 
+      mphil_college,
       phd_college, 
       area_of_expertise, 
       description, 
@@ -1338,6 +1341,7 @@ const createPsychologist = async (req, res) => {
         phone,
         ug_college,
         pg_college,
+        mphil_college,
         phd_college,
         area_of_expertise,
         personality_traits, // NEW
@@ -1495,6 +1499,7 @@ const createPsychologist = async (req, res) => {
           phone: psychologist.phone,
           ug_college: psychologist.ug_college,
           pg_college: psychologist.pg_college,
+          mphil_college: psychologist.mphil_college,
           phd_college: psychologist.phd_college,
           area_of_expertise: psychologist.area_of_expertise,
           description: psychologist.description,
@@ -2627,17 +2632,31 @@ const getRecentUsers = async (req, res) => {
   }
 };
 
-// Get recent bookings for dashboard (last 24 hours)
+// Get recent bookings for dashboard (today's activity only)
 const getRecentBookings = async (req, res) => {
   try {
     const { limit = 10 } = req.query;
 
-    // Calculate date 24 hours ago
-    const oneDayAgo = new Date();
-    oneDayAgo.setHours(oneDayAgo.getHours() - 24);
-    const oneDayAgoISO = oneDayAgo.toISOString();
+    // Get today's date in IST timezone
+    const now = new Date();
+    // Convert to IST and get date components
+    const istDateStr = now.toLocaleString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const [month, day, year] = istDateStr.split('/').map(Number);
+    
+    // Create start of today in IST (00:00:00 IST)
+    // IST is UTC+5:30, so 00:00:00 IST = 18:30:00 UTC (previous day)
+    const startOfTodayIST = new Date(Date.UTC(year, month - 1, day - 1, 18, 30, 0, 0));
+    
+    // Create start of tomorrow in IST (for upper bound)
+    const startOfTomorrowIST = new Date(startOfTodayIST);
+    startOfTomorrowIST.setUTCDate(startOfTomorrowIST.getUTCDate() + 1);
 
-    // Get recent sessions from the last 24 hours
+    // Get recent sessions from today only (created_at >= start of today IST and < start of tomorrow IST)
     const { data: recentSessions, error: sessionsError } = await supabaseAdmin
       .from('sessions')
       .select(`
@@ -2659,7 +2678,8 @@ const getRecentBookings = async (req, res) => {
           last_name
         )
       `)
-      .gte('created_at', oneDayAgoISO)
+      .gte('created_at', startOfTodayIST.toISOString())
+      .lt('created_at', startOfTomorrowIST.toISOString())
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
 

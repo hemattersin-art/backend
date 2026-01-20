@@ -213,6 +213,7 @@ const register = async (req, res) => {
           last_name: req.body.last_name,
           ug_college: req.body.ug_college,
           pg_college: req.body.pg_college,
+          mphil_college: req.body.mphil_college,
           phd_college: req.body.phd_college,
           area_of_expertise: req.body.area_of_expertise,
           description: req.body.description,
