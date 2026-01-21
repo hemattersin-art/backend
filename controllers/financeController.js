@@ -27,7 +27,8 @@ const getDashboard = async (req, res) => {
       );
     }
 
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, includeCharts } = req.query;
+    const shouldIncludeCharts = includeCharts !== 'false'; // Default to true for backward compatibility
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfQuarter = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
@@ -48,7 +49,7 @@ const getDashboard = async (req, res) => {
     try {
       const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
-        .select('id, scheduled_date, price, psychologist_id, status, payment_id, session_type')
+        .select('id, scheduled_date, price, psychologist_id, client_id, status, payment_id, session_type')
         .in('status', ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'])
         .neq('session_type', 'free_assessment');
 
@@ -225,13 +226,24 @@ const getDashboard = async (req, res) => {
       .in('status', ['booked'])
       .gte('scheduled_date', today.toISOString().split('T')[0]);
 
-    // Get total sessions count (all time) - exclude free assessments
+    // Get total sessions count - exclude free assessments
+    // If date range is provided, count only sessions in that range
     let totalSessions = 0;
     try {
-      const { count: totalSessionsCount } = await supabaseAdmin
+      let totalSessionsQuery = supabaseAdmin
         .from('sessions')
         .select('id', { count: 'exact', head: true })
-        .neq('session_type', 'free_assessment');
+        .neq('session_type', 'free_assessment')
+        .in('status', ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled']);
+      
+      // Apply date filtering if date range is provided
+      if (dateFrom && dateTo) {
+        totalSessionsQuery = totalSessionsQuery
+          .gte('scheduled_date', dateFrom)
+          .lte('scheduled_date', dateTo);
+      }
+      
+      const { count: totalSessionsCount } = await totalSessionsQuery;
       totalSessions = totalSessionsCount || 0;
     } catch (err) {
       console.error('Error fetching total sessions:', err);
@@ -311,16 +323,27 @@ const getDashboard = async (req, res) => {
       return paidStatuses.includes(s.status);
     };
 
-    // Get revenue by session type
-    const individualSessions = sessionsData.filter(shouldIncludeInRevenue);
-    const revenueByType = {
-      individual: individualSessions.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0),
-      package: 0 // Will be calculated from package sessions
-    };
+    // Filter sessions by date range for recent sessions and top doctors
+    // Use scheduled_date to match the rest of the dashboard filtering logic
+    const filteredSessionsForDisplay = sessionsData.filter(s => {
+      if (!s || !s.scheduled_date) return false;
+      const scheduledDate = s.scheduled_date.split('T')[0]; // Get YYYY-MM-DD part
+      return scheduledDate >= mtdFrom && scheduledDate <= mtdTo;
+    });
 
-    // Get top 5 doctors by revenue
+    // Get revenue by session type (only if charts are needed)
+    let revenueByType = { individual: 0, package: 0 };
+    if (shouldIncludeCharts) {
+      const individualSessions = filteredSessionsForDisplay.filter(shouldIncludeInRevenue);
+      revenueByType = {
+        individual: individualSessions.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0),
+        package: 0 // Will be calculated from package sessions
+      };
+    }
+
+    // Get top 5 doctors by revenue (filtered by date range)
     const doctorRevenue = {};
-    sessionsData.filter(shouldIncludeInRevenue).forEach(s => {
+    filteredSessionsForDisplay.filter(shouldIncludeInRevenue).forEach(s => {
       if (s.psychologist_id) {
         if (!doctorRevenue[s.psychologist_id]) {
           doctorRevenue[s.psychologist_id] = { revenue: 0, session_count: 0 };
@@ -335,14 +358,24 @@ const getDashboard = async (req, res) => {
       .slice(0, 5)
       .map(([id, data]) => ({ psychologist_id: id, total_commission: data.revenue, session_count: data.session_count }));
 
+    // Get recent sessions (filtered by date range, sorted by scheduled_date descending)
+    const recentSessionsFiltered = filteredSessionsForDisplay
+      .filter(shouldIncludeInRevenue)
+      .sort((a, b) => {
+        const dateA = new Date(a.scheduled_date || 0);
+        const dateB = new Date(b.scheduled_date || 0);
+        return dateB - dateA; // Most recent first
+      })
+      .slice(0, 10);
+
     // Get all unique psychologist IDs for both top doctors and recent sessions
     const allPsychologistIds = [...new Set([
       ...topDoctors.map(d => d.psychologist_id),
-      ...sessionsData.slice(0, 10).map(s => s?.psychologist_id).filter(Boolean)
+      ...recentSessionsFiltered.map(s => s?.psychologist_id).filter(Boolean)
     ])];
     
     // Get all unique client IDs for recent sessions
-    const allClientIds = [...new Set(sessionsData.slice(0, 10).map(s => s?.client_id).filter(Boolean))];
+    const allClientIds = [...new Set(recentSessionsFiltered.map(s => s?.client_id).filter(Boolean))];
 
     let allPsychologists = [];
     let allClients = [];
@@ -377,73 +410,78 @@ const getDashboard = async (req, res) => {
       });
     }
 
-    // Get expense breakdown
+    // Get expense breakdown (only if charts are needed)
     const expenseByCategory = {};
-    expensesData.forEach(e => {
-      if (e && e.category) {
-        if (!expenseByCategory[e.category]) {
-          expenseByCategory[e.category] = 0;
+    if (shouldIncludeCharts) {
+      expensesData.forEach(e => {
+        if (e && e.category) {
+          if (!expenseByCategory[e.category]) {
+            expenseByCategory[e.category] = 0;
+          }
+          expenseByCategory[e.category] += parseFloat(e.total_amount) || 0;
         }
-        expenseByCategory[e.category] += parseFloat(e.total_amount) || 0;
-      }
-    });
+      });
+    }
 
-    // Calculate monthly revenue for charts (last 12 months)
+    // Calculate monthly revenue for charts (last 12 months) - only if includeCharts is true
     const monthlyRevenueData = [];
     const monthlyExpensesData = [];
     const monthlyCommissionData = [];
     const monthlyDoctorWalletData = [];
     
-    for (let i = 11; i >= 0; i--) {
-      const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
-      const monthNum = date.getMonth() + 1;
-      const monthKey = `${date.getFullYear()}-${monthNum < 10 ? '0' : ''}${monthNum}`;
-      const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-      const monthStart = `${monthKey}-01`;
-      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0];
-      
-      const monthRevenue = calculateRevenue(sessionsData, monthStart, monthEnd);
-      const monthExpenses = calculateExpenses(expensesData, monthStart, monthEnd);
-      
-      // Get commission data for this month
-      let monthCommission = 0;
-      let monthDoctorWallet = 0;
-      try {
-        const { data: monthCommissions } = await supabaseAdmin
-          .from('commission_history')
-          .select('commission_amount, session_amount')
-          .gte('session_date', monthStart)
-          .lte('session_date', monthEnd);
+    if (shouldIncludeCharts) {
+      for (let i = 11; i >= 0; i--) {
+        const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        const monthNum = date.getMonth() + 1;
+        const monthKey = `${date.getFullYear()}-${monthNum < 10 ? '0' : ''}${monthNum}`;
+        const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        const monthStart = `${monthKey}-01`;
+        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0];
         
-        if (monthCommissions) {
-          monthCommission = monthCommissions.reduce((sum, c) => sum + (parseFloat(c.commission_amount) || 0), 0);
-          monthDoctorWallet = monthCommissions.reduce((sum, c) => {
-            const sessionAmount = parseFloat(c.session_amount || 0);
-            const commissionAmount = parseFloat(c.commission_amount || 0);
-            return sum + (sessionAmount - commissionAmount);
-          }, 0);
+        const monthRevenue = calculateRevenue(sessionsData, monthStart, monthEnd);
+        const monthExpenses = calculateExpenses(expensesData, monthStart, monthEnd);
+        
+        // Get commission data for this month
+        let monthCommission = 0;
+        let monthDoctorWallet = 0;
+        try {
+          const { data: monthCommissions } = await supabaseAdmin
+            .from('commission_history')
+            .select('commission_amount, session_amount')
+            .gte('session_date', monthStart)
+            .lte('session_date', monthEnd);
+          
+          if (monthCommissions) {
+            monthCommission = monthCommissions.reduce((sum, c) => sum + (parseFloat(c.commission_amount) || 0), 0);
+            monthDoctorWallet = monthCommissions.reduce((sum, c) => {
+              const sessionAmount = parseFloat(c.session_amount || 0);
+              const commissionAmount = parseFloat(c.commission_amount || 0);
+              return sum + (sessionAmount - commissionAmount);
+            }, 0);
+          }
+        } catch (err) {
+          // Ignore errors
         }
-      } catch (err) {
-        // Ignore errors
+        
+        monthlyRevenueData.push({ month: monthName, revenue: monthRevenue.total });
+        monthlyExpensesData.push({ month: monthName, expenses: monthExpenses });
+        monthlyCommissionData.push({ month: monthName, commission: monthCommission });
+        monthlyDoctorWalletData.push({ month: monthName, wallet: monthDoctorWallet });
       }
-      
-      monthlyRevenueData.push({ month: monthName, revenue: monthRevenue.total });
-      monthlyExpensesData.push({ month: monthName, expenses: monthExpenses });
-      monthlyCommissionData.push({ month: monthName, commission: monthCommission });
-      monthlyDoctorWalletData.push({ month: monthName, wallet: monthDoctorWallet });
     }
 
     // Calculate commission breakdown - simple: use same logic as doctors page and sum all totals
-    let totalCompanyCommission = 0; // Total company commission (completed + pending)
-    let totalCompanyCommissionCompleted = 0; // Company commission from completed sessions only (for net profit)
-    let totalDoctorWallet = 0;
-    let totalRevenueFromSessions = 0; // Calculate total revenue from all sessions
-    let pendingPayout = 0; // Doctor commission for non-completed sessions
-    let payout = 0; // Doctor commission for completed sessions
-    let pendingSessionsCount = 0;
-    let completedSessionsCount = 0;
-    let rescheduledSessionsCount = 0;
-    let rescheduleRequestedSessionsCount = 0;
+    let totalCompanyCommission = 0; // Total company commission for sessions scheduled in date range (for revenue/net profit)
+    let totalCompanyCommissionCompleted = 0; // Company commission from completed sessions (completed in date range)
+    let totalDoctorWallet = 0; // Total doctor wallet for sessions scheduled in date range (for revenue calculation)
+    let totalRevenueFromSessions = 0; // Calculate total revenue from sessions scheduled in date range
+    let pendingPayout = 0; // Doctor commission for ALL non-completed sessions (regardless of scheduled date - includes last month's no-show)
+    let payout = 0; // Doctor commission for completed sessions (completed in date range)
+    let pendingSessionsCount = 0; // Count of pending sessions scheduled in date range
+    let completedSessionsCount = 0; // Count of completed sessions scheduled in date range
+    let rescheduledSessionsCount = 0; // Count of rescheduled sessions scheduled in date range
+    let rescheduleRequestedSessionsCount = 0; // Count of reschedule requested sessions scheduled in date range
+    let noShowSessionsCount = 0; // Count of no show sessions scheduled in date range
     
     try {
       // Get all psychologists (exclude assessment specialist)
@@ -599,21 +637,34 @@ const getDashboard = async (req, res) => {
           const isFirstSession = clientFirstSessions.has(s.id);
           
           // Determine if this session should be included based on date range
+          // IMPORTANT: For session counts (total, completed, pending, etc.), we use scheduled_date
+          // This ensures that when filtering by "this month", we see sessions scheduled this month
           let shouldIncludeForPending = true;
           let shouldIncludeForCompleted = true;
           let shouldIncludeForRevenue = true;
+          let shouldIncludeForCounts = true; // For session counts (total, completed, pending, etc.)
           
           if (dateFrom && dateTo) {
-            // For PENDING payouts: Include if payment was received (created_at) in the date range
-            // AND session is NOT completed
+            // For session COUNTS: Always use scheduled_date (what user expects when filtering by month)
+            // Only count sessions scheduled in the selected date range
+            shouldIncludeForCounts = isInDateRange(s.scheduled_date);
+            
+            // For PENDING payouts: Include ALL non-completed sessions (regardless of payment date)
+            // This ensures that sessions from last month that are still pending (no_show, booked, etc.)
+            // show up in the current month's pending payouts
+            // IMPORTANT: Pending payouts represent money owed to doctors that hasn't been paid yet,
+            // so we include ALL pending sessions, not just those paid in the date range
             if (isCompleted) {
               shouldIncludeForPending = false; // Completed sessions don't go to pending
             } else {
-              shouldIncludeForPending = isInDateRange(s.created_at);
+              // Include all pending sessions (no date filter for pending payouts)
+              // This way, last month's no_show sessions appear in this month's pending payouts
+              shouldIncludeForPending = true;
             }
             
             // For COMPLETED payouts: Include if session was completed (updated_at) in the date range
             // AND session IS completed
+            // Only show completed payouts for sessions completed in the selected date range
             if (isCompleted) {
               // Use updated_at (completion date) for completed sessions
               shouldIncludeForCompleted = isInDateRange(s.updated_at || s.created_at);
@@ -622,6 +673,7 @@ const getDashboard = async (req, res) => {
             }
             
             // For REVENUE: Include if scheduled_date is in the date range
+            // Revenue should only include sessions scheduled in the selected period
             shouldIncludeForRevenue = isInDateRange(s.scheduled_date);
           }
           
@@ -633,12 +685,15 @@ const getDashboard = async (req, res) => {
           let commissionToCompany = 0;
           let toDoctorWallet = sessionPrice;
           
-          // Count rescheduled and reschedule_requested for sessions in date range
-          if (shouldIncludeForRevenue) {
+          // Count rescheduled, reschedule_requested, and no_show for sessions in date range
+          // Use shouldIncludeForCounts (based on scheduled_date) for accurate counts
+          if (shouldIncludeForCounts) {
             if (s.status === 'rescheduled') {
               rescheduledSessionsCount++;
             } else if (s.status === 'reschedule_requested') {
               rescheduleRequestedSessionsCount++;
+            } else if (s.status === 'no_show' || s.status === 'noshow') {
+              noShowSessionsCount++;
             }
           }
           
@@ -680,7 +735,12 @@ const getDashboard = async (req, res) => {
                   // Add to completed payout ONCE per package
                   totalCompanyCommissionCompleted += commissionToCompany;
                   payout += toDoctorWallet;
-                  completedSessionsCount += totalSessions;
+                  
+                  // Count completed sessions based on scheduled_date (for accurate dashboard counts)
+                  // Only count if this session's scheduled_date is in the date range
+                  if (shouldIncludeForCounts) {
+                    completedSessionsCount += totalSessions;
+                  }
                 } else {
                   // Commission not yet calculated (not all sessions completed)
                   // Don't add to completed payout yet
@@ -725,6 +785,10 @@ const getDashboard = async (req, res) => {
                 totalCompanyCommissionCompleted += commissionToCompany;
                 // Add to payout (completed sessions only) - based on completion date
                 payout += toDoctorWallet;
+              }
+              
+              // Count completed sessions based on scheduled_date (for accurate dashboard counts)
+              if (shouldIncludeForCounts && isCompleted) {
                 completedSessionsCount++;
               }
             }
@@ -838,6 +902,10 @@ const getDashboard = async (req, res) => {
                 // Add to pending payout ONCE per package
                 if (shouldIncludeForPending) {
                   pendingPayout += toDoctorWallet;
+                }
+                
+                // Count pending sessions based on scheduled_date (for accurate dashboard counts)
+                if (shouldIncludeForCounts && !allSessionsCompleted) {
                   pendingSessionsCount += totalSessions - completedSessions; // Count remaining sessions
                 }
               } else {
@@ -862,25 +930,41 @@ const getDashboard = async (req, res) => {
               // Add to pending payout (non-completed sessions) - only if payment date is in range
               if (shouldIncludeForPending) {
                 pendingPayout += toDoctorWallet;
+              }
+              
+              // Count pending sessions based on scheduled_date (for accurate dashboard counts)
+              if (shouldIncludeForCounts && !isCompleted) {
                 pendingSessionsCount++;
               }
             }
           }
           
-          // Add to totals only if session is relevant for the date range
-          if (shouldIncludeForPending || shouldIncludeForCompleted || shouldIncludeForRevenue) {
+          // Add to commission totals based on different criteria:
+          // 1. Revenue/Commission for sessions scheduled in date range (for revenue/net profit calculation)
+          // Only include commissions for sessions scheduled in the selected date range
+          if (shouldIncludeForRevenue) {
             totalCompanyCommission += commissionToCompany;
             totalDoctorWallet += toDoctorWallet;
-          }
-          
-          // Add to revenue only if scheduled_date is in date range
-          if (shouldIncludeForRevenue) {
             totalRevenueFromSessions += sessionPrice; // Sum all session prices for total revenue
           }
+          
+          // Note: pendingPayout and payout are already being added above in their respective sections
+          // pendingPayout includes ALL pending sessions (regardless of date) - this is correct
+          // payout includes only sessions completed in date range - this is correct
         }
         
-        // Update totalSessions count based on filtered sessions
-        totalSessions = sessionsToProcess.length;
+        // Update totalSessions count based on sessions in the date range
+        // Count only sessions where scheduled_date is within the date range
+        if (dateFrom && dateTo) {
+          totalSessions = sessionsToProcess.filter(s => {
+            if (!s || !s.scheduled_date) return false;
+            const sessionDate = s.scheduled_date.split('T')[0]; // Extract date part (YYYY-MM-DD)
+            return sessionDate >= dateFrom && sessionDate <= dateTo;
+          }).length;
+        } else {
+          // If no date range specified, count all sessions
+          totalSessions = sessionsToProcess.length;
+        }
       }
     } catch (err) {
       console.error('Error calculating commission totals:', err);
@@ -919,31 +1003,33 @@ const getDashboard = async (req, res) => {
     const expensesForSelectedRange = dateFrom && dateTo ? 
       calculateExpenses(expensesData, dateFrom, dateTo) : ytdExpenses;
     
-    // Net profit = Company commission from ALL sessions (completed + pending) in date range - expenses in date range
-    // Note: totalCompanyCommission and totalRevenueFromSessions are already filtered by date range
+    // Net profit = Company commission from sessions scheduled in date range - expenses in date range
+    // Note: totalCompanyCommission includes commissions for sessions scheduled in the date range
+    // This represents the company's commission from revenue received for sessions scheduled in this period
     const netProfitForSelectedRange = totalCompanyCommission - expensesForSelectedRange;
     
-    // For MTD/QTD/YTD metrics, also use totalCompanyCommission (all sessions)
+    // For MTD/QTD/YTD metrics, use totalCompanyCommission (sessions scheduled in those periods)
     const mtdNetProfit = totalCompanyCommission - mtdExpenses;
     const qtdNetProfit = totalCompanyCommission - qtdExpenses;
     const ytdNetProfit = totalCompanyCommission - ytdExpenses;
     
     res.json(successResponse({
       summary: {
-        total_revenue: totalRevenueFromSessions, // Sum of ALL session prices (completed + pending) in date range - total amount received
-        net_profit: dateFrom && dateTo ? netProfitForSelectedRange : ytdNetProfit, // Net Profit = Company commission from ALL sessions (completed + pending) - expenses (for date range or YTD)
+        total_revenue: totalRevenueFromSessions, // Sum of session prices for sessions SCHEDULED in date range
+        net_profit: dateFrom && dateTo ? netProfitForSelectedRange : ytdNetProfit, // Net Profit = Company commission from sessions scheduled in date range - expenses
         total_expenses: dateFrom && dateTo ? expensesForSelectedRange : ytdExpenses, // Total approved expenses for date range or YTD
-        pending_payouts: pendingPayout || 0, // Doctor wallet for non-completed sessions (4 pending sessions)
-        payout: payout || 0, // Doctor wallet for completed sessions (6 completed sessions)
-        total_sessions: totalSessions,
-        pending_sessions: pendingSessionsCount || 0, // Count of non-completed sessions (booked, no_show, cancelled)
-        completed_sessions: completedSessionsCount || 0, // Count of completed sessions
-        rescheduled_sessions: rescheduledSessionsCount || 0, // Count of rescheduled sessions
-        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0, // Count of reschedule requested sessions
+        pending_payouts: pendingPayout || 0, // Doctor wallet for ALL non-completed sessions (includes last month's no-show, etc.)
+        payout: payout || 0, // Doctor wallet for completed sessions (completed in date range)
+        total_sessions: totalSessions, // Count of sessions scheduled in date range
+        pending_sessions: pendingSessionsCount || 0, // Count of non-completed sessions scheduled in date range
+        completed_sessions: completedSessionsCount || 0, // Count of completed sessions scheduled in date range
+        rescheduled_sessions: rescheduledSessionsCount || 0, // Count of rescheduled sessions scheduled in date range
+        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0, // Count of reschedule requested sessions scheduled in date range
+        no_show_sessions: noShowSessionsCount || 0, // Count of no show sessions scheduled in date range
         active_doctors: activeDoctors,
-        total_company_commission: totalCompanyCommission, // Total company commission (completed + pending)
-        total_company_commission_completed: totalCompanyCommissionCompleted, // Company commission from completed sessions only
-        total_doctor_wallet: totalDoctorWallet, // Total doctor wallet (pending + completed)
+        total_company_commission: totalCompanyCommission, // Total company commission for sessions scheduled in date range
+        total_company_commission_completed: totalCompanyCommissionCompleted, // Company commission from completed sessions (completed in date range)
+        total_doctor_wallet: totalDoctorWallet, // Total doctor wallet for sessions scheduled in date range
         revenue_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
         revenue_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
         profit_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
@@ -974,7 +1060,7 @@ const getDashboard = async (req, res) => {
         gstPayable,
         activeSessions: activeSessions?.length || 0
       },
-      charts: {
+      charts: shouldIncludeCharts ? {
         topDoctors: topDoctorsWithNames,
         revenueByType,
         expenseByCategory: Object.entries(expenseByCategory).map(([category, amount]) => ({
@@ -989,8 +1075,8 @@ const getDashboard = async (req, res) => {
           company: totalCompanyCommission,
           doctor: totalDoctorWallet
         }
-      },
-      recent_sessions: sessionsData.slice(0, 10).map(s => {
+      } : null,
+      recent_sessions: recentSessionsFiltered.map(s => {
         if (!s) return null;
         const psych = allPsychologists.find(p => p.id === s.psychologist_id);
         const client = allClients.find(c => c.id === s.client_id);
@@ -999,6 +1085,7 @@ const getDashboard = async (req, res) => {
           session_date: s.scheduled_date,
           amount: s.price,
           status: s.status,
+          session_type: s.session_type || 'individual',
           psychologist: psych ? {
             id: psych.id,
             first_name: psych.first_name,
@@ -1012,7 +1099,7 @@ const getDashboard = async (req, res) => {
         };
       }).filter(Boolean),
       top_doctors: topDoctorsWithNames,
-      monthly_revenue: monthlyRevenueData
+      monthly_revenue: shouldIncludeCharts ? monthlyRevenueData : []
     }, 'Dashboard data fetched successfully'));
 
   } catch (error) {

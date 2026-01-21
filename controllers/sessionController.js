@@ -429,6 +429,33 @@ const getAllSessions = async (req, res) => {
             return acc;
           }, {});
 
+          // Calculate completed sessions for each package
+          // Need to count ALL completed sessions for each package, not just the ones on current page
+          // Query all sessions with these package_ids to get accurate counts
+          const { data: allPackageSessions, error: allPackageSessionsError } = await supabaseAdmin
+            .from('sessions')
+            .select('id, package_id, status')
+            .in('package_id', packageIds)
+            .eq('status', 'completed');
+
+          const completedCounts = {};
+          if (!allPackageSessionsError && allPackageSessions) {
+            allPackageSessions.forEach(s => {
+              if (s.package_id) {
+                completedCounts[s.package_id] = (completedCounts[s.package_id] || 0) + 1;
+              }
+            });
+          }
+
+          // Add progress info to each package
+          Object.keys(packagesMap).forEach(pkgId => {
+            const pkg = packagesMap[pkgId];
+            const totalSessions = pkg.session_count || 0;
+            const completedSessions = completedCounts[pkgId] || 0;
+            pkg.completed_sessions = completedSessions;
+            pkg.total_sessions = totalSessions;
+          });
+
           // Attach package data to sessions
           sessions.forEach(session => {
             if (session.package_id && packagesMap[session.package_id]) {
