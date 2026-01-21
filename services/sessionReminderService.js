@@ -68,6 +68,7 @@ class SessionReminderService {
       
       // Get all sessions scheduled for the date range
       // Use supabaseAdmin to bypass RLS and avoid fetch errors
+      // NOTE: Excluding free_assessment sessions - they are handled separately via free_assessments table
       const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select(`
@@ -97,6 +98,7 @@ class SessionReminderService {
         `)
         .in('scheduled_date', datesToCheck)
         .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .neq('session_type', 'free_assessment') // Exclude free assessments - they are handled separately via free_assessments table
         .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
 
@@ -304,11 +306,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your therapy session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
-          (session.google_meet_link 
-            ? `🔗 Join via Google Meet: ${session.google_meet_link}\n\n`
-            : '') +
-          `Please be ready for your session. We look forward to seeing you!`;
+        const clientMessage = `🔔 Reminder: Your therapy session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime} (IST)\n\nPlease be ready for your session. We look forward to seeing you! 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(client.phone_number, clientMessage)
@@ -465,8 +463,7 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your free assessment session with our specialist is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
-          `Please be ready for your assessment session. We look forward to meeting you!`;
+        const clientMessage = `🔔 Reminder: Your free assessment session with our specialist is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime} (IST)\n\nPlease be ready for your assessment session. We look forward to meeting you! 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(client.phone_number, clientMessage)
@@ -487,9 +484,16 @@ class SessionReminderService {
 
       // Send reminder to psychologist if exists
       if (psychologist && psychologist.phone) {
-        const psychologistMessage = `🔔 Reminder: You have a free assessment session with ${clientName}.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n\n` +
-          `👤 Client: ${clientName}\n` +
-          `Assessment ID: ${assessment.id}`;
+        const bullet = '•⁠  ⁠';
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `Reminder: You have a free assessment session with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${formattedDate}\n` +
+          `${bullet}Time: ${formattedTime} (IST)\n\n` +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: +91 95390 07766\n\n` +
+          `— Little Care 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage)

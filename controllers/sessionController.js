@@ -246,7 +246,39 @@ const bookSession = async (req, res) => {
       // Send WhatsApp to psychologist
       const psychologistPhone = psychologistDetails.phone || null;
       if (psychologistPhone && meetData?.meetLink) {
-        const psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\nJoin via Google Meet: ${meetData.meetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+        // Format date and time using the same functions as client messages
+        const { formatFriendlyTime } = require('../utils/whatsappService');
+        const formatBookingDateShort = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+        
+        const bullet = '•⁠  ⁠';
+        const formattedDate = formatBookingDateShort(scheduled_date);
+        const formattedTime = formatFriendlyTime(scheduled_time);
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+        
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `New session booked with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${formattedDate}\n` +
+          `${bullet}Time: ${formattedTime} (IST)\n\n` +
+          `Join link:\n${meetData.meetLink}\n\n` +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: ${supportPhone}\n\n` +
+          `— Little Care 💜`;
         
         const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistWaResult?.success) {

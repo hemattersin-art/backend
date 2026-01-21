@@ -3394,15 +3394,42 @@ const rescheduleSession = async (req, res) => {
 
       // Send WhatsApp to psychologist
       if (psychologistPhone) {
-        const psychologistMessage = `🔄 Session rescheduled by admin with ${clientName}.\n\n` +
-          `❌ Old: ${originalDateTime}\n` +
-          `✅ New: ${newDateTime}\n\n` +
-          `👤 Client: ${clientName}\n` +
-          (newMeetLink 
-            ? `🔗 New Google Meet Link: ${newMeetLink}\n\n`
-            : '\n') +
-          `${reason ? `Reason: ${reason}\n\n` : ''}` +
-          `Session ID: ${session.id}`;
+        // Format date and time using the same functions as client messages
+        const { formatFriendlyTime } = require('../utils/whatsappService');
+        const formatBookingDateShort = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+        
+        const bullet = '•⁠  ⁠';
+        const oldFormattedDate = formatBookingDateShort(oldSessionData.date);
+        const oldFormattedTime = formatFriendlyTime(oldSessionData.time);
+        const newFormattedDate = formatBookingDateShort(new_date);
+        const newFormattedTime = formatFriendlyTime(new_time);
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+        
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `Session rescheduled by admin with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Old: ${oldFormattedDate}, ${oldFormattedTime} (IST)\n` +
+          `${bullet}New: ${newFormattedDate}, ${newFormattedTime} (IST)\n` +
+          (newMeetLink ? `\n${bullet}New link: ${newMeetLink}\n` : '') +
+          (reason ? `\n${bullet}Reason: ${reason}\n` : '') +
+          `\nPlease be ready 5 mins early.\n\n` +
+          `For help: ${supportPhone}\n\n` +
+          `— Little Care 💜`;
 
         const psychologistResult = await whatsappService.sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
         if (psychologistResult?.success) {
@@ -5098,22 +5125,46 @@ const createManualBooking = async (req, res) => {
 
       // Send WhatsApp to psychologist
       if (psychologist.phone) {
-        const meetLinkText = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')
-          ? `🔗 Google Meet Link: ${meetData.meetLink}`
+        // Format date and time using the same functions as client messages
+        const { formatFriendlyTime } = require('../utils/whatsappService');
+        const formatBookingDateShort = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+        
+        const bullet = '•⁠  ⁠';
+        const formattedDate = formatBookingDateShort(scheduled_date);
+        const formattedTime = formatFriendlyTime(scheduled_time);
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+        
+        const meetLinkLine = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')
+          ? `Join link:\n${meetData.meetLink}\n\n`
           : meetData?.requiresOAuth
-            ? `⚠️ IMPORTANT: Please connect your Google Calendar in your profile to enable automatic Meet link creation.`
-            : `🔗 Google Meet Link: Will be shared shortly`;
+            ? `⚠️ IMPORTANT: Please connect your Google Calendar in your profile to enable automatic Meet link creation.\n\n`
+            : `Join link: Will be shared shortly\n\n`;
         
-        const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
-          timeZone: 'Asia/Kolkata',
-          dateStyle: 'long',
-          timeStyle: 'short'
-        });
+        const psychologistMessage =
+          `Hey 👋\n\n` +
+          `New session booked with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${formattedDate}\n` +
+          `${bullet}Time: ${formattedTime} (IST)\n\n` +
+          meetLinkLine +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: ${supportPhone}\n\n` +
+          `— Little Care 💜`;
         
-        const psychologistMessage = `🔔 New session booked with ${clientName}.\n\n` +
-          `📅 Date: ${sessionDateTime}\n` +
-          `${meetLinkText}\n\n` +
-          `Session ID: ${session.id}`;
         await sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage);
         console.log('✅ WhatsApp sent to psychologist');
       }

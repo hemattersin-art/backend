@@ -1213,17 +1213,39 @@ const bookSession = async (req, res) => {
         // Send WhatsApp to psychologist (single detailed message)
         const psychologistPhone = psychologistDetails.phone || null;
         if (psychologistPhone && meetData?.meetLink) {
+          // Format date and time using the same functions as client messages
+          const { formatFriendlyTime } = require('../utils/whatsappService');
+          const formatBookingDateShort = (dateStr) => {
+            if (!dateStr) return '';
+            try {
+              const d = new Date(`${dateStr}T00:00:00+05:30`);
+              return d.toLocaleDateString('en-IN', {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                timeZone: 'Asia/Kolkata'
+              });
+            } catch {
+              return dateStr;
+            }
+          };
+          
+          const bullet = '•⁠  ⁠';
+          const formattedDate = formatBookingDateShort(scheduled_date);
+          const formattedTime = formatFriendlyTime(scheduled_time);
           const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+          
           const psychologistMessage =
-            `🧸 New session booked.\n\n` +
-            `Session details:\n\n` +
-            `👧 Client: ${clientName}\n\n` +
-            `📅 Date: ${scheduled_date}\n\n` +
-            `⏰ Time: ${scheduled_time} (IST)\n\n` +
-            `🔗 Google Meet: ${meetData.meetLink}\n\n` +
-            `🆔 Session ID: ${session.id}\n\n` +
-            `📞 For support or scheduling issues, contact Little Care support:\n` +
-            `WhatsApp / Call: ${supportPhone}`;
+            `Hey 👋\n\n` +
+            `New session booked with Little Care.\n\n` +
+            `${bullet}Client: ${clientName}\n` +
+            `${bullet}Date: ${formattedDate}\n` +
+            `${bullet}Time: ${formattedTime} (IST)\n\n` +
+            `Join link:\n${meetData.meetLink}\n\n` +
+            `Please be ready 5 mins early.\n\n` +
+            `For help: ${supportPhone}\n\n` +
+            `— Little Care 💜`;
           
           const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
           if (psychologistWaResult?.success) {
@@ -3872,14 +3894,49 @@ const bookRemainingSession = async (req, res) => {
           // Send WhatsApp to psychologist
           const psychologistPhone = psychologistDetails.phone || null;
           if (psychologistPhone && fallbackMeetLink) {
-            let psychologistMessage = `New session booked with ${clientName}.\n\nDate: ${scheduled_date}\nTime: ${scheduled_time}\n\n`;
+            // Format date and time using the same functions as client messages
+            const { formatFriendlyTime } = require('../utils/whatsappService');
+            const formatBookingDateShort = (dateStr) => {
+              if (!dateStr) return '';
+              try {
+                const d = new Date(`${dateStr}T00:00:00+05:30`);
+                return d.toLocaleDateString('en-IN', {
+                  weekday: 'short',
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                  timeZone: 'Asia/Kolkata'
+                });
+              } catch {
+                return dateStr;
+              }
+            };
             
-            // Add package information if it's a package session
+            const bullet = '•⁠  ⁠';
+            const formattedDate = formatBookingDateShort(scheduled_date);
+            const formattedTime = formatFriendlyTime(scheduled_time);
+            const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+            
+            // Package line (only for package sessions)
+            let packageLine = '';
             if (packageInfo && packageInfo.totalSessions) {
-              psychologistMessage += `📦 Package Session: ${packageInfo.completedSessions || 0}/${packageInfo.totalSessions} completed, ${packageInfo.remainingSessions || 0} remaining\n\n`;
+              const total = packageInfo.totalSessions || 0;
+              const completed = packageInfo.completedSessions || 0;
+              const remaining = packageInfo.remainingSessions || 0;
+              packageLine = `${bullet}Package: ${completed}/${total} sessions completed, ${remaining} remaining\n`;
             }
             
-            psychologistMessage += `Join via Google Meet: ${fallbackMeetLink}\n\nClient: ${clientName}\nSession ID: ${session.id}`;
+            const psychologistMessage =
+              `Hey 👋\n\n` +
+              `New session booked with Little Care.\n\n` +
+              `${bullet}Client: ${clientName}\n` +
+              packageLine +
+              `${bullet}Date: ${formattedDate}\n` +
+              `${bullet}Time: ${formattedTime} (IST)\n\n` +
+              `Join link:\n${fallbackMeetLink}\n\n` +
+              `Please be ready 5 mins early.\n\n` +
+              `For help: ${supportPhone}\n\n` +
+              `— Little Care 💜`;
             
             const psychologistWaResult = await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
             if (psychologistWaResult?.success) {
