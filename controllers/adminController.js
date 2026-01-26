@@ -1365,53 +1365,209 @@ const updatePsychologist = async (req, res) => {
     console.log('📝 [ADMIN] Updating psychologist:', psychologistId);
     console.log('📦 [ADMIN] Update data keys:', Object.keys(updateData));
 
-    // Validate psychologist exists
-    const { data: existingPsychologist, error: fetchError } = await supabaseAdmin
+    // Get psychologist profile
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
       .from('psychologists')
-      .select('id')
+      .select('*')
       .eq('id', psychologistId)
       .single();
 
-    if (fetchError || !existingPsychologist) {
-      return res.status(404).json(errorResponse('Psychologist not found'));
+    if (psychologistError || !psychologist) {
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
     }
 
-    // Prepare psychologist update data (exclude packages and availability)
-    const psychologistUpdateData = {};
-    const allowedFields = [
-      'first_name', 'last_name', 'email', 'phone', 'ug_college', 'pg_college', 
-      'mphil_college', 'phd_college', 'area_of_expertise', 'description', 
-      'experience_years', 'cover_image_url', 'personality_traits', 'display_order',
-      'faq_question_1', 'faq_answer_1', 'faq_question_2', 'faq_answer_2',
-      'faq_question_3', 'faq_answer_3', 'designation', 'price', 'languages_json',
-      'active'
-    ];
+    // Remove fields that are not in the psychologists table
+    // Capture password separately so we can update the linked user record
+    // Also remove deletePackages flag (it's not a database column, just a control flag)
+    const { price, availability, packages, password, deletePackages, ...psychologistUpdateData } = updateData;
+    
+    // Explicitly remove deletePackages if it somehow got through (safety check)
+    delete psychologistUpdateData.deletePackages;
+    
+    // Convert display_order to integer if provided
+    if (psychologistUpdateData.display_order !== undefined) {
+      psychologistUpdateData.display_order = psychologistUpdateData.display_order ? parseInt(psychologistUpdateData.display_order) : null;
+    }
 
-    allowedFields.forEach(field => {
-      if (updateData[field] !== undefined) {
-        psychologistUpdateData[field] = updateData[field];
+    // Remove undefined/null values from update data
+    Object.keys(psychologistUpdateData).forEach(key => {
+      if (psychologistUpdateData[key] === undefined || psychologistUpdateData[key] === null) {
+        delete psychologistUpdateData[key];
       }
     });
 
-    // Handle password update if provided
-    if (updateData.password) {
-      const bcrypt = require('bcryptjs');
-      psychologistUpdateData.password = await bcrypt.hash(updateData.password, 10);
+    // Only update fields that have actually changed (compare with existing values)
+    const optimizedUpdateData = {};
+    Object.keys(psychologistUpdateData).forEach(key => {
+      const newValue = psychologistUpdateData[key];
+      const existingValue = psychologist[key];
+      
+      // Compare values (handle different types)
+      if (newValue !== existingValue) {
+        // Special handling for arrays/objects (convert to JSON for comparison)
+        if (Array.isArray(newValue) || Array.isArray(existingValue)) {
+          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
+            optimizedUpdateData[key] = newValue;
+          }
+        } else if (typeof newValue === 'object' && typeof existingValue === 'object' && newValue !== null && existingValue !== null) {
+          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
+            optimizedUpdateData[key] = newValue;
+          }
+        } else {
+          optimizedUpdateData[key] = newValue;
+        }
+      }
+    });
+
+    // Only update psychologist profile if there are fields to update
+    let updatedPsychologist = psychologist; // Default to existing psychologist data
+    
+    // Check if there are any fields to update (besides updated_at)
+    const hasFieldsToUpdate = Object.keys(optimizedUpdateData).length > 0;
+
+    if (hasFieldsToUpdate) {
+      // Add updated_at timestamp
+      optimizedUpdateData.updated_at = new Date().toISOString();
+      
+      // Update psychologist profile
+      const { data: updatedData, error: updateError } = await supabaseAdmin
+        .from('psychologists')
+        .update(optimizedUpdateData)
+        .eq('id', psychologistId)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Update psychologist error:', updateError);
+        // If error is PGRST116 (0 rows), it means the update didn't affect any rows
+        // This can happen if the update data is invalid or the row doesn't exist
+        if (updateError.code === 'PGRST116') {
+          console.error('Update returned 0 rows - psychologist may not exist or update data is invalid');
+          return res.status(404).json(
+            errorResponse('Psychologist not found or update data is invalid')
+          );
+        }
+        return res.status(500).json(
+          errorResponse('Failed to update psychologist profile')
+        );
+      }
+      
+      if (updatedData) {
+        updatedPsychologist = updatedData;
+      }
+    } else {
+      console.log('No psychologist profile fields to update, skipping profile update');
     }
 
-    psychologistUpdateData.updated_at = new Date().toISOString();
+    // If admin requested a password change, update the linked user password
+    if (password && typeof password === 'string' && password.trim().length > 0) {
+      try {
+        let targetUserId = psychologist.user_id;
 
-    // Update psychologist record
-    const { data: updatedPsychologist, error: updateError } = await supabaseAdmin
-      .from('psychologists')
-      .update(psychologistUpdateData)
-      .eq('id', psychologistId)
-      .select('*')
-      .single();
+        if (password.length < 6) {
+          return res.status(400).json(
+            errorResponse('New password must be at least 6 characters long')
+          );
+        }
 
-    if (updateError) {
-      console.error('❌ [ADMIN] Error updating psychologist:', updateError);
-      return res.status(500).json(errorResponse('Failed to update psychologist'));
+        // If no linked user_id, try to resolve by email
+        if (!targetUserId) {
+          const latestEmail = psychologistUpdateData.email || updatedPsychologist.email || psychologist.email;
+          if (!latestEmail) {
+            console.error('Password update requested but no email available to resolve user');
+            // Skip password update but continue with other updates
+          } else {
+            const { data: userByEmail, error: userLookupError } = await supabaseAdmin
+              .from('users')
+              .select('id, email')
+              .eq('email', latestEmail)
+              .single();
+
+            if (userLookupError || !userByEmail) {
+              // Create a new user for this psychologist using the provided password
+              const hashedPasswordForCreate = await hashPassword(password);
+              const { data: newUser, error: createUserError } = await supabaseAdmin
+                .from('users')
+                .insert([{ email: latestEmail, password_hash: hashedPasswordForCreate, role: 'psychologist' }])
+                .select('id')
+                .single();
+
+              if (createUserError || !newUser) {
+                console.warn('Password update requested but user not found and could not create user. Skipping password update:', latestEmail, createUserError);
+              } else {
+                targetUserId = newUser.id;
+                // Backfill psychologists.user_id for future updates
+                await supabaseAdmin
+                  .from('psychologists')
+                  .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
+                  .eq('id', psychologistId);
+              }
+            } else {
+              targetUserId = userByEmail.id;
+              // Backfill psychologists.user_id for future updates
+              await supabaseAdmin
+                .from('psychologists')
+                .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
+                .eq('id', psychologistId);
+            }
+          }
+        }
+
+        if (targetUserId) {
+          const hashedPassword = await hashPassword(password);
+          // Update linked user account (if present)
+          const { error: userPasswordUpdateError } = await supabaseAdmin
+            .from('users')
+            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
+            .eq('id', targetUserId);
+
+          if (userPasswordUpdateError) {
+            console.error('❌ Error updating user password:', userPasswordUpdateError);
+          }
+
+          // Ensure psychologist can login with the new password as well
+          const { error: psychPwUpdateError } = await supabaseAdmin
+            .from('psychologists')
+            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
+            .eq('id', psychologistId);
+
+          if (psychPwUpdateError) {
+            console.error('❌ Error updating psychologist password_hash:', psychPwUpdateError);
+          }
+        }
+      } catch (pwError) {
+        console.error('❌ Exception during password update:', pwError);
+        // Skip password update exception but continue with profile update
+      }
+    }
+
+    // Handle individual price by storing it in the dedicated field
+    if (price !== undefined) {
+      console.log('💰 Individual price provided:', price);
+      console.log('💰 Psychologist ID:', psychologistId);
+      console.log('💰 Price type:', typeof price);
+      console.log('💰 Parsed price:', parseInt(price));
+      
+      try {
+        // Store price in the dedicated individual_session_price field (as integer)
+        const { error: priceUpdateError } = await supabaseAdmin
+          .from('psychologists')
+          .update({ individual_session_price: parseInt(price) })
+          .eq('id', psychologistId);
+
+        if (priceUpdateError) {
+          console.error('❌ Error updating individual_session_price:', priceUpdateError);
+        } else {
+          console.log('✅ Individual session price updated successfully');
+          // Update the local copy for response
+          updatedPsychologist.individual_session_price = parseInt(price);
+        }
+      } catch (priceError) {
+        console.error('❌ Exception during price update:', priceError);
+        // Continue even if price update fails
+      }
     }
 
     // Handle packages if provided
