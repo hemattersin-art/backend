@@ -990,7 +990,8 @@ const bookSession = async (req, res) => {
       google_calendar_event_id: meetData.eventId,
       google_meet_link: meetData.meetLink,
       google_calendar_link: meetData.calendarLink,
-      price: price || (packageData?.price || 100) // Default to $100 for individual sessions
+      price: price || (packageData?.price || 100), // Default to $100 for individual sessions
+      original_scheduled_date: formatDate(scheduled_date)
     };
 
     // Only add package_id if it's provided and valid (not individual)
@@ -2121,6 +2122,7 @@ const rescheduleSession = async (req, res) => {
       .single();
 
     // Update session with new date/time (Meet link will be added later in background)
+    // Do NOT update original_scheduled_date — it stays as the first scheduled date forever
     const updateData = {
       scheduled_date: formatDate(new_date),
       scheduled_time: formatTime(new_time),
@@ -3684,7 +3686,8 @@ const bookRemainingSession = async (req, res) => {
       google_calendar_event_id: null, // Will be updated async
       google_meet_link: fallbackMeetLink, // Fallback initially, will be updated async
       google_calendar_link: null, // Will be updated async
-      price: 0 // Free since it's from a package
+      price: 0, // Free since it's from a package
+      original_scheduled_date: formatDate(scheduled_date)
     };
 
     const { data: session, error: sessionError } = await supabaseAdmin
@@ -4480,7 +4483,8 @@ const bookSessionWithCredit = async (req, res) => {
       scheduled_time,
       status: 'booked',
       price: payment.amount,
-      payment_id: payment.id
+      payment_id: payment.id,
+      original_scheduled_date: scheduled_date
     };
 
     if (meetData) {

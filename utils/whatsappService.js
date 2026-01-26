@@ -592,4 +592,5 @@ module.exports = {
   sendSessionCompletionNotification,
   formatPhoneNumber,
   normalizePhoneNumber, // Export for testing if needed
+  formatFriendlyTime, // Export for manual booking
 };

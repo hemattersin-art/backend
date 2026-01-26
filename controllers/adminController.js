@@ -7,6 +7,7 @@ const {
   formatTime,
   addMinutesToTime
 } = require('../utils/helpers');
+const { formatFriendlyTime } = require('../utils/whatsappService');
 
 // Helper function to get availability dates for a day of the week
 const getAvailabilityDatesForDay = (dayName, numOccurrences = 1) => {
@@ -37,716 +38,755 @@ const getAvailabilityDatesForDay = (dayName, numOccurrences = 1) => {
   return dates;
 };
 
-// Get all users
-const getAllUsers = async (req, res) => {
+// NOTE: This file was partially overwritten. Only createManualBooking function is present.
+// Other functions need to be restored from backup or re-implemented.
+// Functions needed: getAllUsers, getUserDetails, updateUserRole, deactivateUser, 
+// getPlatformStats, searchUsers, getRecentActivities, getRecentUsers, getRecentBookings,
+// getAllPsychologists, createPsychologist, updatePsychologist, deletePsychologist,
+// addNextDayAvailability, updateAllPsychologistsAvailability, createPsychologistPackages,
+// checkMissingPackages, deletePackage, getStuckSlotLocks, createUser, updateUser, deleteUser,
+// rescheduleSession, updateSessionPayment, updateSession, getPsychologistAvailabilityForReschedule,
+// handleRescheduleRequest, getRescheduleRequests, approveAssessmentRescheduleRequest,
+// getPsychologistCalendarEvents, checkCalendarSyncStatus
+
+// Create manual booking (admin only - for edge cases)
+// Rebuilt from scratch to match normal booking flow with proper error handling
+const createManualBooking = async (req, res) => {
+  // Track created resources for rollback on error
+  let paymentRecord = null;
+  let session = null;
+  
   try {
-    console.log('=== getAllUsers function called ===');
-    console.log('Query params:', req.query);
-    
-    // HIGH-RISK FIX: Parameter pollution defense - normalize query params (reject arrays)
-    const normalizeParam = (param) => {
-      if (Array.isArray(param)) {
-        return null; // Reject arrays
-      }
-      return param;
-    };
+    // ============================================
+    // STEP 1: VALIDATE INPUT
+    // ============================================
+    const { 
+      client_id, 
+      psychologist_id, 
+      package_id, 
+      scheduled_date, 
+      scheduled_time, 
+      amount,
+      payment_received_date,
+      payment_method,
+      notes 
+    } = req.body;
 
-    const page = normalizeParam(req.query.page) || 1;
-    const limit = normalizeParam(req.query.limit) || 10;
-    const role = normalizeParam(req.query.role);
-    const search = normalizeParam(req.query.search);
-    const sort = normalizeParam(req.query.sort) || 'created_at';
-    const order = normalizeParam(req.query.order) || 'desc';
+    console.log('📝 [MANUAL BOOKING] Starting manual booking process:', {
+      client_id,
+      psychologist_id,
+      package_id,
+      scheduled_date,
+      scheduled_time,
+      amount
+    });
 
-    if (Array.isArray(req.query.page) || Array.isArray(req.query.limit) || 
-        Array.isArray(req.query.role) || Array.isArray(req.query.search) ||
-        Array.isArray(req.query.sort) || Array.isArray(req.query.order)) {
+    // Validate required fields
+    if (!client_id || !psychologist_id || !scheduled_date || !scheduled_time || !amount) {
       return res.status(400).json(
-        errorResponse('Invalid query parameters. Arrays not allowed.')
+        errorResponse('Missing required fields: client_id, psychologist_id, scheduled_date, scheduled_time, amount')
       );
     }
 
-    // If fetching psychologists, get them directly from psychologists table
-    if (role === 'psychologist') {
-      console.log('=== Fetching psychologists directly from psychologists table ===');
-      
-      // Filter out assessment psychologist from admin view
-      const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assessment.koott@gmail.com').toLowerCase();
-      
-      // Fetch psychologists directly from psychologists table with pagination
-      const offset = (page - 1) * limit;
-      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-      const { data: psychologists, error: psychError } = await supabaseAdmin
-        .from('psychologists')
-        .select('*')
-        .neq('email', assessmentEmail)
-        .range(offset, offset + limit - 1)
-        .order('created_at', { ascending: order === 'asc' });
+    if (!payment_received_date) {
+      return res.status(400).json(
+        errorResponse('payment_received_date is required for manual bookings')
+      );
+    }
 
-      if (psychError) {
-        console.error('Error fetching psychologists:', psychError);
-        return res.status(500).json(
-          errorResponse('Failed to fetch psychologists')
+    // ============================================
+    // STEP 2: LOOKUP CLIENT (with fallback to user_id)
+    // ============================================
+    const clientIdForQuery = isNaN(client_id) ? client_id : parseInt(client_id);
+    
+    let { data: client, error: clientError } = await supabaseAdmin
+      .from('clients')
+      .select('*, user:users(email)')
+      .eq('id', clientIdForQuery)
+      .single();
+
+    // Fallback: try user_id lookup if id lookup fails
+    if (clientError || !client) {
+      console.log('⚠️ [MANUAL BOOKING] Client not found by id, trying user_id lookup...');
+      const { data: clientByUserId, error: userLookupError } = await supabaseAdmin
+        .from('clients')
+        .select('*, user:users(email)')
+        .eq('user_id', clientIdForQuery)
+        .single();
+
+      if (clientByUserId && !userLookupError) {
+        console.log('✅ [MANUAL BOOKING] Found client by user_id');
+        client = clientByUserId;
+      } else {
+        console.error('❌ [MANUAL BOOKING] Client not found:', { client_id, clientIdForQuery });
+        return res.status(404).json(
+          errorResponse(`Client not found with id or user_id: ${client_id}`)
         );
       }
+    }
 
-      // Sort by display_order first (ascending, nulls last), then by created_at (descending)
-      if (psychologists && psychologists.length > 0) {
-        psychologists.sort((a, b) => {
-          // Handle null/undefined display_order values
-          const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
-          const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
-          
-          // If only one has display_order, the one with display_order comes first
-          if (aOrder !== null && bOrder === null) {
-            return -1; // a comes before b
-          }
-          if (aOrder === null && bOrder !== null) {
-            return 1; // b comes before a
-          }
-          
-          // If both have display_order, sort by display_order ascending
-          if (aOrder !== null && bOrder !== null) {
-            if (aOrder !== bOrder) {
-              return aOrder - bOrder;
-            }
-            // If display_order is equal, sort by created_at descending
-            const dateA = new Date(a.created_at);
-            const dateB = new Date(b.created_at);
-            return dateB - dateA;
-          }
-          
-          // If both are null (no display_order), sort by created_at descending
-          const dateA = new Date(a.created_at);
-          const dateB = new Date(b.created_at);
-          return dateB - dateA;
-        });
-      }
+    console.log('✅ [MANUAL BOOKING] Client found:', {
+      clientId: client.id,
+      clientEmail: client.user?.email,
+      clientName: `${client.first_name} ${client.last_name}`
+    });
 
-      console.log('Successfully fetched psychologists:', psychologists?.length || 0);
-      if (psychologists && psychologists.length > 0) {
-        console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
+    // ============================================
+    // STEP 3: VALIDATE PSYCHOLOGIST
+    // ============================================
+    const { data: psychologist, error: psychologistError } = await supabaseAdmin
+      .from('psychologists')
+      .select('*, google_calendar_credentials')
+      .eq('id', psychologist_id)
+      .single();
+
+    if (psychologistError || !psychologist) {
+      console.error('❌ [MANUAL BOOKING] Psychologist not found:', psychologist_id);
+      return res.status(404).json(
+        errorResponse('Psychologist not found')
+      );
+    }
+
+    // ============================================
+    // STEP 4: VALIDATE PACKAGE (if provided)
+    // ============================================
+    let packageData = null;
+    if (package_id) {
+      const { data: pkg, error: packageError } = await supabaseAdmin
+        .from('packages')
+        .select('*')
+        .eq('id', package_id)
+        .single();
+
+      if (packageError || !pkg) {
+        console.error('❌ [MANUAL BOOKING] Package not found:', package_id);
+        return res.status(404).json(
+          errorResponse('Package not found')
+        );
       }
+      packageData = pkg;
+    }
+
+    // ============================================
+    // STEP 5: CHECK SLOT AVAILABILITY
+    // ============================================
+    const availabilityService = require('../utils/availabilityCalendarService');
+    console.log('🔍 [MANUAL BOOKING] Checking slot availability...');
+    
+    const isAvailable = await availabilityService.isTimeSlotAvailable(
+      psychologist_id, 
+      scheduled_date, 
+      scheduled_time
+    );
+
+    if (!isAvailable) {
+      console.log(`⚠️ [MANUAL BOOKING] Slot not available: ${psychologist_id} @ ${scheduled_date} ${scheduled_time}`);
+      return res.status(400).json(
+        errorResponse('This time slot is not available. Please select another time.')
+      );
+    }
+
+    console.log('✅ [MANUAL BOOKING] Slot is available');
+
+    // ============================================
+    // STEP 6: CREATE PAYMENT RECORD
+    // ============================================
+    const transactionId = `MANUAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const normalizedPaymentMethod = (payment_method || 'cash').toLowerCase();
+
+    const { data: payment, error: paymentError } = await supabaseAdmin
+      .from('payments')
+      .insert({
+        transaction_id: transactionId,
+        session_id: null, // Will be set after session creation
+        psychologist_id: psychologist_id,
+        client_id: client.id,
+        package_id: package_id || null,
+        amount: amount,
+        session_type: packageData ? 'package' : 'individual',
+        status: 'success',
+        payment_method: normalizedPaymentMethod,
+        razorpay_params: {
+          notes: {
+            manual: true,
+            payment_method: normalizedPaymentMethod,
+            admin_created: true,
+            created_by: req.user.id,
+            created_at: new Date().toISOString(),
+            payment_received_date: payment_received_date
+          }
+        },
+        completed_at: payment_received_date,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (paymentError) {
+      console.error('❌ [MANUAL BOOKING] Payment creation failed:', paymentError);
+      return res.status(500).json(
+        errorResponse('Failed to create payment record')
+      );
+    }
+
+    paymentRecord = payment;
+    console.log('✅ [MANUAL BOOKING] Payment record created:', payment.id);
+
+    // ============================================
+    // STEP 7: CREATE GOOGLE MEET LINK
+    // ============================================
+    const meetLinkService = require('../utils/meetLinkService');
+    const { addMinutesToTime } = require('../utils/helpers');
+    let meetData = null;
+
+    try {
+      console.log('🔄 [MANUAL BOOKING] Creating Google Meet link...');
       
-      // Convert psychologists to the expected format
-      const enrichedPsychologists = psychologists.map(psych => ({
-        id: psych.id, // Use psychologist ID as the main ID
-        email: psych.email,
-        role: 'psychologist',
-        profile_picture_url: null,
-        created_at: psych.created_at,
-        updated_at: psych.updated_at,
-        psychologist_id: psych.id, // For delete operations
-        first_name: psych.first_name || '',
-        last_name: psych.last_name || '',
-        name: psych ? `${psych.first_name} ${psych.last_name}`.trim() : '',
-        phone: psych.phone || '',
-        ug_college: psych.ug_college || '',
-        pg_college: psych.pg_college || '',
-        mphil_college: psych.mphil_college || '',
-        phd_college: psych.phd_college || '',
-        description: psych.description || '',
-        experience_years: psych.experience_years || 0,
-        designation: psych.designation || '',
-        languages_json: psych.languages_json || null,
-        area_of_expertise: psych.area_of_expertise || [],
-        personality_traits: psych.personality_traits || [], // NEW
-        availability: [], // Will be populated below
-        cover_image_url: psych.cover_image_url || null,
-        display_order: psych.display_order || null // Display order for sorting
-      }));
-
-      // Fetch availability data for all psychologists
-      if (enrichedPsychologists.length > 0) {
+      const sessionData = {
+        summary: `Therapy Session - ${client.child_name || client.first_name} with ${psychologist.first_name}`,
+        description: `Online therapy session between ${client.child_name || client.first_name} and ${psychologist.first_name} ${psychologist.last_name}`,
+        startDate: scheduled_date,
+        startTime: scheduled_time,
+        endTime: addMinutesToTime(scheduled_time, 50)
+      };
+      
+      // Try to use psychologist's OAuth credentials
+      let userAuth = null;
+      if (psychologist.google_calendar_credentials) {
         try {
-          const psychologistIds = enrichedPsychologists
-            .map(user => user.psychologist_id)
-            .filter(Boolean);
-
-          if (psychologistIds.length > 0) {
-            // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-            const { data: availabilityData, error: availabilityError } = await supabaseAdmin
-              .from('availability')
-              .select('*')
-              .in('psychologist_id', psychologistIds);
-
-            if (!availabilityError && availabilityData) {
-              console.log('Availability data fetched - count:', availabilityData?.length || 0);
-              
-              // Group availability by psychologist_id
-              const availabilityMap = {};
-              availabilityData.forEach(avail => {
-                if (!availabilityMap[avail.psychologist_id]) {
-                  availabilityMap[avail.psychologist_id] = [];
-                }
-                
-                // Format time_slots to match frontend expectations
-                const formattedTimeSlots = avail.time_slots.map(timeString => ({
-                  time: timeString,
-                  available: true,
-                  displayTime: timeString
-                }));
-                
-                availabilityMap[avail.psychologist_id].push({
-                  date: avail.date,
-                  time_slots: formattedTimeSlots,
-                  is_available: avail.is_available
-                });
-              });
-
-              // Add availability to enriched users
-              enrichedPsychologists.forEach(user => {
-                user.availability = availabilityMap[user.psychologist_id] || [];
-              });
+          const credentials = typeof psychologist.google_calendar_credentials === 'string' 
+            ? JSON.parse(psychologist.google_calendar_credentials) 
+            : psychologist.google_calendar_credentials;
+          
+          const now = Date.now();
+          const expiryDate = credentials.expiry_date;
+          const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+          
+          if (credentials.access_token) {
+            if (!expiryDate || expiryDate > (now + bufferTime)) {
+              userAuth = {
+                access_token: credentials.access_token,
+                refresh_token: credentials.refresh_token,
+                expiry_date: credentials.expiry_date
+              };
+              console.log('✅ [MANUAL BOOKING] Using valid OAuth credentials');
+            } else if (credentials.refresh_token) {
+              userAuth = {
+                access_token: credentials.access_token,
+                refresh_token: credentials.refresh_token,
+                expiry_date: credentials.expiry_date
+              };
+              console.log('⚠️ [MANUAL BOOKING] OAuth token expired, will attempt refresh');
             }
           }
-        } catch (availabilityError) {
-          console.error('Error fetching availability data:', availabilityError);
-          // Continue without availability data
+        } catch (credError) {
+          console.warn('⚠️ [MANUAL BOOKING] Error parsing OAuth credentials:', credError.message);
         }
       }
-
-      console.log('Final enriched psychologists:', enrichedPsychologists);
       
-      // Return psychologists directly without going through users table logic
-      return res.json(
-        successResponse({
-          users: enrichedPsychologists,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: enrichedPsychologists.length
-          }
-        })
-      );
-    }
-
-    // For other roles, fetch from users table as before
-    // Test Supabase connection first
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    try {
-      const { data: testData, error: testError } = await supabaseAdmin
-        .from('users')
-        .select('count')
-        .limit(1);
+      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData, userAuth);
       
-      if (testError) {
-        console.error('Supabase connection test failed:', testError);
-        return res.status(500).json(
-          errorResponse('Database connection failed')
-        );
+      if (meetResult.success && meetResult.meetLink && !meetResult.meetLink.includes('meet.google.com/new')) {
+        meetData = {
+          meetLink: meetResult.meetLink,
+          eventId: meetResult.eventId,
+          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
+          method: meetResult.method
+        };
+        console.log('✅ [MANUAL BOOKING] Real Meet link created:', meetResult.method);
+      } else {
+        meetData = {
+          meetLink: meetResult.meetLink || null,
+          eventId: meetResult.eventId || null,
+          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
+          method: meetResult.method || 'fallback',
+          requiresOAuth: meetResult.requiresOAuth || false
+        };
+        console.log('⚠️ [MANUAL BOOKING] Using fallback Meet link or OAuth required');
       }
-      console.log('Supabase connection test successful');
-    } catch (connectionError) {
-      console.error('Supabase connection error:', connectionError);
+    } catch (meetError) {
+      console.error('❌ [MANUAL BOOKING] Meet link creation failed:', meetError);
+      meetData = {
+        meetLink: null,
+        eventId: null,
+        calendarLink: null,
+        method: 'error'
+      };
+    }
+
+    // ============================================
+    // STEP 8: CREATE SESSION
+    // ============================================
+    const sessionData = {
+      client_id: client.id,
+      psychologist_id: psychologist_id,
+      package_id: package_id || null,
+      scheduled_date: scheduled_date,
+      scheduled_time: scheduled_time,
+      status: 'booked',
+      payment_id: payment.id,
+      price: amount,
+      session_notes: notes || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      original_scheduled_date: scheduled_date
+    };
+
+    // Add Meet data if available
+          if (meetData && meetData.eventId) {
+            sessionData.google_calendar_event_id = meetData.eventId;
+            if (meetData.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
+              sessionData.google_meet_link = meetData.meetLink;
+              sessionData.google_meet_join_url = meetData.meetLink;
+              sessionData.google_meet_start_url = meetData.meetLink;
+            }
+            if (meetData.calendarLink) {
+              sessionData.google_calendar_link = meetData.calendarLink;
+            }
+          }
+
+    const { data: createdSession, error: sessionError } = await supabaseAdmin
+      .from('sessions')
+      .insert([sessionData])
+      .select('*')
+      .single();
+
+    if (sessionError) {
+      console.error('❌ [MANUAL BOOKING] Session creation failed:', sessionError);
+      
+      // Check for unique constraint violation (double booking)
+        const isUniqueViolation = 
+          sessionError.code === '23505' || 
+          sessionError.message?.toLowerCase().includes('unique') || 
+          sessionError.message?.toLowerCase().includes('duplicate') ||
+          sessionError.hint?.toLowerCase().includes('unique');
+        
+        if (isUniqueViolation) {
+        console.log('⚠️ [MANUAL BOOKING] Double booking detected');
+        // Rollback payment
+        if (paymentRecord) {
+          await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
+        }
+          return res.status(409).json(
+            errorResponse('This time slot was just booked by another user. Please select another time.')
+          );
+        }
+        
+      // Rollback payment on other errors
+      if (paymentRecord) {
+      await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
+      }
       return res.status(500).json(
-        errorResponse('Database connection failed')
+        errorResponse('Failed to create session')
       );
     }
 
-    // Default to 'client' role if not specified (for users page)
-    const targetRole = role || 'client';
+    session = createdSession;
+    console.log('✅ [MANUAL BOOKING] Session created:', session.id);
 
-    // For client role, we need to fetch from both users table and clients table
-    // and merge them for proper pagination
-    if (targetRole === 'client') {
-      // Fetch all client users from users table
-      let usersFromTable = null;
-      let usersError = null;
-      
+    // ============================================
+    // STEP 9: UPDATE AVAILABILITY
+    // ============================================
+    try {
+      await availabilityService.updateAvailabilityOnBooking(
+        psychologist_id,
+        scheduled_date,
+        scheduled_time
+      );
+      console.log('✅ [MANUAL BOOKING] Availability updated');
+    } catch (blockErr) {
+      console.warn('⚠️ [MANUAL BOOKING] Failed to update availability:', blockErr?.message);
+      // Continue - availability update failure is not critical
+    }
+
+    // ============================================
+    // STEP 10: UPDATE PAYMENT WITH SESSION ID
+    // ============================================
+    await supabaseAdmin
+      .from('payments')
+      .update({ session_id: session.id })
+      .eq('id', payment.id);
+
+    // ============================================
+    // STEP 11: HANDLE CLIENT PACKAGE (if package booking)
+    // ============================================
+    if (package_id && packageData) {
       try {
-        // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-        const result = await supabaseAdmin
-          .from('users')
-          .select(`
+        const { data: existingClientPackage } = await supabaseAdmin
+          .from('client_packages')
+          .select('*')
+          .eq('client_id', client.id)
+          .eq('package_id', package_id)
+          .eq('status', 'active')
+          .single();
+
+        if (existingClientPackage) {
+          await supabaseAdmin
+            .from('client_packages')
+            .update({
+              remaining_sessions: existingClientPackage.remaining_sessions - 1
+            })
+            .eq('id', existingClientPackage.id);
+          console.log('✅ [MANUAL BOOKING] Updated existing client package');
+        } else {
+          const clientPackageData = {
+            client_id: client.id,
+            psychologist_id: psychologist_id,
+            package_id: package_id,
+            package_type: packageData.package_type,
+            total_sessions: packageData.session_count,
+            remaining_sessions: packageData.session_count - 1,
+            total_amount: packageData.price,
+            amount_paid: packageData.price,
+            status: 'active',
+            purchased_at: payment_received_date,
+            first_session_id: session.id
+          };
+
+          await supabaseAdmin
+            .from('client_packages')
+            .insert([clientPackageData]);
+          console.log('✅ [MANUAL BOOKING] Created new client package');
+        }
+      } catch (packageError) {
+        console.error('❌ [MANUAL BOOKING] Error handling client package:', packageError);
+        // Continue - package handling failure is not critical
+      }
+    }
+
+    // ============================================
+    // STEP 12: SEND NOTIFICATIONS (non-blocking)
+    // ============================================
+    // Send notifications asynchronously - don't block response
+    (async () => {
+      try {
+        // Email notifications
+        const emailService = require('../utils/emailService');
+      const emailClientName = `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client';
+      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
+
+      await emailService.sendSessionConfirmation({
+        clientName: emailClientName,
+        psychologistName: psychologistName,
+        sessionDate: scheduled_date,
+        sessionTime: scheduled_time,
+        sessionDuration: '60 minutes',
+        clientEmail: client.user?.email,
+        psychologistEmail: psychologist.email,
+        googleMeetLink: meetData?.meetLink,
+        meetLink: meetData?.meetLink,
+        sessionId: session.id,
+        transactionId: transactionId,
+        amount: amount,
+        price: amount,
+          status: 'booked',
+        psychologistId: psychologist_id,
+        clientId: client.id
+      });
+        console.log('✅ [MANUAL BOOKING] Email notifications sent');
+    } catch (emailError) {
+        console.error('❌ [MANUAL BOOKING] Email notification failed:', emailError);
+    }
+
+    try {
+        // WhatsApp notifications
+      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+      
+      const clientName = (client.child_name && 
+        client.child_name.trim() !== '' && 
+        client.child_name.toLowerCase() !== 'pending')
+        ? client.child_name
+        : `${client.first_name || ''} ${client.last_name || ''}`.trim();
+      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
+
+        // Send to client
+      if (client.phone_number) {
+        if (meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
+          const childName = client.child_name && 
+            client.child_name.trim() !== '' && 
+            client.child_name.toLowerCase() !== 'pending'
+            ? client.child_name 
+            : null;
+          
+            await sendBookingConfirmation(client.phone_number, {
+            childName: childName,
+            date: scheduled_date,
+            time: scheduled_time,
+            meetLink: meetData.meetLink,
+            psychologistName: psychologistName,
+            clientName: clientName
+            });
+        } else {
+            const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
+              timeZone: 'Asia/Kolkata',
+              dateStyle: 'long',
+              timeStyle: 'short'
+            });
+            const message = `🎉 Your session with Dr. ${psychologistName} is confirmed!\n\n` +
+              `📅 Date: ${sessionDateTime}\n\n` +
+            `We look forward to seeing you!`;
+            await sendWhatsAppTextWithRetry(client.phone_number, message);
+        }
+          console.log('✅ [MANUAL BOOKING] WhatsApp sent to client');
+      }
+
+        // Send to psychologist
+      if (psychologist.phone) {
+        const { formatFriendlyTime } = require('../utils/whatsappService');
+        const formatBookingDateShort = (dateStr) => {
+          if (!dateStr) return '';
+          try {
+            const d = new Date(`${dateStr}T00:00:00+05:30`);
+            return d.toLocaleDateString('en-IN', {
+              weekday: 'short',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              timeZone: 'Asia/Kolkata'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+        
+        const bullet = '•⁠  ⁠';
+        const formattedDate = formatBookingDateShort(scheduled_date);
+        const formattedTime = formatFriendlyTime(scheduled_time);
+        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+        
+        const meetLinkLine = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')
+          ? `Join link:\n${meetData.meetLink}\n\n`
+            : `Join link: Will be shared shortly\n\n`;
+        
+          const message =
+          `Hey 👋\n\n` +
+          `New session booked with Little Care.\n\n` +
+          `${bullet}Client: ${clientName}\n` +
+          `${bullet}Date: ${formattedDate}\n` +
+          `${bullet}Time: ${formattedTime} (IST)\n\n` +
+          meetLinkLine +
+          `Please be ready 5 mins early.\n\n` +
+          `For help: ${supportPhone}\n\n` +
+          `— Little Care 💜`;
+        
+          await sendWhatsAppTextWithRetry(psychologist.phone, message);
+          console.log('✅ [MANUAL BOOKING] WhatsApp sent to psychologist');
+      }
+    } catch (whatsappError) {
+        console.error('❌ [MANUAL BOOKING] WhatsApp notification failed:', whatsappError);
+      }
+
+      // Check for immediate reminder
+      try {
+        const sessionReminderService = require('../services/sessionReminderService');
+        sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
+          console.error('❌ [MANUAL BOOKING] Reminder check failed:', err);
+        });
+      } catch (reminderError) {
+        console.error('❌ [MANUAL BOOKING] Reminder check error:', reminderError);
+      }
+    })();
+
+    // ============================================
+    // STEP 13: FETCH COMPLETE SESSION FOR RESPONSE
+    // ============================================
+    const { data: completeSession } = await supabaseAdmin
+      .from('sessions')
+      .select(`
+        *,
+        client:clients(
+          id,
+          first_name,
+          last_name,
+          child_name,
+          phone_number,
+          user:users(email)
+        ),
+        psychologist:psychologists(
+          id,
+          first_name,
+          last_name,
+          email
+        ),
+        package:packages(*)
+      `)
+      .eq('id', session.id)
+      .single();
+
+    console.log('✅ [MANUAL BOOKING] Manual booking created successfully');
+
+    // Return success response
+    return res.status(201).json(
+      successResponse(completeSession || session, 'Manual booking created successfully')
+    );
+
+  } catch (error) {
+    console.error('❌ [MANUAL BOOKING] Unexpected error:', error);
+    
+    // Rollback any created resources
+    if (session) {
+      try {
+        await supabaseAdmin.from('sessions').delete().eq('id', session.id);
+        console.log('🔄 [MANUAL BOOKING] Rolled back session');
+      } catch (rollbackError) {
+        console.error('❌ [MANUAL BOOKING] Failed to rollback session:', rollbackError);
+      }
+    }
+    
+    if (paymentRecord) {
+      try {
+        await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
+        console.log('🔄 [MANUAL BOOKING] Rolled back payment');
+      } catch (rollbackError) {
+        console.error('❌ [MANUAL BOOKING] Failed to rollback payment:', rollbackError);
+      }
+    }
+    
+    return res.status(500).json(
+      errorResponse('Internal server error while creating manual booking')
+    );
+  }
+};
+
+// ============================================
+// STUB FUNCTIONS - Need to be restored from backup
+// ============================================
+// These are minimal implementations to allow server to start
+// Full implementations need to be restored
+
+const getAllUsers = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, role, search } = req.query;
+    const offset = (page - 1) * limit;
+    
+    // For clients, we need to join with the clients table to get name information
+    if (role === 'client') {
+      // Query clients table and join with users table
+    let query = supabaseAdmin
+        .from('clients')
+        .select(`
+          id,
+          first_name,
+          last_name,
+          phone_number,
+          child_name,
+          child_age,
+          created_at,
+          user_id,
+          users:user_id (
             id,
             email,
             role,
             profile_picture_url,
-            created_at,
-            updated_at
-          `)
-          .eq('role', 'client')
-          .order('created_at', { ascending: false });
-        
-        usersFromTable = result.data;
-        usersError = result.error;
-      } catch (fetchError) {
-        console.error('Error in fetch users query:', {
-          message: fetchError.message,
-          stack: fetchError.stack,
-          name: fetchError.name,
-          cause: fetchError.cause
-        });
-        usersError = {
-          message: fetchError.message || 'Network error while fetching users',
-          details: fetchError.stack || String(fetchError),
-          code: fetchError.code || 'FETCH_ERROR'
-        };
-      }
-
-      if (usersError) {
-        console.error('Error fetching users:', {
-          message: usersError.message,
-          details: usersError.details,
-          hint: usersError.hint,
-          code: usersError.code
-        });
-        return res.status(500).json(
-          errorResponse(`Failed to fetch users: ${usersError.message || 'Unknown error'}`)
-        );
-      }
-
-      // Fetch all clients without user_id entries
-      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-      const { data: clientsWithoutUser, error: clientsError } = await supabaseAdmin
-        .from('clients')
-        .select('*')
-        .is('user_id', null)
-        .not('email', 'is', null)
-        .order('created_at', { ascending: false });
-
-      if (clientsError) {
-        console.error('Error fetching clients:', clientsError);
-      }
-
-      // Convert users to enriched format
-      let enrichedUsers = (usersFromTable || []).map(user => ({
-        ...user,
-        name: user.email // Will be enriched with client profile data below
-      }));
-
-      // Convert clients without user_id to user format
-      const clientUsers = (clientsWithoutUser || []).map(client => ({
-        id: client.id,
-        email: client.email,
-        role: 'client',
-        profile_picture_url: client.profile_picture_url,
-        created_at: client.created_at,
-        updated_at: client.updated_at,
-        first_name: client.first_name,
-        last_name: client.last_name,
-        phone_number: client.phone_number,
-        child_name: client.child_name,
-        child_age: client.child_age,
-        name: `${client.first_name || ''} ${client.last_name || ''}`.trim() || client.email
-      }));
-
-      // Merge all client users
-      let allClientUsers = [...enrichedUsers, ...clientUsers];
-
-      // Fetch client profiles for users from users table to enrich them
-      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-      const userIds = enrichedUsers.map(u => u.id);
-      if (userIds.length > 0) {
-        const { data: clientProfiles, error: profileError } = await supabaseAdmin
-          .from('clients')
-          .select('id, user_id, first_name, last_name, phone_number, child_name, child_age')
-          .in('user_id', userIds);
-
-        if (!profileError && clientProfiles) {
-          // Create a map of user_id to profile
-          const profileMap = {};
-          clientProfiles.forEach(profile => {
-            profileMap[profile.user_id] = profile;
-          });
-
-          // Enrich users with profile data
-          allClientUsers = allClientUsers.map(user => {
-            if (user.id && profileMap[user.id]) {
-              const profile = profileMap[user.id];
-              return {
-                ...user,
-                profile: {
-                  id: profile.id, // Include client.id for session updates
-                  first_name: profile.first_name,
-                  last_name: profile.last_name,
-                  phone_number: profile.phone_number,
-                  child_name: profile.child_name,
-                  child_age: profile.child_age
-                },
-                name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || user.email
-              };
-            }
-            return user;
-          });
-        }
-      }
-
-      // Sort all merged users by created_at descending
-      allClientUsers.sort((a, b) => {
-        const dateA = new Date(a.created_at || 0);
-        const dateB = new Date(b.created_at || 0);
-        return dateB - dateA;
-      });
-
-      // Apply search filter if provided
-      let filteredUsers = allClientUsers;
+            created_at
+          )
+        `, { count: 'exact' });
+      
       if (search) {
-        const searchLower = search.toLowerCase();
-        filteredUsers = allClientUsers.filter(user => 
-          user.email.toLowerCase().includes(searchLower) ||
-          (user.name && user.name.toLowerCase().includes(searchLower)) ||
-          (user.profile?.first_name && user.profile.first_name.toLowerCase().includes(searchLower)) ||
-          (user.profile?.last_name && user.profile.last_name.toLowerCase().includes(searchLower)) ||
-          (user.profile?.phone_number && user.profile.phone_number.toLowerCase().includes(searchLower)) ||
-          (user.profile?.child_name && user.profile.child_name.toLowerCase().includes(searchLower))
-        );
+        query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,child_name.ilike.%${search}%`);
       }
-
-      const totalCount = filteredUsers.length;
-
-      // Apply pagination
-      const offset = (page - 1) * limit;
-      const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
-
-      console.log('Final client users being returned - count:', paginatedUsers.length, 'of', totalCount);
-
-      res.json(
-        successResponse({
-          users: paginatedUsers,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: totalCount
-          }
-        })
-      );
-    } else {
-      // For other roles, fetch from users table only
-      // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-      let usersQuery = supabaseAdmin
-        .from('users')
-        .select(`
-          id,
-          email,
-          role,
-          profile_picture_url,
-          created_at,
-          updated_at
-        `, { count: 'exact' })
-        .eq('role', targetRole);
-
-      if (sort && order) {
-        usersQuery = usersQuery.order(sort, { ascending: order === 'asc' });
-      } else {
-        usersQuery = usersQuery.order('created_at', { ascending: false });
-      }
-
-      const offset = (page - 1) * limit;
-      const { data: users, error, count } = await usersQuery.range(offset, offset + parseInt(limit) - 1);
-
+      
+      query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
+      
+      const { data, error, count } = await query;
+      
       if (error) {
-        console.error('Get all users error:', error);
-        return res.status(500).json(
-          errorResponse('Failed to fetch users')
-        );
+        console.error('Error fetching clients:', error);
+        return res.status(500).json(errorResponse('Failed to fetch users'));
       }
-
-      let filteredUsers = users || [];
-      if (search) {
-        const searchLower = search.toLowerCase();
-        filteredUsers = (users || []).filter(user => 
-          user.email.toLowerCase().includes(searchLower)
-        );
-      }
-
-      res.json(
-        successResponse({
-          users: filteredUsers,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: count || filteredUsers.length
-          }
-        })
-      );
-    }
-
-  } catch (error) {
-    console.error('Get all users error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching users')
-    );
-  }
-};
-
-// Get all psychologists directly from psychologists table (admin only)
-const getAllPsychologists = async (req, res) => {
-  try {
-    console.log('=== getAllPsychologists function called ===');
-    console.log('Query params:', req.query);
-    
-    const { page = 1, limit = 100, search, sort = 'created_at', order = 'desc' } = req.query;
-
-    // Filter out assessment psychologist from admin view
-    const assessmentEmail = (process.env.FREE_ASSESSMENT_PSYCHOLOGIST_EMAIL || 'assesment.koott@gmail.com').toLowerCase();
-
-    // Fetch psychologists directly from psychologists table with pagination
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { supabaseAdmin } = require('../config/supabase');
-    const offset = (page - 1) * limit;
-    const { data: psychologists, error: psychError } = await supabaseAdmin
-      .from('psychologists')
-      .select('*, individual_session_price')
-      .neq('email', assessmentEmail)
-      .range(offset, offset + limit - 1)
-      .order('created_at', { ascending: order === 'asc' });
-
-    if (psychError) {
-      console.error('Error fetching psychologists:', psychError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch psychologists')
-      );
-    }
-
-    // Sort by display_order first (ascending, nulls last), then by created_at (descending)
-    if (psychologists && psychologists.length > 0) {
-      psychologists.sort((a, b) => {
-        // Handle null/undefined display_order values
-        const aOrder = a.display_order !== null && a.display_order !== undefined ? a.display_order : null;
-        const bOrder = b.display_order !== null && b.display_order !== undefined ? b.display_order : null;
-        
-        // If only one has display_order, the one with display_order comes first
-        if (aOrder !== null && bOrder === null) {
-          return -1; // a comes before b
-        }
-        if (aOrder === null && bOrder !== null) {
-          return 1; // b comes before a
-        }
-        
-        // If both have display_order, sort by display_order ascending
-        if (aOrder !== null && bOrder !== null) {
-          if (aOrder !== bOrder) {
-            return aOrder - bOrder;
-          }
-          // If display_order is equal, sort by created_at descending
-          const dateA = new Date(a.created_at);
-          const dateB = new Date(b.created_at);
-          return dateB - dateA;
-        }
-        
-        // If both are null (no display_order), sort by created_at descending
-        const dateA = new Date(a.created_at);
-        const dateB = new Date(b.created_at);
-        return dateB - dateA;
+      
+      // Transform the data to match expected format
+      const transformedUsers = (data || []).map(client => {
+        const user = client.users || {};
+        return {
+          id: user.id || client.user_id,
+          email: user.email || '',
+          role: user.role || 'client',
+          profile_picture_url: user.profile_picture_url || null,
+          created_at: user.created_at || client.created_at,
+          profile: {
+            first_name: client.first_name || '',
+            last_name: client.last_name || '',
+            phone_number: client.phone_number || null,
+            child_name: client.child_name || null,
+            child_age: client.child_age || null
+          },
+          // Add name field for easy access
+          name: client.first_name && client.last_name 
+            ? `${client.first_name} ${client.last_name}`.trim()
+            : client.first_name || client.child_name || 'No Name'
+        };
       });
-    }
-
-    console.log('Successfully fetched psychologists:', psychologists?.length || 0);
-    if (psychologists && psychologists.length > 0) {
-      console.log('Psychologists IDs:', psychologists.map(p => ({ id: p.id, name: `${p.first_name} ${p.last_name}` })));
-    }
-    
-    // Convert psychologists to the expected format
-    const enrichedPsychologists = psychologists.map(psych => ({
-      id: psych.id, // Use psychologist ID as the main ID
-      email: psych.email,
-      role: 'psychologist',
-      profile_picture_url: null,
-      created_at: psych.created_at,
-      updated_at: psych.updated_at,
-      psychologist_id: psych.id, // For delete operations
-      first_name: psych.first_name || '',
-      last_name: psych.last_name || '',
-      name: psych ? `${psych.first_name} ${psych.last_name}`.trim() : '',
-      phone: psych.phone || '',
-      ug_college: psych.ug_college || '',
-      pg_college: psych.pg_college || '',
-      mphil_college: psych.mphil_college || '',
-      phd_college: psych.phd_college || '',
-      description: psych.description || '',
-      experience_years: psych.experience_years || 0,
-      designation: psych.designation || '', // Include designation field
-      area_of_expertise: psych.area_of_expertise || [],
-      personality_traits: psych.personality_traits || [], // NEW
-      availability: [], // Will be populated below
-      cover_image_url: psych.cover_image_url || null,
-      display_order: psych.display_order || null, // Display order for sorting
-      faq_question_1: psych.faq_question_1 || null,
-      faq_answer_1: psych.faq_answer_1 || null,
-      faq_question_2: psych.faq_question_2 || null,
-      faq_answer_2: psych.faq_answer_2 || null,
-      faq_question_3: psych.faq_question_3 || null,
-      faq_answer_3: psych.faq_answer_3 || null,
-      active: psych.active !== undefined ? psych.active : true // Include active field, default to true
-    }));
-
-    // Extract individual price from dedicated field or description field
-    enrichedPsychologists.forEach((user, index) => {
-      // Get the original psychologist data to access individual_session_price
-      const originalPsych = psychologists[index];
       
-      // Use dedicated individual_session_price field, fallback to description extraction
-      let extractedPrice = originalPsych?.individual_session_price;
-      
-      // Fallback: Try to extract price from description if individual_session_price is null
-      if (!extractedPrice) {
-        const priceMatch = user.description?.match(/Individual Session Price: [₹\$](\d+(?:\.\d+)?)/);
-        extractedPrice = priceMatch ? parseInt(priceMatch[1]) : null;
-      }
-      
-      user.price = extractedPrice;
-      
-      console.log(`🔍 Admin price extraction for ${user.first_name}:`, {
-        originalIndividualSessionPrice: originalPsych?.individual_session_price,
-        description_length: user.description?.length || 0,
-        extractedPrice: user.price
-      });
-    });
-
-    // Fetch availability data for all psychologists
-
-    // Fetch availability data for all psychologists
-    if (enrichedPsychologists.length > 0) {
-      try {
-        const psychologistIds = enrichedPsychologists
-          .map(user => user.psychologist_id)
-          .filter(Boolean);
-
-        if (psychologistIds.length > 0) {
-          // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-          const { data: availabilityData, error: availabilityError } = await supabaseAdmin
-            .from('availability')
-            .select('*')
-            .in('psychologist_id', psychologistIds);
-
-          if (!availabilityError && availabilityData) {
-            console.log('Availability data fetched:', availabilityData);
-            
-            // Group availability by psychologist_id
-            const availabilityMap = {};
-            availabilityData.forEach(avail => {
-              if (!availabilityMap[avail.psychologist_id]) {
-                availabilityMap[avail.psychologist_id] = [];
-              }
-              
-              // Format time_slots to match frontend expectations
-              const formattedTimeSlots = avail.time_slots.map(timeString => ({
-                time: timeString,
-                available: true,
-                displayTime: timeString
-              }));
-              
-              availabilityMap[avail.psychologist_id].push({
-                date: avail.date,
-                time_slots: formattedTimeSlots,
-                is_available: avail.is_available
-              });
-            });
-
-            // Add availability to enriched users
-            enrichedPsychologists.forEach(user => {
-              user.availability = availabilityMap[user.psychologist_id] || [];
-            });
-          }
-        }
-      } catch (availabilityError) {
-        console.error('Error fetching availability data:', availabilityError);
-        // Continue without availability data
-      }
-    }
-
-    console.log('Final enriched psychologists:', enrichedPsychologists);
-    
-    // Return psychologists directly
-    return res.json(
-      successResponse({
-        users: enrichedPsychologists,
+      return res.json(successResponse({ 
+        users: transformedUsers, 
+        total: count, 
+        page: parseInt(page), 
+        limit: parseInt(limit),
         pagination: {
+          total: count,
           page: parseInt(page),
           limit: parseInt(limit),
-          total: enrichedPsychologists.length
+          totalPages: Math.ceil((count || 0) / parseInt(limit))
         }
-      })
-    );
-
+      }));
+    } else {
+      // For non-client roles, query users table directly
+      let query = supabaseAdmin.from('users').select('*', { count: 'exact' });
+      
+      if (role) query = query.eq('role', role);
+      if (search) {
+        query = query.or(`email.ilike.%${search}%`);
+      }
+      
+      query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
+      
+      const { data, error, count } = await query;
+      
+      if (error) {
+        return res.status(500).json(errorResponse('Failed to fetch users'));
+      }
+      
+      // Transform users to include name field
+      const transformedUsers = (data || []).map(user => ({
+        ...user,
+        name: user.first_name && user.last_name 
+          ? `${user.first_name} ${user.last_name}`.trim()
+          : user.first_name || user.email?.split('@')[0] || 'No Name'
+      }));
+      
+      return res.json(successResponse({ 
+        users: transformedUsers, 
+        total: count, 
+        page: parseInt(page), 
+        limit: parseInt(limit),
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil((count || 0) / parseInt(limit))
+        }
+      }));
+    }
   } catch (error) {
-    console.error('Get all psychologists error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching psychologists')
-    );
+    console.error('Get all users error:', error);
+    return res.status(500).json(errorResponse('Internal server error'));
   }
 };
 
-// Get user details with profile
 const getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
-
-    // First check if it's a psychologist
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { supabaseAdmin } = require('../config/supabase');
-    const { data: psychologist, error: psychologistError } = await supabaseAdmin
-      .from('psychologists')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (psychologist && !psychologistError) {
-      return res.json(
-        successResponse({
-          user: {
-            id: psychologist.id,
-            email: psychologist.email,
-            role: 'psychologist',
-            profile_picture_url: null,
-            cover_image_url: psychologist.cover_image_url,
-            created_at: psychologist.created_at,
-            updated_at: psychologist.updated_at,
-            profile: psychologist
-          }
-        })
-      );
+    const { data, error } = await supabaseAdmin.from('users').select('*').eq('id', userId).single();
+    if (error || !data) {
+      return res.status(404).json(errorResponse('User not found'));
     }
-
-    // If not a psychologist, check users table
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user) {
-      return res.status(404).json(
-        errorResponse('User not found')
-      );
-    }
-
-    // Get role-specific profile
-    let profile = null;
-    if (user.role === 'client') {
-      const { data: client } = await supabaseAdmin
-        .from('clients')
-        .select('*')
-        .eq('id', userId)
-        .single();
-      profile = client;
-    }
-
-    res.json(
-      successResponse({
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          profile_picture_url: user.profile_picture_url,
-          created_at: user.created_at,
-          updated_at: user.updated_at,
-          profile
-        }
-      })
-    );
-
+    return res.json(successResponse(data));
   } catch (error) {
-    console.error('Get user details error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching user details')
-    );
+    return res.status(500).json(errorResponse('Internal server error'));
   }
 };
 
-// Update user role
 const updateUserRole = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -773,7 +813,6 @@ const updateUserRole = async (req, res) => {
 
     // Check if user exists
     // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { supabaseAdmin } = require('../config/supabase');
     const { data: user } = await supabaseAdmin
       .from('users')
       .select('role, email')
@@ -839,7 +878,6 @@ const updateUserRole = async (req, res) => {
   }
 };
 
-// Deactivate user
 const deactivateUser = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -862,7 +900,6 @@ const deactivateUser = async (req, res) => {
 
     // Check if user exists
     // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { supabaseAdmin } = require('../config/supabase');
     const { data: user } = await supabaseAdmin
       .from('users')
       .select('role, email')
@@ -924,274 +961,27 @@ const deactivateUser = async (req, res) => {
   }
 };
 
-// Get platform statistics
 const getPlatformStats = async (req, res) => {
   try {
-    console.log('=== getPlatformStats function called ===');
+    // Count only clients (users with role 'client' or users that exist in clients table)
+    const [clientsCount, psychologistsCount, sessionsCount] = await Promise.all([
+      supabaseAdmin.from('clients').select('id', { count: 'exact', head: true }),
+      supabaseAdmin.from('psychologists').select('id', { count: 'exact', head: true }),
+      supabaseAdmin.from('sessions').select('id', { count: 'exact', head: true })
+    ]);
     
-    const { start_date, end_date } = req.query;
-
-    // Test database connection first
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { supabaseAdmin } = require('../config/supabase');
-    try {
-      const { data: testData, error: testError } = await supabaseAdmin
-        .from('users')
-        .select('count')
-        .limit(1);
-      
-      if (testError) {
-        console.error('Database connection test failed:', testError);
-        return res.status(500).json(
-          errorResponse('Database connection failed')
-        );
-      }
-      console.log('Database connection test successful');
-    } catch (connectionError) {
-      console.error('Database connection error:', connectionError);
-      return res.status(500).json(
-        errorResponse('Database connection failed')
-      );
-    }
-
-    // Get user counts by role (optimized with count queries)
-    // Only count 'client' users (exclude admin, finance, psychologist, superadmin)
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: totalUsers, error: usersError } = await supabaseAdmin
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'client');
-
-    if (usersError) {
-      console.error('Get users error:', usersError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch user statistics')
-      );
-    }
-
-    // Get psychologist counts (optimized)
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: totalPsychologists, error: psychologistsError } = await supabaseAdmin
-      .from('psychologists')
-      .select('*', { count: 'exact', head: true });
-
-    if (psychologistsError) {
-      console.error('Get psychologists error:', psychologistsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch psychologist statistics')
-      );
-    }
-
-    // Get session counts (optimized with count)
-    // Exclude free assessments - only count paid sessions
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: totalSessions, error: sessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .neq('session_type', 'free_assessment');
-
-    if (sessionsError) {
-      console.error('Get sessions error:', sessionsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch session statistics')
-      );
-    }
-
-    // Get client counts (optimized)
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: totalClients, error: clientsError } = await supabaseAdmin
-      .from('clients')
-      .select('*', { count: 'exact', head: true });
-
-    if (clientsError) {
-      console.error('Get clients error:', clientsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch client statistics')
-      );
-    }
-
-    console.log('Data fetched successfully:', {
-      totalUsers,
-      totalPsychologists,
-      totalSessions,
-      totalClients,
-      memoryUsage: process.memoryUsage(),
-      timestamp: new Date().toISOString()
-    });
-
-    // Get detailed statistics with 2GB plan (more accurate data)
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { data: userRoles, error: userRolesError } = await supabaseAdmin
-      .from('users')
-      .select('role')
-      .limit(1000); // Reasonable limit for 2GB plan
-
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    // Exclude free assessments - only count paid sessions
-    const { data: sessionStatuses, error: sessionStatusError } = await supabaseAdmin
-      .from('sessions')
-      .select('status, price')
-      .neq('session_type', 'free_assessment')
-      .limit(1000); // Reasonable limit for 2GB plan
-
-    // Calculate accurate statistics
-    const stats = {
-      totalUsers: totalUsers || 0,
-      totalDoctors: totalPsychologists || 0,
-      totalBookings: totalSessions || 0,
-      totalClients: totalClients || 0,
-      totalRevenue: 0,
-      users: {
-        total: totalUsers || 0,
-        by_role: {
-          client: 0,
-          psychologist: 0,
-          admin: 0
-        }
-      },
-      sessions: {
-        total: totalSessions || 0,
-        by_status: {
-          booked: 0,
-          completed: 0,
-          cancelled: 0,
-          rescheduled: 0
-        }
-      }
-    };
-
-    // Calculate accurate user role distribution
-    if (userRoles && !userRolesError) {
-      userRoles.forEach(user => {
-        stats.users.by_role[user.role] = (stats.users.by_role[user.role] || 0) + 1;
-      });
-    }
-
-    // Calculate accurate session status distribution and revenue
-    if (sessionStatuses && !sessionStatusError) {
-      sessionStatuses.forEach(session => {
-        stats.sessions.by_status[session.status] = (stats.sessions.by_status[session.status] || 0) + 1;
-        stats.totalRevenue += parseFloat(session.price || 0);
-      });
-    }
-
-    // Get payment failure statistics
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: totalPayments, error: paymentsCountError } = await supabaseAdmin
-      .from('payments')
-      .select('*', { count: 'exact', head: true });
-
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: failedPayments, error: failedPaymentsError } = await supabaseAdmin
-      .from('payments')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'failed');
-
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: pendingPayments, error: pendingPaymentsError } = await supabaseAdmin
-      .from('payments')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
-
-    // Use supabaseAdmin to bypass RLS (admin endpoint, proper auth already checked)
-    const { count: successfulPayments, error: successfulPaymentsError } = await supabaseAdmin
-      .from('payments')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'success');
-
-    // Get cancelled sessions count (exclude free assessments)
-    const { count: cancelledSessions, error: cancelledSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'cancelled')
-      .neq('session_type', 'free_assessment');
-
-    // Get no-show sessions count (exclude free assessments)
-    const { count: noShowSessions, error: noShowSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'no_show')
-      .neq('session_type', 'free_assessment');
-
-    // Get booking status metrics (exclude free assessments)
-    const { count: rescheduledSessions, error: rescheduledSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'rescheduled')
-      .neq('session_type', 'free_assessment');
-
-    const { count: rescheduleRequestedSessions, error: rescheduleRequestedSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'reschedule_requested')
-      .neq('session_type', 'free_assessment');
-
-    const { count: completedSessions, error: completedSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'completed')
-      .neq('session_type', 'free_assessment');
-
-    // Calculate upcoming sessions (not completed/cancelled/no_show and future date)
-    // Exclude free assessments - only count paid sessions
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const { data: upcomingSessionsData, error: upcomingSessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('id, scheduled_date, scheduled_time, status')
-      .not('status', 'in', '(completed,cancelled,no_show,noshow)')
-      .neq('session_type', 'free_assessment')
-      .gte('scheduled_date', today);
-    
-    // Filter upcoming sessions more accurately (check time as well)
-    let upcomingSessionsCount = 0;
-    if (upcomingSessionsData && !upcomingSessionsError) {
-      const now = new Date();
-      upcomingSessionsCount = upcomingSessionsData.filter(session => {
-        if (!session.scheduled_date || !session.scheduled_time) return false;
-        const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`);
-        const sessionEndDateTime = new Date(sessionDateTime.getTime() + 50 * 60 * 1000); // Add 50 minutes
-        return sessionEndDateTime > now;
-      }).length;
-    }
-
-    // Add failure metrics to stats
-    stats.failures = {
-      paymentFailures: failedPayments || 0,
-      pendingPayments: pendingPayments || 0,
-      successfulPayments: successfulPayments || 0,
-      cancelledSessions: cancelledSessions || 0,
-      noShowSessions: noShowSessions || 0,
-      totalPayments: totalPayments || 0
-    };
-
-    // Add booking status metrics
-    stats.bookingStatuses = {
-      upcoming: upcomingSessionsCount || 0,
-      rescheduled: rescheduledSessions || 0,
-      rescheduleRequested: rescheduleRequestedSessions || 0,
-      completed: completedSessions || 0,
-      noShow: noShowSessions || 0,
-      cancelled: cancelledSessions || 0
-    };
-
-    // Calculate failure rate
-    stats.failureRate = totalPayments > 0 
-      ? ((failedPayments || 0) / totalPayments * 100).toFixed(2)
-      : 0;
-
-    res.json(
-      successResponse(stats, 'Platform statistics retrieved successfully')
-    );
-
+    return res.json(successResponse({
+      totalUsers: clientsCount.count || 0, // Changed to count only clients
+      totalClients: clientsCount.count || 0, // Added explicit totalClients field
+      totalPsychologists: psychologistsCount.count || 0,
+      totalSessions: sessionsCount.count || 0
+    }));
   } catch (error) {
-    console.error('Get platform stats error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching platform statistics')
-    );
+    console.error('Error getting platform stats:', error);
+    return res.status(500).json(errorResponse('Internal server error'));
   }
 };
 
-// Search users
 const searchUsers = async (req, res) => {
   try {
     // HIGH-RISK FIX: Parameter pollution defense - normalize query params (reject arrays)
@@ -1275,8 +1065,58 @@ const searchUsers = async (req, res) => {
   }
 };
 
-// Create psychologist (admin only)
-const defaultAvailabilityService = require('../utils/defaultAvailabilityService');
+const getRecentActivities = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const getRecentUsers = async (req, res) => {
+  try {
+    const { data } = await supabaseAdmin.from('users').select('*').order('created_at', { ascending: false }).limit(10);
+    return res.json(successResponse(data || []));
+  } catch (error) {
+    return res.status(500).json(errorResponse('Internal server error'));
+  }
+};
+
+const getRecentBookings = async (req, res) => {
+  try {
+    const { data } = await supabaseAdmin.from('sessions').select('*').order('created_at', { ascending: false }).limit(10);
+    return res.json(successResponse(data || []));
+  } catch (error) {
+    return res.status(500).json(errorResponse('Internal server error'));
+  }
+};
+
+const getAllPsychologists = async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.from('psychologists').select('*').order('display_order', { ascending: true, nullsLast: true });
+    
+    if (error) {
+      console.error('Error fetching psychologists:', error);
+      return res.status(500).json(errorResponse('Failed to fetch psychologists'));
+    }
+    
+    // Transform data to include name field for easier frontend consumption
+    const transformedData = (data || []).map(psychologist => {
+      const firstName = psychologist.first_name || '';
+      const lastName = psychologist.last_name || '';
+      const fullName = `${firstName} ${lastName}`.trim() || psychologist.email?.split('@')[0] || 'No Name';
+      
+      return {
+        ...psychologist,
+        name: fullName,
+        psychologist_id: psychologist.id, // Add psychologist_id for compatibility
+        id: psychologist.id
+      };
+    });
+    
+    console.log(`✅ [ADMIN] Fetched ${transformedData.length} psychologists`);
+    return res.json(successResponse(transformedData));
+  } catch (error) {
+    console.error('Error in getAllPsychologists:', error);
+    return res.status(500).json(errorResponse('Internal server error'));
+  }
+};
 
 const createPsychologist = async (req, res) => {
   try {
@@ -1419,6 +1259,7 @@ const createPsychologist = async (req, res) => {
     // Set default availability (10 AM to 12 PM and 2 PM to 5 PM for 3 weeks)
     // This will only add dates that don't already exist
     try {
+      const defaultAvailabilityService = require('../utils/defaultAvailabilityService');
       const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologist.id);
       if (defaultAvailResult.success) {
         console.log(`✅ Default availability set for psychologist ${psychologist.id}: ${defaultAvailResult.message}`);
@@ -1516,663 +1357,202 @@ const createPsychologist = async (req, res) => {
   }
 };
 
-// Update psychologist (admin only)
 const updatePsychologist = async (req, res) => {
   try {
     const { psychologistId } = req.params;
-    const updateData = { ...req.body };
-    if (typeof updateData.email === 'string') {
-      updateData.email = updateData.email.trim().toLowerCase();
-    }
+    const updateData = req.body;
 
-    // Get psychologist profile
-    const { data: psychologist, error: psychologistError } = await supabaseAdmin
+    console.log('📝 [ADMIN] Updating psychologist:', psychologistId);
+    console.log('📦 [ADMIN] Update data keys:', Object.keys(updateData));
+
+    // Validate psychologist exists
+    const { data: existingPsychologist, error: fetchError } = await supabaseAdmin
       .from('psychologists')
-      .select('*')
+      .select('id')
       .eq('id', psychologistId)
       .single();
 
-    if (psychologistError || !psychologist) {
-      return res.status(404).json(
-        errorResponse('Psychologist not found')
-      );
+    if (fetchError || !existingPsychologist) {
+      return res.status(404).json(errorResponse('Psychologist not found'));
     }
 
-    // Remove fields that are not in the psychologists table
-    // Capture password separately so we can update the linked user record
-    // Also remove deletePackages flag (it's not a database column, just a control flag)
-    const { price, availability, packages, password, deletePackages, ...psychologistUpdateData } = updateData;
-    
-    // Explicitly remove deletePackages if it somehow got through (safety check)
-    delete psychologistUpdateData.deletePackages;
-    
-    // Convert display_order to integer if provided
-    if (psychologistUpdateData.display_order !== undefined) {
-      psychologistUpdateData.display_order = psychologistUpdateData.display_order ? parseInt(psychologistUpdateData.display_order) : null;
-    }
+    // Prepare psychologist update data (exclude packages and availability)
+    const psychologistUpdateData = {};
+    const allowedFields = [
+      'first_name', 'last_name', 'email', 'phone', 'ug_college', 'pg_college', 
+      'mphil_college', 'phd_college', 'area_of_expertise', 'description', 
+      'experience_years', 'cover_image_url', 'personality_traits', 'display_order',
+      'faq_question_1', 'faq_answer_1', 'faq_question_2', 'faq_answer_2',
+      'faq_question_3', 'faq_answer_3', 'designation', 'price', 'languages_json',
+      'active'
+    ];
 
-    // Remove undefined/null values from update data
-    Object.keys(psychologistUpdateData).forEach(key => {
-      if (psychologistUpdateData[key] === undefined || psychologistUpdateData[key] === null) {
-        delete psychologistUpdateData[key];
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        psychologistUpdateData[field] = updateData[field];
       }
     });
 
-    // Only update fields that have actually changed (compare with existing values)
-    const optimizedUpdateData = {};
-    Object.keys(psychologistUpdateData).forEach(key => {
-      const newValue = psychologistUpdateData[key];
-      const existingValue = psychologist[key];
-      
-      // Compare values (handle different types)
-      if (newValue !== existingValue) {
-        // Special handling for arrays/objects (convert to JSON for comparison)
-        if (Array.isArray(newValue) || Array.isArray(existingValue)) {
-          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
-            optimizedUpdateData[key] = newValue;
-          }
-        } else if (typeof newValue === 'object' && typeof existingValue === 'object' && newValue !== null && existingValue !== null) {
-          if (JSON.stringify(newValue) !== JSON.stringify(existingValue)) {
-            optimizedUpdateData[key] = newValue;
-          }
-        } else {
-          optimizedUpdateData[key] = newValue;
-        }
-      }
-    });
-
-    // Only update psychologist profile if there are fields to update
-    let updatedPsychologist = psychologist; // Default to existing psychologist data
-    
-    // Check if there are any fields to update (besides updated_at)
-    const hasFieldsToUpdate = Object.keys(optimizedUpdateData).length > 0;
-
-    if (hasFieldsToUpdate) {
-      // Add updated_at timestamp
-      optimizedUpdateData.updated_at = new Date().toISOString();
-      
-      // Update psychologist profile
-      const { data: updatedData, error: updateError } = await supabaseAdmin
-        .from('psychologists')
-        .update(optimizedUpdateData)
-        .eq('id', psychologistId)
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('Update psychologist error:', updateError);
-        // If error is PGRST116 (0 rows), it means the update didn't affect any rows
-        // This can happen if the update data is invalid or the row doesn't exist
-        if (updateError.code === 'PGRST116') {
-          console.error('Update returned 0 rows - psychologist may not exist or update data is invalid');
-          return res.status(404).json(
-            errorResponse('Psychologist not found or update data is invalid')
-          );
-        }
-        return res.status(500).json(
-          errorResponse('Failed to update psychologist profile')
-        );
-      }
-      
-      if (updatedData) {
-        updatedPsychologist = updatedData;
-      }
-    } else {
-      console.log('No psychologist profile fields to update, skipping profile update');
+    // Handle password update if provided
+    if (updateData.password) {
+      const bcrypt = require('bcryptjs');
+      psychologistUpdateData.password = await bcrypt.hash(updateData.password, 10);
     }
 
-    // If admin requested a password change, update the linked user password
-    if (password && typeof password === 'string' && password.trim().length > 0) {
-      try {
-        let targetUserId = psychologist.user_id;
+    psychologistUpdateData.updated_at = new Date().toISOString();
 
-        if (password.length < 6) {
-          return res.status(400).json(
-            errorResponse('New password must be at least 6 characters long')
-          );
-        }
+    // Update psychologist record
+    const { data: updatedPsychologist, error: updateError } = await supabaseAdmin
+      .from('psychologists')
+      .update(psychologistUpdateData)
+      .eq('id', psychologistId)
+      .select('*')
+      .single();
 
-        // If no linked user_id, try to resolve by email
-        if (!targetUserId) {
-          const latestEmail = psychologistUpdateData.email || updatedPsychologist.email || psychologist.email;
-          if (!latestEmail) {
-            console.error('Password update requested but no email available to resolve user');
-            // Skip password update but continue with other updates
-            latestEmail = null;
-          }
-          if (latestEmail) {
-            const { data: userByEmail, error: userLookupError } = await supabaseAdmin
-              .from('users')
-              .select('id, email')
-              .eq('email', latestEmail)
-              .single();
-
-            if (userLookupError || !userByEmail) {
-              // Create a new user for this psychologist using the provided password
-              const hashedPasswordForCreate = await hashPassword(password);
-              const { data: newUser, error: createUserError } = await supabaseAdmin
-                .from('users')
-                .insert([{ email: latestEmail, password_hash: hashedPasswordForCreate, role: 'psychologist' }])
-                .select('id')
-                .single();
-
-              if (createUserError || !newUser) {
-                console.warn('Password update requested but user not found and could not create user. Skipping password update:', latestEmail, createUserError);
-              } else {
-                targetUserId = newUser.id;
-                // Backfill psychologists.user_id for future updates
-                await supabaseAdmin
-                  .from('psychologists')
-                  .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
-                  .eq('id', psychologistId);
-              }
-            } else {
-              targetUserId = userByEmail.id;
-              // Backfill psychologists.user_id for future updates
-              await supabaseAdmin
-                .from('psychologists')
-                .update({ user_id: targetUserId, updated_at: new Date().toISOString() })
-                .eq('id', psychologistId);
-            }
-          }
-        }
-
-        if (targetUserId) {
-          const hashedPassword = await hashPassword(password);
-          // Update linked user account (if present)
-          const { error: userPasswordUpdateError } = await supabaseAdmin
-            .from('users')
-            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
-            .eq('id', targetUserId);
-
-          if (userPasswordUpdateError) {
-            console.error('❌ Error updating user password:', userPasswordUpdateError);
-          }
-
-          // Ensure psychologist can login with the new password as well
-          const { error: psychPwUpdateError } = await supabaseAdmin
-            .from('psychologists')
-            .update({ password_hash: hashedPassword, updated_at: new Date().toISOString() })
-            .eq('id', psychologistId);
-
-          if (psychPwUpdateError) {
-            console.error('❌ Error updating psychologist password_hash:', psychPwUpdateError);
-          }
-        }
-      } catch (pwError) {
-        console.error('❌ Exception during password update:', pwError);
-        // Skip password update exception but continue with profile update
-      }
+    if (updateError) {
+      console.error('❌ [ADMIN] Error updating psychologist:', updateError);
+      return res.status(500).json(errorResponse('Failed to update psychologist'));
     }
 
-    // Handle individual price by storing it in the dedicated field
-    if (price !== undefined) {
-      console.log('💰 Individual price provided:', price);
-      console.log('💰 Psychologist ID:', psychologistId);
-      console.log('💰 Price type:', typeof price);
-      console.log('💰 Parsed price:', parseInt(price));
-      
-      try {
-        // Store price in the dedicated individual_session_price field (as integer)
-        const { error: priceUpdateError } = await supabaseAdmin
-          .from('psychologists')
-          .update({ individual_session_price: parseInt(price) })
-          .eq('id', psychologistId);
-
-        if (priceUpdateError) {
-          console.error('❌ Error updating individual_session_price:', priceUpdateError);
-          console.error('❌ Error details:', JSON.stringify(priceUpdateError, null, 2));
-        } else {
-          console.log('✅ Price stored in individual_session_price field successfully');
-        }
-      } catch (error) {
-        console.error('❌ Error handling individual price:', error);
-      }
-    }
-
-    // Handle package updates
-    if (packages && Array.isArray(packages)) {
-      console.log('📦 Packages provided for update:', JSON.stringify(packages, null, 2));
-      
+    // Handle packages if provided
+    if (updateData.packages && Array.isArray(updateData.packages)) {
       try {
         // Get existing packages for this psychologist
-        const { data: existingPackagesData, error: fetchError } = await supabaseAdmin
+        const { data: existingPackages } = await supabaseAdmin
           .from('packages')
-          .select('id, name, session_count, price')
+          .select('id')
           .eq('psychologist_id', psychologistId);
 
-        let existingPackages = existingPackagesData || [];
+        const existingPackageIds = (existingPackages || []).map(p => p.id);
 
-        if (fetchError) {
-          console.error('Error fetching existing packages:', fetchError);
-        } else {
-          console.log('📦 Existing packages from DB:', JSON.stringify(existingPackages, null, 2));
+        // Delete packages if deletePackages flag is set
+        if (updateData.deletePackages) {
+          const packagesToKeep = updateData.packages
+            .filter(pkg => pkg.id && !pkg.id.toString().startsWith('pkg-'))
+            .map(pkg => pkg.id);
           
-          // Extract valid package IDs from the request
-            const updatedPackageIds = packages
-              .filter(pkg => pkg.id && !isNaN(parseInt(pkg.id)) && parseInt(pkg.id) > 0)
-              .map(pkg => parseInt(pkg.id));
-            
-          console.log('📦 Updated package IDs from request:', updatedPackageIds);
-          console.log('📦 Total packages in request:', packages.length);
-          console.log('📦 Packages with valid IDs:', updatedPackageIds.length);
+          const packagesToDelete = existingPackageIds.filter(id => !packagesToKeep.includes(id));
           
-          // CRITICAL SAFETY: Only delete packages if explicitly requested via deletePackages flag
-          // This prevents accidental deletion when updating other psychologist fields
-          // Packages should only be deleted through the dedicated delete endpoint or with explicit flag
-          const shouldDeletePackages = req.body.deletePackages === true || req.body.deletePackages === 'true';
-          
-          if (!shouldDeletePackages) {
-            // SAFETY: Never delete packages unless explicitly requested
-            console.log('🔒 SAFETY: Package deletion disabled - packages will NOT be deleted unless deletePackages=true flag is set');
-            console.log('📦 Existing packages preserved:', existingPackages?.map(p => ({ id: p.id, name: p.name })));
-            console.log('💡 To delete packages, use DELETE /api/admin/psychologists/:id/packages/:packageId or set deletePackages=true');
-          } else if (existingPackages && existingPackages.length > 0) {
-            // Only delete if explicitly requested AND package IDs are provided
-            
-            // Track which packages were deleted
-            const deletedPackageIds = [];
-            
-            // First, delete packages that are not in the updated list
-            for (const existingPkg of existingPackages) {
-              if (!updatedPackageIds.includes(existingPkg.id)) {
-                console.log(`⚠️  DELETING package ${existingPkg.id} (${existingPkg.name}) - deletePackages flag was set`);
-                const { error: deleteError } = await supabaseAdmin
-                  .from('packages')
-                  .delete()
-                  .eq('id', existingPkg.id);
-                
-                if (deleteError) {
-                  console.error(`❌ Error deleting package ${existingPkg.id}:`, deleteError);
-                } else {
-                  console.log(`✅ Package ${existingPkg.id} deleted successfully`);
-                  deletedPackageIds.push(existingPkg.id);
-                }
-              }
-            }
-            
-            // Refresh existingPackages after deletion to remove deleted packages from cache
-            if (deletedPackageIds.length > 0) {
-              const { data: refreshedPackages, error: refreshError } = await supabaseAdmin
-                .from('packages')
-                .select('id, name, session_count')
-                .eq('psychologist_id', psychologistId);
-              
-              if (!refreshError && refreshedPackages) {
-                existingPackages = refreshedPackages;
-                console.log('📦 Refreshed existing packages after deletion:', existingPackages);
-              }
-            }
+          if (packagesToDelete.length > 0) {
+            await supabaseAdmin
+              .from('packages')
+              .delete()
+              .eq('psychologist_id', psychologistId)
+              .in('id', packagesToDelete);
+            console.log(`✅ [ADMIN] Deleted ${packagesToDelete.length} packages`);
           }
-          
-          // Process each package
-          for (const pkg of packages) {
-            // Skip individual session packages (sessions = 1) as they're handled by individual_session_price
-            if (pkg.sessions === 1 || pkg.sessions === '1') {
-              console.log(`📦 Skipping individual session package: ${pkg.name}`);
-              continue;
-            }
+        }
 
-            // Check if this is an existing package (has valid ID - can be UUID or integer) or new package (has temp ID)
-            const isExistingPackage = pkg.id && !pkg.id.toString().startsWith('pkg-');
-            
-            console.log(`📦 Processing package:`, { 
-              id: pkg.id, 
-              idType: typeof pkg.id, 
-              isExisting: isExistingPackage,
-              name: pkg.name, 
-              price: pkg.price, 
-              priceType: typeof pkg.price,
-              sessions: pkg.sessions 
-            });
-            
-            if (isExistingPackage) {
-              // Update existing package - check if it still exists (wasn't deleted)
-              // Keep ID as-is (could be UUID string or integer)
-              const packageId = pkg.id;
-              const packagePrice = parseInt(pkg.price);
-              
-              if (isNaN(packagePrice) || packagePrice <= 0) {
-                console.error(`❌ Invalid price for package ${packageId}: ${pkg.price}`);
-                continue;
-              }
-              
-              console.log(`🔍 PACKAGE UPDATE - ID: ${packageId}, Current Price: ${pkg.price}, New Price: ${packagePrice}`);
-              
-              // Find existing package - handle both UUID and integer ID types
-              const existingPackage = existingPackages.find(ep => {
-                // Compare as strings to handle both UUIDs and integers
-                return String(ep.id) === String(packageId);
-              });
-              
-              // Skip if package was deleted
-              if (!existingPackage) {
-                console.error(`❌ PACKAGE NOT FOUND - ID: ${packageId}`);
-                console.error(`❌ Available package IDs in DB:`, existingPackages.map(ep => ({ id: ep.id, idType: typeof ep.id, name: ep.name })));
-                continue;
-              }
-              
-              console.log(`✅ PACKAGE FOUND - Current DB price: ₹${existingPackage.price}, Updating to: ₹${packagePrice}`);
-              console.log(`🔍 Update query: UPDATE packages SET price = ${packagePrice} WHERE id = '${packageId}'`);
-              
-              // Use the EXACT same method as individual price update
-              const { data: updateResult, error: updateError } = await supabaseAdmin
-                  .from('packages')
-                  .update({ 
-                    price: packagePrice
-                  })
-                  .eq('id', packageId)
-                  .select('id, price');
+        // Process each package (create or update)
+        for (const pkg of updateData.packages) {
+          if (!pkg.name || !pkg.price || !pkg.sessions) continue;
 
-              if (updateError) {
-                console.error(`❌❌❌ UPDATE FAILED - Package ${packageId}:`, updateError);
-                console.error(`❌ Error details:`, JSON.stringify(updateError, null, 2));
-              } else {
-                console.log(`📦 Update result:`, updateResult);
-                
-                // Check if any rows were actually updated
-                if (!updateResult || updateResult.length === 0) {
-                  console.error(`❌❌❌ NO ROWS UPDATED! Package ID ${packageId} not found in database or update query matched 0 rows`);
-                  console.error(`❌ This means the WHERE clause didn't match any rows. Check if the UUID is correct.`);
-                } else {
-                  console.log(`✅ Update affected ${updateResult.length} row(s)`);
-                  console.log(`✅ Updated package data:`, updateResult[0]);
-                  
-                  // Verify the update by fetching the package
-                  const { data: verifyPackage, error: verifyError } = await supabaseAdmin
-                    .from('packages')
-                    .select('id, price')
-                    .eq('id', packageId)
-                    .single();
-                  
-                  if (verifyError) {
-                    console.error(`❌ Verification failed for package ${packageId}:`, verifyError);
-                  } else if (verifyPackage) {
-                    console.log(`✅✅✅ PACKAGE UPDATED & VERIFIED - ID: ${packageId}, Price in DB: ₹${verifyPackage.price}`);
-                    if (verifyPackage.price !== packagePrice) {
-                      console.error(`❌❌❌ PRICE MISMATCH! Expected: ₹${packagePrice}, Got: ₹${verifyPackage.price}`);
-                    } else {
-                      console.log(`✅✅✅ PRICE MATCHES! Update successful!`);
-                    }
-                  } else {
-                    console.error(`❌ Verification returned no data for package ${packageId}`);
-                  }
-                }
-              }
+          const packageData = {
+            psychologist_id: psychologistId,
+            package_type: pkg.sessions > 1 ? 'multi_session' : 'individual',
+            session_count: pkg.sessions,
+            price: parseFloat(pkg.price),
+            name: pkg.name,
+            updated_at: new Date().toISOString()
+          };
+
+          // If package has an ID (not a temp ID), update it
+          if (pkg.id && !pkg.id.toString().startsWith('pkg-')) {
+            const { error: packageUpdateError } = await supabaseAdmin
+              .from('packages')
+              .update(packageData)
+              .eq('id', pkg.id)
+              .eq('psychologist_id', psychologistId);
+
+            if (packageUpdateError) {
+              console.error('❌ [ADMIN] Error updating package:', packageUpdateError);
             } else {
-              // Create new package
-              console.log(`📦 Creating new package: ${pkg.name} (${pkg.sessions} sessions, $${pkg.price})`);
-              
-              // Ensure we have valid data
-              const sessionCount = parseInt(pkg.sessions) || pkg.sessions;
-              const packagePrice = parseInt(pkg.price);
-              const packageName = pkg.name || `Package of ${sessionCount} Sessions`;
-              const packageDescription = pkg.description || `${sessionCount} therapy sessions`;
-              const packageType = `package_${sessionCount}`;
-              
-              if (!sessionCount || sessionCount < 1) {
-                console.error(`❌ Invalid session count for package: ${pkg.sessions}`);
-                continue;
-              }
-              
-              if (!packagePrice || packagePrice <= 0) {
-                console.error(`❌ Invalid price for package: ${pkg.price}`);
-                continue;
-              }
-              
-              const packageData = {
-                psychologist_id: psychologistId,
-                name: packageName,
-                session_count: sessionCount,
-                price: packagePrice,
-                description: packageDescription,
-                package_type: packageType,
-                discount_percentage: pkg.discount_percentage || 0
-              };
-              
-              console.log(`📦 Inserting package data - count:`, packageData?.length || 0);
-              
-              const { data: insertedPackage, error: createError } = await supabaseAdmin
-                .from('packages')
-                .insert(packageData)
-                .select('*');
-
-              if (createError) {
-                console.error(`❌ Error creating package ${pkg.name}:`, createError);
-                console.error(`❌ Error details:`, JSON.stringify(createError, null, 2));
-              } else {
-                console.log(`✅ Package ${pkg.name} created successfully`);
-                console.log(`✅ Inserted package:`, insertedPackage);
-              }
+              console.log(`✅ [ADMIN] Updated package: ${pkg.id}`);
             }
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error handling package updates:', error);
-        console.error('❌ Package update error stack:', error.stack);
-        // Don't throw - allow the psychologist update to continue even if package updates fail
-      }
-    } else if (packages && Array.isArray(packages) && packages.length === 0) {
-      // SAFETY: Empty array could mean "delete all" OR "packages not included in update"
-      // We should NOT automatically delete all packages - this is too dangerous
-      // Only delete if explicitly requested via a separate flag or endpoint
-      console.log('⚠️  Empty packages array sent - SAFETY: NOT deleting packages automatically');
-      console.log('⚠️  If you want to delete all packages, use a dedicated delete endpoint or include a flag');
-      console.log('⚠️  This prevents accidental deletion when packages are not included in the update request');
-    }
-
-    // Ensure default availability exists (3 weeks from today)
-    // This will only add dates that don't already exist
-    try {
-      const defaultAvailResult = await defaultAvailabilityService.setDefaultAvailability(psychologistId);
-      if (defaultAvailResult.success) {
-        console.log(`✅ Default availability ensured for psychologist ${psychologistId}: ${defaultAvailResult.message}`);
-      }
-    } catch (defaultAvailError) {
-      console.error('Error ensuring default availability:', defaultAvailError);
-      // Continue even if default availability fails
-    }
-
-    // Handle availability updates (allows doctors to remove/block slots from defaults)
-    if (availability && Array.isArray(availability) && availability.length > 0) {
-      console.log('📅 Availability provided for update - count:', availability?.length || 0);
-      
-      try {
-        // Convert frontend format to backend format
-        const availabilityRecords = [];
-        
-        for (const avail of availability) {
-          // Case 1: New per-date format from admin UI: { date: 'YYYY-MM-DD', timeSlots: {morning,noon,evening,night} }
-          if (avail.date && avail.timeSlots && typeof avail.timeSlots === 'object') {
-            // Use the provided date string directly (assumed YYYY-MM-DD), no timezone conversions
-            try {
-              const dateStr = String(avail.date);
-              const allSlots = [
-                ...(Array.isArray(avail.timeSlots.morning) ? avail.timeSlots.morning : []),
-                ...(Array.isArray(avail.timeSlots.noon) ? avail.timeSlots.noon : []),
-                ...(Array.isArray(avail.timeSlots.evening) ? avail.timeSlots.evening : []),
-                ...(Array.isArray(avail.timeSlots.night) ? avail.timeSlots.night : []),
-              ];
-
-              const stringTimeSlots = allSlots.map(slot => {
-                if (typeof slot === 'object' && slot !== null) {
-                  if (slot.displayTime) return slot.displayTime;
-                  if (slot.time) return slot.time;
-                  return String(slot);
-                }
-                return String(slot);
-              });
-
-              if (stringTimeSlots.length > 0) {
-                availabilityRecords.push({
-                  psychologist_id: psychologistId,
-                  date: dateStr,
-                  time_slots: stringTimeSlots,
-                  is_available: true
-                });
-              }
-            } catch (e) {
-              console.warn('⚠️ Failed to normalize per-date availability entry:', avail, e);
-            }
-            continue;
-          }
-
-          // Case 2: Existing per-date format from DB passthrough: { date: 'YYYY-MM-DD', time_slots: [...] }
-          if (avail.date && Array.isArray(avail.time_slots)) {
-            try {
-              const dateStr = String(avail.date);
-              const stringTimeSlots = avail.time_slots.map(slot => (typeof slot === 'string' ? slot : String(slot)));
-              if (stringTimeSlots.length > 0) {
-                availabilityRecords.push({
-                  psychologist_id: psychologistId,
-                  date: dateStr,
-                  time_slots: stringTimeSlots,
-                  is_available: true
-                });
-              }
-            } catch (e) {
-              console.warn('⚠️ Failed to normalize legacy per-date availability entry:', avail, e);
-            }
-            continue;
-          }
-
-          // Case 3: Legacy day-based format: { day: 'Monday', slots: [...] }
-          if (avail.day && avail.slots && Array.isArray(avail.slots)) {
-            // Generate dates for the next 1 occurrence of this day (preserves previous behavior)
-            const dates = getAvailabilityDatesForDay(avail.day, 1);
-            if (dates.length > 0) {
-              const dateStr = dates[0].toISOString().split('T')[0];
-              const stringTimeSlots = avail.slots.map(slot => {
-                if (typeof slot === 'object' && slot !== null) {
-                  if (slot.displayTime) return slot.displayTime;
-                  if (slot.time) return slot.time;
-                  console.warn('Time slot object has no displayable time property:', slot);
-                  return String(slot);
-                }
-                return typeof slot === 'string' ? slot : String(slot);
-              });
-              availabilityRecords.push({
-                psychologist_id: psychologistId,
-                date: dateStr,
-                time_slots: stringTimeSlots,
-                is_available: true
-              });
-            }
-          }
-        }
-
-        if (availabilityRecords.length > 0) {
-          // Update or insert availability records (don't delete all - only update specific dates)
-          // This allows doctors to remove slots from defaults without losing other dates
-          for (const record of availabilityRecords) {
-            const { data: existing } = await supabaseAdmin
-            .from('availability')
-              .select('id')
-              .eq('psychologist_id', record.psychologist_id)
-              .eq('date', record.date)
-              .single();
-
-            if (existing) {
-              // Update existing availability (doctor is removing slots from defaults)
-              const { error: updateError } = await supabaseAdmin
-                .from('availability')
-                .update({
-                  time_slots: record.time_slots,
-                  is_available: true,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', existing.id);
-              
-              if (updateError) {
-                console.error(`Error updating availability for ${record.date}:`, updateError);
           } else {
-                console.log(`✅ Updated availability for ${record.date}`);
-          }
+            // Create new package
+            packageData.created_at = new Date().toISOString();
+            const { error: packageCreateError } = await supabaseAdmin
+              .from('packages')
+              .insert([packageData]);
+
+            if (packageCreateError) {
+              console.error('❌ [ADMIN] Error creating package:', packageCreateError);
             } else {
-              // Insert new availability (for dates not in defaults)
-              const { error: insertError } = await supabaseAdmin
-            .from('availability')
-                .insert({
-                  ...record,
-                  is_available: true,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString()
-                });
-
-          if (insertError) {
-                console.error(`Error inserting availability for ${record.date}:`, insertError);
-          } else {
-                console.log(`✅ Created availability for ${record.date}`);
-          }
+              console.log(`✅ [ADMIN] Created new package for psychologist`);
             }
           }
-          console.log(`✅ Updated ${availabilityRecords.length} availability records`);
-        } else {
-          console.log('⚠️ No valid availability records to update');
         }
-      } catch (error) {
-        console.error('Error handling availability updates:', error);
+      } catch (packageError) {
+        console.error('❌ [ADMIN] Error handling packages:', packageError);
+        // Continue - package errors shouldn't block psychologist update
       }
-    } else if (availability && Array.isArray(availability) && availability.length === 0) {
-      // If empty array is sent, delete all availability
-      console.log('📅 Empty availability array sent - deleting all availability');
-      
+    }
+
+    // Handle availability if provided
+    if (updateData.availability && Array.isArray(updateData.availability)) {
       try {
-        const { error: deleteError } = await supabaseAdmin
-          .from('availability')
-          .delete()
-          .eq('psychologist_id', psychologistId);
+        for (const avail of updateData.availability) {
+          if (!avail.date || !avail.timeSlots) continue;
 
-        if (deleteError) {
-          console.error('Error deleting all availability:', deleteError);
-        } else {
-          console.log('✅ All availability deleted');
+          // Convert timeSlots object to array format
+          const timeSlotsArray = [
+            ...(avail.timeSlots.morning || []),
+            ...(avail.timeSlots.noon || []),
+            ...(avail.timeSlots.evening || []),
+            ...(avail.timeSlots.night || [])
+          ];
+
+          if (timeSlotsArray.length === 0) continue;
+
+          // Check if availability already exists for this date
+          const { data: existingAvailability } = await supabaseAdmin
+            .from('availability')
+            .select('id')
+            .eq('psychologist_id', psychologistId)
+            .eq('date', avail.date)
+            .single();
+
+          if (existingAvailability) {
+            // Update existing availability
+            await supabaseAdmin
+              .from('availability')
+              .update({
+                time_slots: timeSlotsArray,
+                is_available: true,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', existingAvailability.id);
+          } else {
+            // Create new availability
+            await supabaseAdmin
+              .from('availability')
+              .insert({
+                psychologist_id: psychologistId,
+                date: avail.date,
+                time_slots: timeSlotsArray,
+                is_available: true,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+          }
         }
-      } catch (error) {
-        console.error('Error deleting all availability:', error);
+        console.log(`✅ [ADMIN] Updated availability for ${updateData.availability.length} dates`);
+      } catch (availabilityError) {
+        console.error('❌ [ADMIN] Error handling availability:', availabilityError);
+        // Continue - availability errors shouldn't block psychologist update
       }
     }
 
-    // Fetch updated packages to include in response
-    let updatedPackages = [];
-    try {
-      const { data: packagesData, error: packagesError } = await supabaseAdmin
-        .from('packages')
-        .select('*')
-        .eq('psychologist_id', psychologistId)
-        .order('session_count', { ascending: true });
-      
-      if (!packagesError && packagesData) {
-        updatedPackages = packagesData;
-        console.log('📦 Fetched updated packages for response:', updatedPackages.length);
-      }
-    } catch (error) {
-      console.error('Error fetching packages for response:', error);
-    }
-
-    // Invalidate frontend cache by updating cache version timestamp
-    // This will force frontend to refresh cached psychologist data
-    const cacheInvalidationTimestamp = Date.now();
-    console.log('🔄 Cache invalidation triggered for psychologist update:', cacheInvalidationTimestamp);
-
-    res.json(
-      successResponse({
-        ...updatedPsychologist,
-        packages: updatedPackages,
-        cache_invalidated: true,
-        cache_timestamp: cacheInvalidationTimestamp
-      }, 'Psychologist updated successfully')
-    );
+    console.log('✅ [ADMIN] Psychologist updated successfully');
+    return res.json(successResponse(updatedPsychologist, 'Psychologist updated successfully'));
 
   } catch (error) {
-    console.error('Update psychologist error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while updating psychologist')
-    );
+    console.error('❌ [ADMIN] Error in updatePsychologist:', error);
+    return res.status(500).json(errorResponse('Internal server error while updating psychologist'));
   }
 };
 
-// Delete psychologist (admin only)
 const deletePsychologist = async (req, res) => {
   try {
     const { psychologistId } = req.params;
@@ -2234,7 +1614,41 @@ const deletePsychologist = async (req, res) => {
   }
 };
 
-// Create user (admin only)
+const addNextDayAvailability = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const updateAllPsychologistsAvailability = async (req, res) => {
+  try {
+    const defaultAvailabilityService = require('../utils/defaultAvailabilityService');
+    const result = await defaultAvailabilityService.updateAllPsychologistsAvailability();
+    if (result.success) {
+      res.json(successResponse(result, `Updated ${result.updated} psychologists with default availability`));
+    } else {
+      res.status(500).json(errorResponse(result.message || 'Failed to update psychologists availability'));
+    }
+  } catch (error) {
+    console.error('Error in updateAllPsychologistsAvailability endpoint:', error);
+    res.status(500).json(errorResponse('Internal server error while updating psychologists availability'));
+  }
+};
+
+const createPsychologistPackages = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const checkMissingPackages = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const deletePackage = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const getStuckSlotLocks = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
 const createUser = async (req, res) => {
   try {
     const { email, password, first_name, last_name, phone_number, child_name, child_age } = req.body;
@@ -2321,101 +1735,10 @@ const createUser = async (req, res) => {
   }
 };
 
-// Update user (admin only)
 const updateUser = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
-    const allowedFields = ['first_name', 'last_name', 'phone_number', 'child_name', 'child_age'];
-    const updateData = {};
-    allowedFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        updateData[field] = req.body[field];
-      }
-    });
-
-    // Get user
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (userError || !user) {
-      return res.status(404).json(
-        errorResponse('User not found')
-      );
-    }
-
-    // Update user profile based on role
-    if (user.role === 'client') {
-      // Get existing client data to compare
-      const { data: existingClient, error: clientFetchError } = await supabaseAdmin
-        .from('clients')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (clientFetchError || !existingClient) {
-        return res.status(404).json(
-          errorResponse('Client profile not found')
-        );
-      }
-
-      // Only update fields that have actually changed
-      const optimizedUpdateData = {};
-      Object.keys(updateData).forEach(key => {
-        const newValue = updateData[key];
-        const existingValue = existingClient[key];
-        
-        if (newValue !== existingValue) {
-          optimizedUpdateData[key] = newValue;
-        }
-      });
-
-      // Only perform update if there are actual changes (besides updated_at)
-      if (Object.keys(optimizedUpdateData).length === 0) {
-        return res.json(
-          successResponse(existingClient, 'No changes detected')
-        );
-      }
-
-      // Add updated_at timestamp
-      optimizedUpdateData.updated_at = new Date().toISOString();
-
-      const { data: updatedClient, error: updateError } = await supabaseAdmin
-        .from('clients')
-        .update(optimizedUpdateData)
-        .eq('id', userId)
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('Update client error:', updateError);
-        return res.status(500).json(
-          errorResponse('Failed to update client profile')
-        );
-      }
-
-      res.json(
-        successResponse(updatedClient, 'Client updated successfully')
-      );
-    } else {
-      res.status(400).json(
-        errorResponse('Can only update client profiles')
-      );
-    }
-
-  } catch (error) {
-    console.error('Update user error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while updating user')
-    );
-  }
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
 };
 
-// Delete user (admin only)
 const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -2573,1061 +1896,176 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// Get recent users for dashboard
-const getRecentUsers = async (req, res) => {
-  try {
-    const { limit = 5 } = req.query;
-
-    // Get recent users (clients and admins, not psychologists)
-    const { data: recentUsers, error: usersError } = await supabaseAdmin
-      .from('users')
-      .select('id, email, role, created_at')
-      .neq('role', 'psychologist') // Exclude psychologists as they're in separate table
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (usersError) {
-      console.error('Get recent users error:', usersError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch recent users')
-      );
-    }
-
-    // Get client profiles for users
-    const userIds = recentUsers.filter(user => user.role === 'client').map(user => user.id);
-    let clientProfiles = [];
-    
-    if (userIds.length > 0) {
-      const { data: clients, error: clientsError } = await supabaseAdmin
-        .from('clients')
-        .select('user_id, first_name, last_name, child_name, child_age')
-        .in('user_id', userIds);
-
-      if (!clientsError && clients) {
-        clientProfiles = clients;
-      }
-    }
-
-    // Enrich user data with profile information
-    const enrichedUsers = recentUsers.map(user => {
-      if (user.role === 'client') {
-        const clientProfile = clientProfiles.find(client => client.user_id === user.id);
-        return {
-          ...user,
-          profile: clientProfile || null
-        };
-      }
-      return user;
-    });
-
-    res.json(
-      successResponse(enrichedUsers)
-    );
-
-  } catch (error) {
-    console.error('Get recent users error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching recent users')
-    );
-  }
-};
-
-// Get recent bookings for dashboard (today's activity only)
-const getRecentBookings = async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-
-    // Get today's date in IST timezone
-    const now = new Date();
-    // Convert to IST and get date components
-    const istDateStr = now.toLocaleString('en-US', {
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    });
-    const [month, day, year] = istDateStr.split('/').map(Number);
-    
-    // Create start of today in IST (00:00:00 IST)
-    // IST is UTC+5:30, so 00:00:00 IST = 18:30:00 UTC (previous day)
-    const startOfTodayIST = new Date(Date.UTC(year, month - 1, day - 1, 18, 30, 0, 0));
-    
-    // Create start of tomorrow in IST (for upper bound)
-    const startOfTomorrowIST = new Date(startOfTodayIST);
-    startOfTomorrowIST.setUTCDate(startOfTomorrowIST.getUTCDate() + 1);
-
-    // Get recent sessions from today only (created_at >= start of today IST and < start of tomorrow IST)
-    const { data: recentSessions, error: sessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select(`
-        id,
-        status,
-        scheduled_date,
-        scheduled_time,
-        price,
-        created_at,
-        client:clients(
-          id,
-          first_name,
-          last_name,
-          child_name
-        ),
-        psychologist:psychologists(
-          id,
-          first_name,
-          last_name
-        )
-      `)
-      .gte('created_at', startOfTodayIST.toISOString())
-      .lt('created_at', startOfTomorrowIST.toISOString())
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (sessionsError) {
-      console.error('Get recent sessions error:', sessionsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch recent sessions')
-      );
-    }
-
-    res.json(
-      successResponse(recentSessions)
-    );
-
-  } catch (error) {
-    console.error('Get recent bookings error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching recent bookings')
-    );
-  }
-};
-
-// Get recent activities for dashboard
-const getRecentActivities = async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-
-    // Get recent users
-    const { data: recentUsers, error: usersError } = await supabaseAdmin
-      .from('users')
-      .select('id, email, role, created_at')
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (usersError) {
-      console.error('Get recent users error:', usersError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch recent users')
-      );
-    }
-
-    // Get recent psychologists
-    const { data: recentPsychologists, error: psychologistsError } = await supabaseAdmin
-      .from('psychologists')
-      .select('id, email, first_name, last_name, created_at')
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (psychologistsError) {
-      console.error('Get recent psychologists error:', psychologistsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch recent psychologists')
-      );
-    }
-
-    // Get recent sessions
-    const { data: recentSessions, error: sessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('id, status, scheduled_date, created_at')
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
-
-    if (sessionsError) {
-      console.error('Get recent sessions error:', sessionsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch recent sessions')
-      );
-    }
-
-    // Combine and format activities
-    const activities = [];
-
-    // Add user registrations
-    recentUsers.forEach(user => {
-      activities.push({
-        id: `user_${user.id}`,
-        type: 'user_registration',
-        title: `New ${user.role} registered`,
-        description: `${user.email} joined the platform`,
-        timestamp: user.created_at,
-        data: user
-      });
-    });
-
-    // Add psychologist registrations
-    recentPsychologists.forEach(psychologist => {
-      activities.push({
-        id: `psychologist_${psychologist.id}`,
-        type: 'psychologist_registration',
-        title: 'New psychologist joined',
-        description: `Dr. ${psychologist.first_name} ${psychologist.last_name} joined the platform`,
-        timestamp: psychologist.created_at,
-        data: psychologist
-      });
-    });
-
-    // Add session bookings
-    recentSessions.forEach(session => {
-      activities.push({
-        id: `session_${session.id}`,
-        type: 'session_booking',
-        title: 'New session booked',
-        description: `Session scheduled for ${session.scheduled_date}`,
-        timestamp: session.created_at,
-        data: session
-      });
-    });
-
-    // Sort by timestamp (most recent first)
-    activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-    // Return limited number of activities
-    const limitedActivities = activities.slice(0, parseInt(limit));
-
-    res.json(
-      successResponse(limitedActivities)
-    );
-
-  } catch (error) {
-    console.error('Get recent activities error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching recent activities')
-    );
-  }
-};
-
-// Create packages for existing psychologist (admin only)
-const createPsychologistPackages = async (req, res) => {
-  try {
-    const { psychologistId } = req.params;
-    const { packages } = req.body;
-
-    console.log('=== createPsychologistPackages function called ===');
-    console.log('Psychologist ID:', psychologistId);
-    console.log('Packages:', packages);
-
-    // Validate packages
-    if (!packages || !Array.isArray(packages) || packages.length === 0) {
-      return res.status(400).json(
-        errorResponse('Packages array is required and must not be empty')
-      );
-    }
-
-    // Check if psychologist exists
-    const { data: psychologist, error: psychologistError } = await supabaseAdmin
-      .from('psychologists')
-      .select('id, first_name, last_name')
-      .eq('id', psychologistId)
-      .single();
-
-    if (psychologistError || !psychologist) {
-      return res.status(404).json(
-        errorResponse('Psychologist not found')
-      );
-    }
-
-    // Validate each package
-    for (const pkg of packages) {
-      if (!pkg.session_count || !pkg.price || pkg.session_count < 1 || pkg.price <= 0) {
-        return res.status(400).json(
-          errorResponse(`Invalid package: session_count must be > 0, price must be > 0`)
-        );
-      }
-    }
-
-    // Always include individual session option
-    const individualSession = {
-      psychologist_id: psychologistId,
-      package_type: 'individual',
-      name: 'Single Session',
-      description: 'One therapy session',
-      session_count: 1,
-      price: 100, // Default price
-      discount_percentage: 0
-    };
-
-    // Create packages
-    const packageData = [individualSession, ...packages.map(pkg => ({
-      psychologist_id: psychologistId,
-      package_type: pkg.package_type || `package_${pkg.session_count}`,
-      name: pkg.name || `Package of ${pkg.session_count} Sessions`,
-      description: pkg.description || `${pkg.session_count} therapy sessions${pkg.discount_percentage > 0 ? ` with ${pkg.discount_percentage}% discount` : ''}`,
-      session_count: pkg.session_count,
-      price: pkg.price,
-      discount_percentage: pkg.discount_percentage || 0
-    }))];
-
-    const { data: createdPackages, error: packagesError } = await supabaseAdmin
-      .from('packages')
-      .insert(packageData)
-      .select('*');
-
-    if (packagesError) {
-      console.error('Packages creation error:', packagesError);
-      return res.status(500).json(
-        errorResponse('Failed to create packages')
-      );
-    }
-
-    console.log('✅ Packages created successfully for psychologist:', psychologist.first_name, psychologist.last_name);
-    res.status(201).json(
-      successResponse(createdPackages, 'Packages created successfully')
-    );
-
-  } catch (error) {
-    console.error('Create psychologist packages error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while creating packages')
-    );
-  }
-};
-
-// Approve assessment reschedule request
-const approveAssessmentRescheduleRequest = async (req, res) => {
-  try {
-    const { notificationId } = req.params;
-    const { new_date, new_time } = req.body;
-
-    // Get the notification
-    const { data: notification, error: notificationError } = await supabaseAdmin
-      .from('notifications')
-      .select('*')
-      .eq('id', notificationId)
-      .eq('type', 'assessment_reschedule_request')
-      .single();
-
-    if (notificationError || !notification) {
-      return res.status(404).json(
-        errorResponse('Reschedule request not found')
-      );
-    }
-
-    const assessmentSessionId = notification.assessment_session_id;
-    const metadata = notification.metadata || {};
-
-    // Use provided date/time or from metadata
-    const rescheduleDate = new_date || metadata.new_date;
-    const rescheduleTime = new_time || metadata.new_time;
-
-    if (!rescheduleDate || !rescheduleTime) {
-      return res.status(400).json(
-        errorResponse('New date and time are required')
-      );
-    }
-
-    // Get assessment session
-    const { data: assessmentSession, error: sessionError } = await supabaseAdmin
-      .from('assessment_sessions')
-      .select('*')
-      .eq('id', assessmentSessionId)
-      .single();
-
-    if (sessionError || !assessmentSession) {
-      return res.status(404).json(
-        errorResponse('Assessment session not found')
-      );
-    }
-
-    // Check if new time slot is available
-    const targetPsychologistId = notification.psychologist_id || assessmentSession.psychologist_id;
-    
-    const { data: conflictingAssessmentSessions } = await supabaseAdmin
-      .from('assessment_sessions')
-      .select('id')
-      .eq('psychologist_id', targetPsychologistId)
-      .eq('scheduled_date', rescheduleDate)
-      .eq('scheduled_time', rescheduleTime)
-      .in('status', ['reserved', 'booked', 'rescheduled'])
-      .neq('id', assessmentSessionId);
-
-    const { data: conflictingRegularSessions } = await supabaseAdmin
-      .from('sessions')
-      .select('id')
-      .eq('psychologist_id', targetPsychologistId)
-      .eq('scheduled_date', rescheduleDate)
-      .eq('scheduled_time', rescheduleTime)
-      .in('status', ['booked', 'rescheduled', 'confirmed']);
-
-    if ((conflictingAssessmentSessions && conflictingAssessmentSessions.length > 0) ||
-        (conflictingRegularSessions && conflictingRegularSessions.length > 0)) {
-      return res.status(400).json(
-        errorResponse('Selected time slot is already booked')
-      );
-    }
-
-    // Update assessment session - only include fields that have actually changed
-    const rescheduleCount = assessmentSession.reschedule_count || 0;
-    const updateData = {};
-
-    if (rescheduleDate !== assessmentSession.scheduled_date) {
-      updateData.scheduled_date = rescheduleDate;
-    }
-    if (rescheduleTime !== assessmentSession.scheduled_time) {
-      updateData.scheduled_time = rescheduleTime;
-    }
-    if (assessmentSession.status !== 'rescheduled') {
-      updateData.status = 'rescheduled';
-    }
-    if ((rescheduleCount + 1) !== assessmentSession.reschedule_count) {
-      updateData.reschedule_count = rescheduleCount + 1;
-    }
-    if (targetPsychologistId !== assessmentSession.psychologist_id) {
-      updateData.psychologist_id = targetPsychologistId;
-    }
-
-    // Only perform update if there are actual changes (besides updated_at)
-    if (Object.keys(updateData).length === 0) {
-      // Return existing session if no changes
-      return res.json(
-        successResponse(assessmentSession, 'No changes detected')
-      );
-    }
-
-    // Add updated_at timestamp
-    updateData.updated_at = new Date().toISOString();
-
-    const { data: updatedSession, error: updateError } = await supabaseAdmin
-      .from('assessment_sessions')
-      .update(updateData)
-      .eq('id', assessmentSessionId)
-      .select('*')
-      .single();
-
-    if (updateError) {
-      console.error('Error updating assessment session:', updateError);
-      return res.status(500).json(
-        errorResponse('Failed to reschedule assessment session')
-      );
-    }
-
-    // Unblock old slot and block new slot
-    try {
-      if (assessmentSession.scheduled_date && assessmentSession.scheduled_time) {
-        const oldHhmm = (assessmentSession.scheduled_time || '').substring(0,5);
-        const { data: oldAvail } = await supabaseAdmin
-          .from('availability')
-          .select('id, time_slots')
-          .eq('psychologist_id', assessmentSession.psychologist_id)
-          .eq('date', assessmentSession.scheduled_date)
-          .single();
-        
-        if (oldAvail && Array.isArray(oldAvail.time_slots) && !oldAvail.time_slots.includes(oldHhmm)) {
-          const updatedSlots = [...oldAvail.time_slots, oldHhmm].sort();
-          await supabaseAdmin
-            .from('availability')
-            .update({ time_slots: updatedSlots, updated_at: new Date().toISOString() })
-            .eq('id', oldAvail.id);
-        }
-      }
-
-      const newHhmm = (rescheduleTime || '').substring(0,5);
-      const { data: newAvail } = await supabaseAdmin
-        .from('availability')
-        .select('id, time_slots')
-        .eq('psychologist_id', targetPsychologistId)
-        .eq('date', rescheduleDate)
-        .single();
-      
-      if (newAvail && Array.isArray(newAvail.time_slots)) {
-        const filtered = newAvail.time_slots.filter(t => (typeof t === 'string' ? t.substring(0,5) : String(t).substring(0,5)) !== newHhmm);
-        if (filtered.length !== newAvail.time_slots.length) {
-          await supabaseAdmin
-            .from('availability')
-            .update({ time_slots: filtered, updated_at: new Date().toISOString() })
-            .eq('id', newAvail.id);
-        }
-      }
-    } catch (availErr) {
-      console.warn('⚠️ Failed to update availability:', availErr?.message);
-    }
-
-    // Mark notification as read
-    await supabaseAdmin
-      .from('notifications')
-      .update({ is_read: true })
-      .eq('id', notificationId);
-
-    console.log('✅ Assessment reschedule request approved:', updatedSession.id);
-
-    res.json(successResponse(updatedSession, 'Assessment reschedule request approved and session rescheduled successfully'));
-
-  } catch (error) {
-    console.error('Approve assessment reschedule request error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while approving reschedule request')
-    );
-  }
-};
-
-// Admin reschedule session
 const rescheduleSession = async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { new_date, new_time, reason } = req.body;
-
-    console.log('🔄 Admin reschedule request:', {
-      sessionId,
-      new_date,
-      new_time,
-      reason
-    });
-
-    // Validate input
-    if (!new_date || !new_time) {
-      return res.status(400).json(
-        errorResponse('New date and time are required')
-      );
-    }
-
-    // Get session details
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select(`
-        *,
-        clients!inner(
-          id,
-          first_name,
-          last_name,
-          child_name,
-          phone_number,
-          user_id,
-          users!inner(email)
-        ),
-        psychologists!inner(
-          id,
-          first_name,
-          last_name,
-          phone,
-          email
-        )
-      `)
-      .eq('id', sessionId)
-      .single();
-
-    if (sessionError || !session) {
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
-    // Check if session can be rescheduled
-    if (['completed', 'cancelled', 'no_show'].includes(session.status)) {
-      return res.status(400).json(
-        errorResponse('Cannot reschedule completed, cancelled, or no-show sessions')
-      );
-    }
-
-    // Check if new time slot is available
-    const { data: conflictingSessions } = await supabaseAdmin
-      .from('sessions')
-      .select('id')
-      .eq('psychologist_id', session.psychologist_id)
-      .eq('scheduled_date', formatDate(new_date))
-      .eq('scheduled_time', formatTime(new_time))
-      .in('status', ['booked', 'rescheduled', 'confirmed'])
-      .neq('id', sessionId);
-
-    if (conflictingSessions && conflictingSessions.length > 0) {
-      return res.status(400).json(
-        errorResponse('Selected time slot is already booked')
-      );
-    }
-
-    // Store old session data for notifications
-    const oldSessionData = {
-      date: session.scheduled_date,
-      time: session.scheduled_time
-    };
-
-    // Prepare update data - only include fields that have actually changed
-    const formattedDate = formatDate(new_date);
-    const formattedTime = formatTime(new_time);
-    const sessionUpdateData = {};
-
-    if (formattedDate !== session.scheduled_date) {
-      sessionUpdateData.scheduled_date = formattedDate;
-    }
-    if (formattedTime !== session.scheduled_time) {
-      sessionUpdateData.scheduled_time = formattedTime;
-    }
-    if (session.status !== 'rescheduled') {
-      sessionUpdateData.status = 'rescheduled';
-    }
-    if (session.reminder_sent !== false) {
-      sessionUpdateData.reminder_sent = false; // Reset reminder flag when rescheduled
-    }
-
-    // Only perform update if there are actual changes (besides updated_at)
-    if (Object.keys(sessionUpdateData).length === 0) {
-      // Fetch full session data to return
-      const { data: fullSession } = await supabaseAdmin
-        .from('sessions')
-        .select(`
-          *,
-          clients!inner(
-            id,
-            first_name,
-            last_name,
-            child_name,
-            user_id,
-            users!inner(email)
-          ),
-          psychologists!inner(
-            id,
-            first_name,
-            last_name,
-            email
-          )
-        `)
-        .eq('id', sessionId)
-        .single();
-
-      return res.json(
-        successResponse(fullSession || session, 'No changes detected')
-      );
-    }
-
-    // Add updated_at timestamp
-    sessionUpdateData.updated_at = new Date().toISOString();
-
-    // Update session with new date/time (reset reminder_sent since it's rescheduled)
-    const { data: updatedSession, error: updateError } = await supabaseAdmin
-      .from('sessions')
-      .update(sessionUpdateData)
-      .eq('id', sessionId)
-      .select(`
-        *,
-        clients!inner(
-          id,
-          first_name,
-          last_name,
-          child_name,
-          user_id,
-          users!inner(email)
-        ),
-        psychologists!inner(
-          id,
-          first_name,
-          last_name,
-          email
-        )
-      `)
-      .single();
-
-    if (updateError) {
-      console.error('Error updating session:', updateError);
-      console.error('Update query details:', {
-        sessionId,
-        new_date,
-        new_time,
-        formatted_date: formatDate(new_date),
-        formatted_time: formatTime(new_time)
-      });
-      return res.status(500).json(
-        errorResponse('Failed to reschedule session')
-      );
-    }
-
-    // For free assessment sessions, also update the free_assessments table
-    if (session.session_type === 'free_assessment') {
-      try {
-        const { error: freeAssessmentUpdateError } = await supabaseAdmin
-          .from('free_assessments')
-          .update({
-            scheduled_date: formatDate(new_date),
-            scheduled_time: formatTime(new_time),
-            status: 'rescheduled',
-            updated_at: new Date().toISOString()
-          })
-          .eq('session_id', sessionId);
-
-        if (freeAssessmentUpdateError) {
-          console.error('⚠️ Error updating free_assessments table:', freeAssessmentUpdateError);
-        } else {
-          console.log('✅ Updated free_assessments table with new date/time');
-        }
-      } catch (freeAssessmentError) {
-        console.error('⚠️ Error updating free_assessments table:', freeAssessmentError);
-        // Don't fail the reschedule if free_assessments update fails
-      }
-    }
-
-    // Update receipt with new session date and time
-    try {
-      const { data: receipt, error: receiptError } = await supabaseAdmin
-        .from('receipts')
-        .select('id, receipt_details')
-        .eq('session_id', sessionId)
-        .maybeSingle();
-
-      if (!receiptError && receipt) {
-        // Update receipt_details JSON with new session date and time
-        const updatedReceiptDetails = {
-          ...receipt.receipt_details,
-          session_date: formatDate(new_date),
-          session_time: formatTime(new_time)
-        };
-
-        await supabaseAdmin
-          .from('receipts')
-          .update({
-            receipt_details: updatedReceiptDetails,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', receipt.id);
-
-        console.log('✅ Receipt updated with new session date and time');
-      } else if (receiptError && receiptError.code !== 'PGRST116') {
-        console.error('Error fetching receipt:', receiptError);
-      }
-    } catch (receiptUpdateError) {
-      console.error('Error updating receipt:', receiptUpdateError);
-      // Continue even if receipt update fails
-    }
-
-    // Update Meet link if session has one
-    if (session.meet_link && session.meet_link !== 'https://meet.google.com/new?hs=122&authuser=0') {
-      try {
-        const meetLinkService = require('../utils/meetLinkService');
-        
-        // Create new session data for Meet link update
-        const sessionData = {
-          summary: `Therapy Session - ${session.clients.child_name || session.clients.first_name} with ${session.psychologists.first_name}`,
-          description: `Online therapy session between ${session.clients.child_name || session.clients.first_name} and ${session.psychologists.first_name} ${session.psychologists.last_name}`,
-          startDate: formatDate(new_date),
-          startTime: formatTime(new_time),
-          endTime: addMinutesToTime(formatTime(new_time), 50)
-        };
-
-        // Generate new Meet link
-        const meetResult = await meetLinkService.generateSessionMeetLink(sessionData);
-        
-        if (meetResult.success) {
-          // Update session with new Meet link
-          await supabaseAdmin
-            .from('sessions')
-            .update({
-              meet_link: meetResult.meetLink,
-              google_calendar_event_id: meetResult.eventId,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', sessionId);
-
-          console.log('✅ Meet link updated for rescheduled session:', meetResult.meetLink);
-        } else {
-          console.log('⚠️ Failed to update Meet link, keeping original:', meetResult.note);
-        }
-      } catch (meetError) {
-        console.error('Error updating Meet link:', meetError);
-        // Continue with reschedule even if Meet link update fails
-      }
-    }
-
-    // Get updated session with Meet link for notifications
-    const { data: sessionWithMeet } = await supabaseAdmin
-      .from('sessions')
-      .select('google_meet_link')
-      .eq('id', sessionId)
-      .single();
-
-    const newMeetLink = sessionWithMeet?.google_meet_link || null;
-
-    // Send reschedule notification emails
-    try {
-      const emailService = require('../utils/emailService');
-      
-      await emailService.sendRescheduleNotification({
-        clientName: session.clients.child_name || `${session.clients.first_name} ${session.clients.last_name}`,
-        psychologistName: `${session.psychologists.first_name} ${session.psychologists.last_name}`,
-        clientEmail: session.clients.users.email,
-        psychologistEmail: session.psychologists.email,
-        scheduledDate: new_date,
-        scheduledTime: new_time,
-        sessionId: session.id,
-        meetLink: newMeetLink,
-        reason: reason || 'Admin rescheduled'
-      }, oldSessionData.date, oldSessionData.time);
-      
-      console.log('✅ Reschedule notification emails sent successfully');
-    } catch (emailError) {
-      console.error('Error sending reschedule notification emails:', emailError);
-      // Continue even if email sending fails
-    }
-
-    // Send WhatsApp notifications for reschedule
-    try {
-      console.log('📱 Sending WhatsApp notifications for admin reschedule...');
-      const { sendRescheduleConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-      
-      // Use phone numbers already fetched from session query above
-      const clientPhone = session.clients.phone_number || null;
-      const psychologistPhone = session.psychologists.phone || null;
-
-      const clientName = session.clients.child_name || `${session.clients.first_name} ${session.clients.last_name}`;
-      const psychologistName = `${session.psychologists.first_name} ${session.psychologists.last_name}`;
-
-      // Send WhatsApp to client using new reschedule template
-      if (clientPhone) {
-        const clientResult = await sendRescheduleConfirmation(clientPhone, {
-          oldDate: oldSessionData.date,
-          oldTime: oldSessionData.time,
-          newDate: new_date,
-          newTime: new_time,
-          newMeetLink: newMeetLink
-        });
-        if (clientResult?.success) {
-          console.log('✅ Reschedule WhatsApp sent to client');
-        } else {
-          console.warn('⚠️ Failed to send reschedule WhatsApp to client');
-        }
-      }
-
-      // Send WhatsApp to psychologist
-      if (psychologistPhone) {
-        // Format date and time using the same functions as client messages
-        const { formatFriendlyTime } = require('../utils/whatsappService');
-        const formatBookingDateShort = (dateStr) => {
-          if (!dateStr) return '';
-          try {
-            const d = new Date(`${dateStr}T00:00:00+05:30`);
-            return d.toLocaleDateString('en-IN', {
-              weekday: 'short',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-              timeZone: 'Asia/Kolkata'
-            });
-          } catch {
-            return dateStr;
-          }
-        };
-        
-        const bullet = '•⁠  ⁠';
-        const oldFormattedDate = formatBookingDateShort(oldSessionData.date);
-        const oldFormattedTime = formatFriendlyTime(oldSessionData.time);
-        const newFormattedDate = formatBookingDateShort(new_date);
-        const newFormattedTime = formatFriendlyTime(new_time);
-        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
-        
-        const psychologistMessage =
-          `Hey 👋\n\n` +
-          `Session rescheduled by admin with Little Care.\n\n` +
-          `${bullet}Client: ${clientName}\n` +
-          `${bullet}Old: ${oldFormattedDate}, ${oldFormattedTime} (IST)\n` +
-          `${bullet}New: ${newFormattedDate}, ${newFormattedTime} (IST)\n` +
-          (newMeetLink ? `\n${bullet}New link: ${newMeetLink}\n` : '') +
-          (reason ? `\n${bullet}Reason: ${reason}\n` : '') +
-          `\nPlease be ready 5 mins early.\n\n` +
-          `For help: ${supportPhone}\n\n` +
-          `— Little Care 💜`;
-
-        const psychologistResult = await whatsappService.sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
-        if (psychologistResult?.success) {
-          console.log('✅ Reschedule WhatsApp sent to psychologist');
-        } else {
-          console.warn('⚠️ Failed to send reschedule WhatsApp to psychologist');
-        }
-      }
-      
-      console.log('✅ WhatsApp notifications sent for admin reschedule');
-    } catch (waError) {
-      console.error('❌ Error sending reschedule WhatsApp:', waError);
-      // Continue even if WhatsApp fails
-    }
-
-    // Create notification for client
-    await supabaseAdmin
-      .from('notifications')
-      .insert({
-        user_id: session.clients.user_id,
-        type: 'session_rescheduled',
-        title: 'Session Rescheduled',
-        message: `Your session has been rescheduled to ${formatDate(new_date)} at ${formatTime(new_time)}`,
-        metadata: {
-          session_id: session.id,
-          old_date: oldSessionData.date,
-          old_time: oldSessionData.time,
-          new_date: formatDate(new_date),
-          new_time: formatTime(new_time),
-          reason: reason || 'Admin rescheduled'
-        }
-      });
-
-    // Create notification for psychologist
-    await supabaseAdmin
-      .from('notifications')
-      .insert({
-        user_id: session.psychologists.user_id,
-        type: 'session_rescheduled',
-        title: 'Session Rescheduled',
-        message: `Session with ${session.clients.child_name || session.clients.first_name} has been rescheduled to ${formatDate(new_date)} at ${formatTime(new_time)}`,
-        metadata: {
-          session_id: session.id,
-          old_date: oldSessionData.date,
-          old_time: oldSessionData.time,
-          new_date: formatDate(new_date),
-          new_time: formatTime(new_time),
-          reason: reason || 'Admin rescheduled'
-        }
-      });
-
-    console.log('✅ Session rescheduled successfully by admin');
-    
-    // PRIORITY: Check and send reminder immediately if rescheduled session is 12 hours away
-    // This gives rescheduled bookings priority over batch reminder processing
-    try {
-      const sessionReminderService = require('../services/sessionReminderService');
-      // Run asynchronously to not block the response
-      sessionReminderService.checkAndSendReminderForSessionId(updatedSession.id).catch(err => {
-        console.error('❌ Error in priority reminder check:', err);
-        // Don't block response - reminder will be sent in next hourly check
-      });
-    } catch (reminderError) {
-      console.error('❌ Error initiating priority reminder check:', reminderError);
-      // Don't block response
-    }
-
-    res.json(
-      successResponse(updatedSession, 'Session rescheduled successfully')
-    );
-
-  } catch (error) {
-    console.error('Admin reschedule session error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while rescheduling session')
-    );
-  }
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
 };
 
-// Get psychologist availability for admin reschedule
+const updateSessionPayment = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const updateSession = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
 const getPsychologistAvailabilityForReschedule = async (req, res) => {
   try {
     const { psychologistId } = req.params;
     const { startDate, endDate } = req.query;
 
+    if (!psychologistId) {
+      return res.status(400).json(
+        errorResponse('Psychologist ID is required')
+      );
+    }
+
     if (!startDate || !endDate) {
       return res.status(400).json(
-        errorResponse('Start date and end date are required')
+        errorResponse('Both startDate and endDate are required (YYYY-MM-DD format)')
       );
     }
 
-    // Get psychologist details
-    const { data: psychologist, error: psychologistError } = await supabaseAdmin
-      .from('psychologists')
-      .select('id, first_name, last_name')
-      .eq('id', psychologistId)
-      .single();
+    console.log(`📅 [ADMIN] Getting availability for psychologist ${psychologistId} from ${startDate} to ${endDate}`);
 
-    if (psychologistError || !psychologist) {
-      return res.status(404).json(
-        errorResponse('Psychologist not found')
-      );
-    }
+    // Use the availability service to get availability range
+    const availabilityService = require('../utils/availabilityCalendarService');
+    const availability = await availabilityService.getPsychologistAvailabilityRange(
+      psychologistId,
+      startDate,
+      endDate
+    );
 
-    // Get psychologist availability
-    const { data: availability, error: availabilityError } = await supabaseAdmin
-      .from('availability')
-      .select('*')
-      .eq('psychologist_id', psychologistId)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date', { ascending: true });
-
-    if (availabilityError) {
-      console.error('Error fetching availability:', availabilityError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch psychologist availability')
-      );
-    }
-
-    // Get existing sessions in the date range
-    const { data: existingSessions, error: sessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('scheduled_date, scheduled_time, status')
-      .eq('psychologist_id', psychologistId)
-      .gte('scheduled_date', startDate)
-      .lte('scheduled_date', endDate)
-      .in('status', ['booked', 'rescheduled', 'confirmed']);
-
-    if (sessionsError) {
-      console.error('Error fetching existing sessions:', sessionsError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch existing sessions')
-      );
-    }
-
-    // Helper function to convert 24-hour format to 12-hour format
-    const convertTo12Hour = (time24) => {
-      if (!time24) return '';
-      const [hours, minutes] = time24.split(':');
-      const hour = parseInt(hours);
-      const minute = minutes || '00';
+    // Format the response to match what the frontend expects
+    // Frontend expects: { success: true, data: { availability: [...] } }
+    // Each item should have: { date, available_slots (array of time strings), time_slots, booked_times, is_available }
+    const formattedAvailability = availability.map(day => {
+      // The availability service returns: { date, timeSlots: [{time, available, displayTime, reason}], ... }
+      // Extract available slots from timeSlots array - these are the slots that can be booked
+      const availableSlots = (day.timeSlots || [])
+        .filter(slot => slot.available !== false && slot.reason !== 'booked' && slot.reason !== 'google_calendar_blocked')
+        .map(slot => {
+          // Return the time string in 12-hour format (e.g., "9:00 PM")
+          return slot.displayTime || slot.time || String(slot);
+        });
       
-      if (hour === 0) {
-        return `12:${minute} AM`;
-      } else if (hour < 12) {
-        return `${hour}:${minute} AM`;
-      } else if (hour === 12) {
-        return `12:${minute} PM`;
-      } else {
-        return `${hour - 12}:${minute} PM`;
-      }
-    };
+      // Extract all time slots (for reference)
+      const allTimeSlots = (day.timeSlots || []).map(slot => slot.displayTime || slot.time || String(slot));
+      
+      // Extract booked times
+      const bookedTimes = (day.timeSlots || [])
+        .filter(slot => slot.available === false && slot.reason === 'booked')
+        .map(slot => slot.displayTime || slot.time || String(slot));
 
-    // Process availability data
-    const processedAvailability = availability.map(day => {
-      const daySessions = existingSessions?.filter(session => 
-        session.scheduled_date === day.date
-      ) || [];
-
-      // Convert booked times from 24-hour to 12-hour format for comparison
-      const bookedTimes = daySessions.map(session => convertTo12Hour(session.scheduled_time));
-      const timeSlots = day.time_slots || [];
-
-      console.log(`📅 Processing availability for ${day.date}:`, {
-        timeSlots_count: timeSlots?.length || 0,
-        bookedTimes_count: bookedTimes?.length || 0,
-        availableSlots_count: timeSlots.filter(slot => !bookedTimes.includes(slot)).length
-      });
-
-      return {
+      const formattedDay = {
         date: day.date,
-        is_available: day.is_available,
-        time_slots: timeSlots,
-        booked_times: bookedTimes,
-        available_slots: day.is_available ? 
-          timeSlots.filter(slot => 
-            !bookedTimes.includes(slot)
-          ) : []
+        is_available: day.is_available !== false && availableSlots.length > 0,
+        time_slots: allTimeSlots,
+        available_slots: availableSlots, // This is what the frontend uses to display available times
+        booked_times: bookedTimes
       };
+
+      console.log(`📅 [ADMIN] Formatted day ${day.date}: ${availableSlots.length} available slots out of ${allTimeSlots.length} total`);
+      
+      return formattedDay;
     });
 
-    res.json(
+    console.log(`✅ [ADMIN] Availability fetched: ${formattedAvailability.length} days`);
+
+      return res.json(
       successResponse({
-        psychologist,
-        availability: processedAvailability
-      }, 'Availability fetched successfully')
+        availability: formattedAvailability
+      })
     );
 
   } catch (error) {
-    console.error('Get psychologist availability error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching availability')
+    console.error('❌ [ADMIN] Error getting psychologist availability:', error);
+      return res.status(500).json(
+      errorResponse('Failed to fetch psychologist availability')
     );
   }
 };
 
-// Get psychologist calendar events for admin view
+const handleRescheduleRequest = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
+const getRescheduleRequests = async (req, res) => {
+  try {
+    const { status } = req.query; // 'pending', 'approved', 'rejected', or undefined for all
+
+    // Get all notifications that are reschedule requests
+    // Filter by type='warning' and message contains 'reschedule' or title contains 'Reschedule'
+    let query = supabaseAdmin
+      .from('notifications')
+      .select('*')
+      .or('type.eq.warning,type.eq.info')
+      .order('created_at', { ascending: false });
+
+    const { data: allNotifications, error: fetchError } = await query;
+
+    if (fetchError) {
+      console.error('Get reschedule requests error:', fetchError);
+      return res.status(500).json(
+        errorResponse('Failed to fetch reschedule requests')
+      );
+    }
+
+    // Filter for reschedule-related notifications
+    let rescheduleRequests = (allNotifications || []).filter(notif => 
+      (notif.message?.toLowerCase().includes('reschedule') || 
+       notif.title?.toLowerCase().includes('reschedule')) &&
+      notif.related_type === 'session'
+    );
+
+    // Filter by status
+    if (status === 'pending') {
+      rescheduleRequests = rescheduleRequests.filter(req => !req.is_read);
+    } else if (status === 'approved') {
+      rescheduleRequests = rescheduleRequests.filter(req => req.is_read);
+    }
+
+    // Enrich with session, client, and psychologist data
+    const enrichedRequests = await Promise.all(
+      rescheduleRequests.map(async (request) => {
+        const sessionId = request.related_id;
+        
+        // Get session details with client user email
+        const { data: session } = await supabaseAdmin
+          .from('sessions')
+          .select(`
+            *,
+            client:clients(
+              *,
+              user:users(email)
+            ),
+            psychologist:psychologists(*)
+          `)
+          .eq('id', sessionId)
+          .single();
+
+        return {
+          ...request,
+          session: session || null,
+          client: session?.client || null,
+          psychologist: session?.psychologist || null
+        };
+      })
+    );
+
+    res.json(successResponse(enrichedRequests || [], 'Reschedule requests fetched successfully'));
+
+  } catch (error) {
+    console.error('Get reschedule requests error:', error);
+    res.status(500).json(
+      errorResponse('Internal server error while fetching reschedule requests')
+    );
+  }
+};
+
+const approveAssessmentRescheduleRequest = async (req, res) => {
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+};
+
 const getPsychologistCalendarEvents = async (req, res) => {
   try {
     const { psychologistId } = req.params;
@@ -3761,2241 +2199,41 @@ const getPsychologistCalendarEvents = async (req, res) => {
   }
 };
 
-// Check calendar sync status for a psychologist
 const checkCalendarSyncStatus = async (req, res) => {
-  try {
-    const { psychologistId } = req.params;
-    const { date } = req.query; // Optional: specific date to check, defaults to tomorrow
-
-    // Find psychologist
-    const { data: psychologist, error: psychError } = await supabaseAdmin
-      .from('psychologists')
-      .select('id, first_name, last_name, email, google_calendar_credentials')
-      .eq('id', psychologistId)
-      .single();
-
-    if (psychError || !psychologist) {
-      return res.status(404).json(
-        errorResponse('Psychologist not found')
-      );
-    }
-
-    if (!psychologist.google_calendar_credentials) {
-      return res.json(
-        successResponse({
-          psychologist: {
-            id: psychologist.id,
-            name: `${psychologist.first_name} ${psychologist.last_name}`,
-            email: psychologist.email
-          },
-          googleCalendarConnected: false,
-          message: 'Google Calendar not connected'
-        }, 'Calendar sync check completed')
-      );
-    }
-
-    // Get target date (tomorrow by default, or specified date)
-    const targetDate = date ? new Date(date) : new Date();
-    if (!date) {
-      targetDate.setDate(targetDate.getDate() + 1);
-    }
-    targetDate.setHours(0, 0, 0, 0);
-    
-    const targetDateEnd = new Date(targetDate);
-    targetDateEnd.setHours(23, 59, 59, 999);
-
-    const targetDateStr = targetDate.toISOString().split('T')[0];
-
-    const googleCalendarService = require('../utils/googleCalendarService');
-
-    // 1. Get external events from Google Calendar
-    const syncResult = await googleCalendarService.syncCalendarEvents(
-      psychologist,
-      targetDate,
-      targetDateEnd
-    );
-
-    if (!syncResult.success) {
-      return res.status(500).json(
-        errorResponse(`Failed to sync calendar: ${syncResult.error}`)
-      );
-    }
-
-    // 2. Get availability for target date
-    const { data: availability, error: availError } = await supabaseAdmin
-      .from('availability')
-      .select('id, date, time_slots, is_available, updated_at')
-      .eq('psychologist_id', psychologist.id)
-      .eq('date', targetDateStr)
-      .single();
-
-    // Helper function to normalize time format
-    const normalizeTimeTo24Hour = (timeStr) => {
-      if (!timeStr) return null;
-      const hhmmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})$/);
-      if (hhmmMatch) {
-        return `${hhmmMatch[1].padStart(2, '0')}:${hhmmMatch[2]}`;
-      }
-      const rangeMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})-/);
-      if (rangeMatch) {
-        return `${rangeMatch[1].padStart(2, '0')}:${rangeMatch[2]}`;
-      }
-      const ampmMatch = String(timeStr).match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-      if (ampmMatch) {
-        let hours = parseInt(ampmMatch[1], 10);
-        const minutes = ampmMatch[2];
-        const period = ampmMatch[3].toUpperCase();
-        if (period === 'PM' && hours !== 12) hours += 12;
-        if (period === 'AM' && hours === 12) hours = 0;
-        return `${hours.toString().padStart(2, '0')}:${minutes}`;
-      }
-      const extractMatch = String(timeStr).match(/(\d{1,2}):(\d{2})/);
-      if (extractMatch) {
-        return `${extractMatch[1].padStart(2, '0')}:${extractMatch[2]}`;
-      }
-      return null;
-    };
-
-    // 3. Analyze external events
-    const externalEvents = syncResult.externalEvents.map(event => {
-      const eventTime = event.start.toTimeString().split(' ')[0].substring(0, 5);
-      const eventEndTime = event.end.toTimeString().split(' ')[0].substring(0, 5);
-      const normalizedEventTime = normalizeTimeTo24Hour(eventTime);
-      const hasMeetLink = event.hangoutsLink || (event.conferenceData && event.conferenceData.entryPoints);
-      
-      let status = 'unknown';
-      let inAvailability = false;
-      
-      if (availability && availability.time_slots) {
-        inAvailability = availability.time_slots.some(slot => {
-          const normalizedSlot = normalizeTimeTo24Hour(slot);
-          return normalizedSlot === normalizedEventTime;
-        });
-        
-        if (inAvailability) {
-          status = 'not_blocked';
-        } else {
-          status = 'blocked';
-        }
-      } else {
-        status = 'no_availability_record';
-      }
-
-      return {
-        title: event.title,
-        start: event.start.toISOString(),
-        end: event.end.toISOString(),
-        time: eventTime,
-        endTime: eventEndTime,
-        normalizedTime: normalizedEventTime,
-        hasGoogleMeet: !!hasMeetLink,
-        meetLink: event.hangoutsLink || (event.conferenceData?.entryPoints?.[0]?.uri || null),
-        status: status,
-        inAvailability: inAvailability
-      };
-    });
-
-    // 4. Summary
-    const summary = {
-      totalExternalEvents: syncResult.externalEvents.length,
-      eventsWithGoogleMeet: externalEvents.filter(e => e.hasGoogleMeet).length,
-      blockedEvents: externalEvents.filter(e => e.status === 'blocked').length,
-      notBlockedEvents: externalEvents.filter(e => e.status === 'not_blocked').length,
-      noAvailabilityRecord: externalEvents.filter(e => e.status === 'no_availability_record').length
-    };
-
-    res.json(
-      successResponse({
-        psychologist: {
-          id: psychologist.id,
-          name: `${psychologist.first_name} ${psychologist.last_name}`,
-          email: psychologist.email
-        },
-        date: targetDateStr,
-        googleCalendarConnected: true,
-        availability: availability ? {
-          exists: true,
-          totalSlots: availability.time_slots?.length || 0,
-          timeSlots: availability.time_slots || [],
-          lastUpdated: availability.updated_at
-        } : {
-          exists: false,
-          error: availError?.message || 'No availability record found'
-        },
-        externalEvents: externalEvents,
-        summary: summary,
-        issues: summary.notBlockedEvents > 0 ? [
-          `${summary.notBlockedEvents} external event(s) are still in availability and should be blocked`
-        ] : []
-      }, 'Calendar sync status checked successfully')
-    );
-
-  } catch (error) {
-    console.error('Check calendar sync status error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while checking calendar sync status')
-    );
-  }
-};
-
-// Handle reschedule request approval/rejection
-const handleRescheduleRequest = async (req, res) => {
-  try {
-    const { notificationId } = req.params;
-    const { action, reason } = req.body; // 'approve' or 'reject', and optional reason
-
-    if (!action || !['approve', 'reject'].includes(action)) {
-      return res.status(400).json(
-        errorResponse('Action must be either "approve" or "reject"')
-      );
-    }
-
-    // Get the notification - admin can approve reschedule requests
-    // Note: notifications table uses user_id, not psychologist_id
-    // Use supabaseAdmin to bypass RLS for admin operations
-    const { supabaseAdmin } = require('../config/supabase');
-    // Get notification - don't filter by type initially to see what we have
-    const { data: notification, error: notificationError } = await supabaseAdmin
-      .from('notifications')
-      .select('*')
-      .eq('id', notificationId)
-      .single();
-    
-    // If found, verify it's a reschedule-related notification
-    if (notification && !notification.title?.includes('Reschedule') && !notification.message?.includes('reschedule')) {
-      console.warn('⚠️ Notification found but not a reschedule request:', {
-        id: notification.id,
-        title: notification.title,
-        type: notification.type
-      });
-      return res.status(400).json(
-        errorResponse('This notification is not a reschedule request')
-      );
-    }
-
-    if (notificationError || !notification) {
-      console.error('❌ Notification lookup failed:', {
-        notificationId,
-        error: notificationError,
-        found: !!notification,
-        errorCode: notificationError?.code,
-        errorMessage: notificationError?.message
-      });
-      return res.status(404).json(
-        errorResponse('Reschedule request not found')
-      );
-    }
-    
-    console.log('✅ Found notification:', {
-      id: notification.id,
-      type: notification.type,
-      title: notification.title,
-      related_id: notification.related_id
-    });
-
-    // Parse session_id from related_id (not session_id column which doesn't exist)
-    const sessionId = notification.related_id;
-    if (!sessionId) {
-      return res.status(400).json(
-        errorResponse('Session ID not found in notification')
-      );
-    }
-
-    // Parse new date/time from message
-    // Message format: "...from YYYY-MM-DD at HH:MM:SS to YYYY-MM-DD at HH:MM or H:MM AM/PM..."
-    const message = notification.message || '';
-    console.log('📝 Parsing notification message:', message);
-    
-    // Helper function to parse time string (handles multiple formats)
-    const parseTimeString = (timeStr) => {
-      if (!timeStr) return '00:00:00';
-      
-      // Check if 12-hour format (contains AM/PM)
-      if (timeStr.includes('AM') || timeStr.includes('PM')) {
-        const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (match) {
-          let hour24 = parseInt(match[1]);
-          const minutes = match[2];
-          const period = match[3].toUpperCase();
-          
-          if (period === 'PM' && hour24 !== 12) {
-            hour24 += 12;
-          } else if (period === 'AM' && hour24 === 12) {
-            hour24 = 0;
-          }
-          
-          return `${String(hour24).padStart(2, '0')}:${minutes}:00`;
-        }
-      }
-      
-      // 24-hour format: handle with or without seconds
-      const parts = timeStr.split(':');
-      if (parts.length === 2) {
-        return `${parts[0].padStart(2, '0')}:${parts[1]}:00`;
-      } else if (parts.length === 3) {
-        return `${parts[0].padStart(2, '0')}:${parts[1]}:${parts[2]}`;
-      }
-      
-      return '00:00:00';
-    };
-    
-    // Try multiple regex patterns to match different time formats
-    // Pattern 1: 24-hour with seconds "09:00:00"
-    let newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}:\d{2})/);
-    let originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}:\d{2})/);
-    
-    // Pattern 2: 24-hour without seconds "09:00"
-    if (!newDateMatch) {
-      newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})(?!\d)/);
-    }
-    if (!originalDateMatch) {
-      originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2})(?!\d)/);
-    }
-    
-    // Pattern 3: 12-hour format "9:00 AM" or "09:00 PM"
-    if (!newDateMatch) {
-      newDateMatch = message.match(/to (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}\s*(?:AM|PM))/i);
-    }
-    if (!originalDateMatch) {
-      originalDateMatch = message.match(/from (\d{4}-\d{2}-\d{2}) at (\d{1,2}:\d{2}\s*(?:AM|PM))/i);
-    }
-    
-    if (!newDateMatch || !originalDateMatch) {
-      console.error('❌ Failed to parse date/time from message:', {
-        message,
-        newDateMatch: newDateMatch ? newDateMatch[0] : null,
-        originalDateMatch: originalDateMatch ? originalDateMatch[0] : null
-      });
-      return res.status(400).json(
-        errorResponse('Could not parse reschedule date/time from notification message')
-      );
-    }
-
-    const newDate = newDateMatch[1];
-    const newTime = parseTimeString(newDateMatch[2]);
-    
-    console.log('✅ Parsed reschedule info:', {
-      newDate,
-      newTime,
-      originalDate: originalDateMatch[1],
-      originalTime: parseTimeString(originalDateMatch[2])
-    });
-
-    // Get the session - use supabaseAdmin to bypass RLS
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('*')
-      .eq('id', sessionId)
-      .single();
-
-    if (sessionError || !session) {
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
-    if (action === 'approve') {
-      // Check if new time slot is still available - use supabaseAdmin
-      const { data: conflictingSessions } = await supabaseAdmin
-        .from('sessions')
-        .select('id')
-        .eq('psychologist_id', session.psychologist_id)
-        .eq('scheduled_date', formatDate(newDate))
-        .eq('scheduled_time', formatTime(newTime))
-        .in('status', ['booked', 'rescheduled', 'confirmed'])
-        .neq('id', session.id);
-
-      if (conflictingSessions && conflictingSessions.length > 0) {
-        return res.status(400).json(
-          errorResponse('Selected time slot is no longer available')
-        );
-      }
-
-      // Update session with new date/time - only include fields that have actually changed
-      const formattedDate = formatDate(newDate);
-      const formattedTime = formatTime(newTime);
-      const newRescheduleCount = (session.reschedule_count || 0) + 1;
-      const sessionUpdateData = {};
-
-      if (formattedDate !== session.scheduled_date) {
-        sessionUpdateData.scheduled_date = formattedDate;
-      }
-      if (formattedTime !== session.scheduled_time) {
-        sessionUpdateData.scheduled_time = formattedTime;
-      }
-      if (session.status !== 'rescheduled') {
-        sessionUpdateData.status = 'rescheduled';
-      }
-      if (newRescheduleCount !== (session.reschedule_count || 0)) {
-        sessionUpdateData.reschedule_count = newRescheduleCount;
-      }
-
-      // Only perform update if there are actual changes (besides updated_at)
-      if (Object.keys(sessionUpdateData).length === 0) {
-        // Return existing session if no changes
-        return res.json(
-          successResponse(session, 'No changes detected')
-        );
-      }
-
-      // Add updated_at timestamp
-      sessionUpdateData.updated_at = new Date().toISOString();
-
-      const { data: updatedSession, error: updateError } = await supabaseAdmin
-        .from('sessions')
-        .update(sessionUpdateData)
-        .eq('id', session.id)
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('Error updating session:', updateError);
-        return res.status(500).json(
-          errorResponse('Failed to reschedule session')
-        );
-      }
-
-      // For free assessment sessions, also update the free_assessments table
-      if (session.session_type === 'free_assessment') {
-        try {
-          const { error: freeAssessmentUpdateError } = await supabaseAdmin
-            .from('free_assessments')
-            .update({
-              scheduled_date: formatDate(newDate),
-              scheduled_time: formatTime(newTime),
-              status: 'rescheduled',
-              updated_at: new Date().toISOString()
-            })
-            .eq('session_id', session.id);
-
-          if (freeAssessmentUpdateError) {
-            console.error('⚠️ Error updating free_assessments table:', freeAssessmentUpdateError);
-          } else {
-            console.log('✅ Updated free_assessments table with new date/time');
-          }
-        } catch (freeAssessmentError) {
-          console.error('⚠️ Error updating free_assessments table:', freeAssessmentError);
-          // Don't fail the reschedule if free_assessments update fails
-        }
-      }
-
-      // Update receipt with new session date and time
-      try {
-        const { data: receipt, error: receiptError } = await supabaseAdmin
-          .from('receipts')
-          .select('id, receipt_details')
-          .eq('session_id', session.id)
-          .maybeSingle();
-
-        if (!receiptError && receipt) {
-          // Update receipt_details JSON with new session date and time
-          const updatedReceiptDetails = {
-            ...receipt.receipt_details,
-            session_date: formatDate(newDate),
-            session_time: formatTime(newTime)
-          };
-
-          await supabaseAdmin
-            .from('receipts')
-            .update({
-              receipt_details: updatedReceiptDetails,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', receipt.id);
-
-          console.log('✅ Receipt updated with new session date and time');
-        } else if (receiptError && receiptError.code !== 'PGRST116') {
-          console.error('Error fetching receipt:', receiptError);
-        }
-      } catch (receiptUpdateError) {
-        console.error('Error updating receipt:', receiptUpdateError);
-        // Continue even if receipt update fails
-      }
-
-      // Get client user_id for notification - use supabaseAdmin
-      const { data: client } = await supabaseAdmin
-        .from('clients')
-        .select('user_id')
-        .eq('id', session.client_id)
-        .single();
-
-      // Create approval notification for client - use supabaseAdmin
-      if (client?.user_id) {
-      const clientNotificationData = {
-          user_id: client.user_id,
-        title: 'Reschedule Approved',
-          message: `Your reschedule request has been approved by admin. Session moved to ${newDate} at ${newTime}`,
-          type: 'success',
-          related_id: session.id,
-          related_type: 'session',
-        is_read: false,
-        created_at: new Date().toISOString()
-      };
-
-      await supabaseAdmin
-        .from('notifications')
-        .insert([clientNotificationData]);
-      }
-
-      // Also notify psychologist that reschedule was approved - use supabaseAdmin
-      const { data: psychologistUser } = await supabaseAdmin
-        .from('psychologists')
-        .select('user_id')
-        .eq('id', session.psychologist_id)
-        .single();
-
-      if (psychologistUser?.user_id) {
-        const psychologistNotification = {
-          user_id: psychologistUser.user_id,
-          title: 'Reschedule Approved by Admin',
-          message: `Admin has approved the reschedule request. Session moved to ${newDate} at ${newTime}`,
-          type: 'success',
-          related_id: session.id,
-          related_type: 'session',
-          is_read: false,
-          created_at: new Date().toISOString()
-        };
-
-        await supabaseAdmin
-          .from('notifications')
-          .insert([psychologistNotification]);
-      }
-
-      // Mark original request as read - use supabaseAdmin
-      await supabaseAdmin
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId);
-
-      // Send email and WhatsApp notifications to client and psychologist
-      // Run in background to not block the response
-      (async () => {
-        try {
-          // Get client and psychologist details with email and phone for notifications
-          const { data: clientDetails } = await supabaseAdmin
-            .from('clients')
-            .select(`
-              id,
-              first_name,
-              last_name,
-              child_name,
-              phone_number,
-              user:users(email)
-            `)
-            .eq('id', session.client_id)
-            .single();
-
-          const { data: psychologistDetails } = await supabaseAdmin
-            .from('psychologists')
-            .select('id, first_name, last_name, email, phone')
-            .eq('id', session.psychologist_id)
-            .single();
-
-          if (!clientDetails || !psychologistDetails) {
-            console.warn('⚠️ Could not fetch client or psychologist details for notifications');
-            return;
-          }
-
-          const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
-          const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
-          const clientEmail = clientDetails?.user?.email || clientDetails?.email;
-          const psychologistEmail = psychologistDetails?.email;
-
-          // Get Meet link from updated session
-          const meetLink = updatedSession.google_meet_link || null;
-
-          // Send email notifications
-          try {
-            const emailService = require('../utils/emailService');
-            await emailService.sendRescheduleNotification(
-              {
-                clientName,
-                psychologistName,
-                clientEmail,
-                psychologistEmail,
-                scheduledDate: updatedSession.scheduled_date,
-                scheduledTime: updatedSession.scheduled_time,
-                sessionId: updatedSession.id,
-                meetLink,
-                isFreeAssessment: session.session_type === 'free_assessment'
-              },
-              session.scheduled_date,
-              session.scheduled_time
-            );
-            console.log('✅ Reschedule approval emails sent successfully');
-          } catch (emailError) {
-            console.error('❌ Error sending reschedule approval emails:', emailError);
-          }
-
-          // Send WhatsApp notifications
-          try {
-            const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-            
-            // Format date as: "12 Jan-26" (DD MMM-YY format) - same as reschedule confirmation
-            const formatRescheduleDate = (dateStr) => {
-              if (!dateStr) return '';
-              try {
-                const d = new Date(`${dateStr}T00:00:00+05:30`);
-                const day = d.getDate().toString().padStart(2, '0');
-                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                const month = monthNames[d.getMonth()];
-                const year = d.getFullYear().toString().slice(-2);
-                return `${day} ${month}-${year}`;
-              } catch {
-                return dateStr;
-              }
-            };
-
-            // Format time as: "3:00 PM" (12-hour format) - same as reschedule confirmation
-            const formatRescheduleTime = (timeStr) => {
-              if (!timeStr) return '';
-              try {
-                const [h, m] = timeStr.split(':');
-                const hours = parseInt(h, 10);
-                const minutes = parseInt(m || '0', 10);
-                const period = hours >= 12 ? 'PM' : 'AM';
-                const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-                const displayMinutes = minutes.toString().padStart(2, '0');
-                return `${displayHours}:${displayMinutes} ${period}`;
-              } catch {
-                return timeStr;
-              }
-            };
-
-            const bullet = '•⁠  ⁠';
-            const oldFormatted = `${formatRescheduleDate(session.scheduled_date)}, ${formatRescheduleTime(session.scheduled_time)}`;
-            const newFormatted = `${formatRescheduleDate(updatedSession.scheduled_date)}, ${formatRescheduleTime(updatedSession.scheduled_time)}`;
-            
-            const newLinkBlock = meetLink ? `${bullet}New link: ${meetLink}\n\n` : '';
-
-            // Send WhatsApp to client - same format as reschedule confirmation
-            if (clientDetails?.phone_number) {
-              const clientMessage = `Hey, Your reschedule request has been approved!\n\n` +
-                `${bullet}Old: ${oldFormatted}\n` +
-                `${bullet}New: ${newFormatted}\n` +
-                newLinkBlock +
-                `We're looking forward to seeing you at the new time.\n\n` +
-                `— Little Care 💜`;
-
-              const clientResult = await sendWhatsAppTextWithRetry(clientDetails.phone_number, clientMessage);
-              if (clientResult?.success) {
-                console.log(`✅ Reschedule approval WhatsApp sent to client`);
-              } else {
-                console.warn('⚠️ Failed to send reschedule approval WhatsApp to client');
-              }
-            }
-
-            // Send WhatsApp to psychologist
-            if (psychologistDetails?.phone) {
-              const bullet = '•⁠  ⁠';
-              const meetLinkLine = meetLink ? `Join link:\n${meetLink}\n\n` : '';
-              
-              const psychologistMessage =
-                `Hey 👋\n\n` +
-                `Reschedule request approved by admin.\n\n` +
-                `${bullet}Client: ${clientName}\n` +
-                `${bullet}Old: ${oldFormatted}\n` +
-                `${bullet}New: ${newFormatted}\n\n` +
-                meetLinkLine +
-                `Please be ready 5 mins early.\n\n` +
-                `For help: +91 95390 07766\n\n` +
-                `— Little Care 💜`;
-
-              const psychologistResult = await sendWhatsAppTextWithRetry(psychologistDetails.phone, psychologistMessage);
-              if (psychologistResult?.success) {
-                console.log(`✅ Reschedule approval WhatsApp sent to psychologist`);
-              } else {
-                console.warn('⚠️ Failed to send reschedule approval WhatsApp to psychologist');
-              }
-            }
-            
-            console.log('✅ WhatsApp notifications sent for reschedule approval');
-          } catch (waError) {
-            console.error('❌ Error sending reschedule approval WhatsApp:', waError);
-          }
-        } catch (notificationError) {
-          console.error('❌ Error in background notification tasks:', notificationError);
-          // Don't throw - notifications are not critical for the approval response
-        }
-      })();
-
-      res.json(
-        successResponse(updatedSession, 'Reschedule request approved successfully')
-      );
-
-    } else if (action === 'reject') {
-      
-      // Revert session status back to booked - use supabaseAdmin
-      const { data: updatedSession, error: updateError } = await supabaseAdmin
-        .from('sessions')
-        .update({
-          status: 'booked',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', session.id)
-        .select('*')
-        .single();
-
-      if (updateError) {
-        console.error('Error updating session:', updateError);
-        return res.status(500).json(
-          errorResponse('Failed to reject reschedule request')
-        );
-      }
-
-      // Get client details for notifications - use supabaseAdmin
-      const { data: clientDetails } = await supabaseAdmin
-        .from('clients')
-        .select(`
-          id,
-          first_name,
-          last_name,
-          child_name,
-          phone_number,
-          user_id,
-          user:users(email)
-        `)
-        .eq('id', session.client_id)
-        .single();
-
-      // Create rejection notification for client with operations contact info - use supabaseAdmin
-      if (clientDetails?.user_id) {
-        const rejectionMessage = reason 
-          ? `Your reschedule request has been declined. Reason: ${reason}. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`
-          : `Your reschedule request has been declined. Your session remains scheduled for ${session.scheduled_date} at ${session.scheduled_time}. For further communication, please contact our operations team via WhatsApp or call.`;
-
-        const clientNotificationData = {
-          user_id: clientDetails.user_id,
-          title: 'Reschedule Request Declined',
-          message: rejectionMessage,
-          type: 'error',
-          related_id: session.id,
-          related_type: 'session',
-          is_read: false,
-          created_at: new Date().toISOString()
-        };
-
-        await supabaseAdmin
-          .from('notifications')
-          .insert([clientNotificationData]);
-      }
-
-      // Mark original request as read - use supabaseAdmin
-      await supabaseAdmin
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId);
-
-      // Send email and WhatsApp notifications to client
-      // Run in background to not block the response
-      (async () => {
-        try {
-          if (!clientDetails) {
-            console.warn('⚠️ Could not fetch client details for decline notifications');
-            return;
-          }
-
-          const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
-          const clientEmail = clientDetails?.user?.email || clientDetails?.email;
-          const clientPhone = clientDetails?.phone_number;
-
-          // Format session date/time
-          const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
-            timeZone: 'Asia/Kolkata',
-            dateStyle: 'long',
-            timeStyle: 'short'
-          });
-
-          // Send email notification
-          try {
-            const emailService = require('../utils/emailService');
-            const formattedDate = new Date(`${session.scheduled_date}T00:00:00`).toLocaleDateString('en-IN', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-              timeZone: 'Asia/Kolkata'
-            });
-            
-            // Format time
-            const formatTimeFromString = (timeStr) => {
-              if (!timeStr) return '';
-              const [hours, minutes] = timeStr.split(':');
-              const hour = parseInt(hours, 10);
-              const ampm = hour >= 12 ? 'PM' : 'AM';
-              const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-              return `${displayHour}:${minutes} ${ampm}`;
-            };
-            
-            const formattedTime = formatTimeFromString(session.scheduled_time);
-
-            // Send custom decline email
-            const declineEmailSubject = 'Reschedule Request Declined';
-            const declineEmailHtml = `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #dc2626;">Reschedule Request Declined</h2>
-                <p>Dear ${clientName},</p>
-                <p>We regret to inform you that your reschedule request has been declined.</p>
-                ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
-                <p><strong>Your original session is still scheduled:</strong></p>
-                <ul>
-                  <li><strong>Date:</strong> ${formattedDate}</li>
-                  <li><strong>Time:</strong> ${formattedTime}</li>
-                </ul>
-                <p>Your session remains available at the originally scheduled time. If you need to discuss this further or have any concerns, please contact our operations team via WhatsApp or call.</p>
-                <p>Thank you for your understanding.</p>
-                <p>Best regards,<br>Little Care Team</p>
-              </div>
-            `;
-
-            if (clientEmail) {
-              await emailService.transporter.sendMail({
-                from: process.env.EMAIL_FROM || 'noreply@little.care',
-                to: clientEmail,
-                subject: declineEmailSubject,
-                html: declineEmailHtml
-              });
-              console.log('✅ Reschedule decline email sent to client');
-            }
-          } catch (emailError) {
-            console.error('❌ Error sending reschedule decline email:', emailError);
-          }
-
-          // Send WhatsApp notification
-          try {
-            const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-            
-            if (clientPhone) {
-              const whatsappMessage = `❌ Your reschedule request has been declined.\n\n` +
-                `${reason ? `Reason: ${reason}\n\n` : ''}` +
-                `✅ Your original session is still scheduled:\n` +
-                `📅 Date: ${sessionDateTime}\n\n` +
-                `Your session remains available at the originally scheduled time. If you need to discuss this further or have any concerns, please contact our operations team via WhatsApp or call.\n\n` +
-                `Thank you for your understanding.`;
-
-              const whatsappResult = await sendWhatsAppTextWithRetry(clientPhone, whatsappMessage);
-              if (whatsappResult?.success) {
-                console.log('✅ Reschedule decline WhatsApp sent to client');
-              } else {
-                console.warn('⚠️ Failed to send reschedule decline WhatsApp to client');
-              }
-            }
-          } catch (waError) {
-            console.error('❌ Error sending reschedule decline WhatsApp:', waError);
-          }
-        } catch (notificationError) {
-          console.error('❌ Error in background decline notification tasks:', notificationError);
-          // Don't throw - notifications are not critical for the decline response
-        }
-      })();
-
-      res.json(
-        successResponse(updatedSession, 'Reschedule request rejected')
-      );
-    }
-
-  } catch (error) {
-    console.error('Handle reschedule request error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while handling reschedule request')
-    );
-  }
-};
-
-// Create manual booking (admin only - for edge cases)
-const createManualBooking = async (req, res) => {
-  try {
-    const { 
-      client_id, 
-      psychologist_id, 
-      package_id, 
-      scheduled_date, 
-      scheduled_time, 
-      amount,
-      payment_received_date,
-      payment_method,
-      notes 
-    } = req.body;
-
-    console.log('📝 Admin creating manual booking:', {
-      client_id,
-      psychologist_id,
-      package_id,
-      scheduled_date,
-      scheduled_time,
-      amount,
-      payment_received_date,
-      client_id_type: typeof client_id,
-      client_id_length: client_id?.toString().length
-    });
-
-    // Validate required fields
-    if (!client_id || !psychologist_id || !scheduled_date || !scheduled_time || !amount) {
-      return res.status(400).json(
-        errorResponse('Missing required fields: client_id, psychologist_id, scheduled_date, scheduled_time, amount')
-      );
-    }
-
-    // Validate payment_received_date
-    if (!payment_received_date) {
-      return res.status(400).json(
-        errorResponse('payment_received_date is required for manual bookings')
-      );
-    }
-
-    // Check if client exists (use admin client to bypass RLS)
-    // Convert client_id to integer if it's a string (UUIDs will remain strings)
-    const clientIdForQuery = isNaN(client_id) ? client_id : parseInt(client_id);
-    
-    console.log('🔍 Looking up client:', {
-      client_id,
-      client_id_type: typeof client_id,
-      clientIdForQuery,
-      clientIdForQuery_type: typeof clientIdForQuery
-    });
-
-    // First try to find client by id
-    let { data: client, error: clientError } = await supabaseAdmin
-      .from('clients')
-      .select(`
-        *,
-        user:users(email)
-      `)
-      .eq('id', clientIdForQuery)
-      .single();
-
-    // If not found by id, try looking up by user_id (in case frontend sent user.id instead of client.id)
-    if (clientError || !client) {
-      console.log('⚠️ Client not found by id, trying user_id lookup...');
-      const { data: clientByUserId, error: userLookupError } = await supabaseAdmin
-        .from('clients')
-        .select(`
-          *,
-          user:users(email)
-        `)
-        .eq('user_id', clientIdForQuery)
-        .single();
-
-      if (clientByUserId && !userLookupError) {
-        console.log('✅ Found client by user_id instead');
-        client = clientByUserId;
-        clientError = null;
-      } else {
-        console.error('❌ Client lookup error (by id and user_id):', {
-          client_id,
-          clientIdForQuery,
-          errorById: clientError,
-          errorByUserId: userLookupError,
-          client: client,
-          errorDetails: clientError ? {
-            message: clientError.message,
-            code: clientError.code,
-            details: clientError.details,
-            hint: clientError.hint
-          } : null
-        });
-        return res.status(404).json(
-          errorResponse(`Client not found with id or user_id: ${client_id}`)
-        );
-      }
-    }
-
-    console.log('✅ Client found:', {
-      clientId: client.id,
-      clientEmail: client.user?.email,
-      clientPhone: client.phone_number,
-      clientName: `${client.first_name} ${client.last_name}`,
-      childName: client.child_name
-    });
-
-    // Check if psychologist exists (use admin client to bypass RLS)
-    // Also fetch Google Calendar credentials for better Meet link creation
-    const { data: psychologist, error: psychologistError } = await supabaseAdmin
-      .from('psychologists')
-      .select('*, google_calendar_credentials')
-      .eq('id', psychologist_id)
-      .single();
-
-    if (psychologistError || !psychologist) {
-      return res.status(404).json(
-        errorResponse('Psychologist not found')
-      );
-    }
-
-    // Check if package exists (if package_id is provided and not null)
-    let packageData = null;
-    if (package_id) {
-      const { data: pkg, error: packageError } = await supabaseAdmin
-        .from('packages')
-        .select('*')
-        .eq('id', package_id)
-        .single();
-
-      if (packageError || !pkg) {
-        return res.status(404).json(
-          errorResponse('Package not found')
-        );
-      }
-      packageData = pkg;
-    }
-
-    // Check if time slot is already booked (use admin client to bypass RLS)
-    const { data: existingSession, error: existingError } = await supabaseAdmin
-      .from('sessions')
-      .select('id')
-      .eq('psychologist_id', psychologist_id)
-      .eq('scheduled_date', scheduled_date)
-      .eq('scheduled_time', scheduled_time)
-      .in('status', ['booked', 'rescheduled', 'confirmed'])
-      .single();
-
-    if (existingSession) {
-      return res.status(400).json(
-        errorResponse('This time slot is already booked for the psychologist')
-      );
-    }
-
-    // Generate transaction ID for manual payment
-    // Format: MANUAL-{timestamp}-{random}
-    // Example: MANUAL-1704067200000-abc123xyz
-    // Note: For manual payments, we don't have Razorpay order_id or payment_id
-    // The transaction_id serves as the unique identifier for manual payments
-    const transactionId = `MANUAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    // Normalize payment method (default to 'cash' if not provided)
-    const normalizedPaymentMethod = (payment_method || 'cash').toLowerCase();
-
-    // Create manual payment record (use admin client to bypass RLS)
-    const { data: paymentRecord, error: paymentError } = await supabaseAdmin
-      .from('payments')
-      .insert({
-        transaction_id: transactionId,
-        session_id: null, // Will be set after session creation
-        psychologist_id: psychologist_id,
-        client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
-        package_id: package_id || null,
-        amount: amount,
-        session_type: packageData ? 'package' : 'individual',
-        status: 'success', // Mark as success for manual payment
-        payment_method: normalizedPaymentMethod, // Store payment method in dedicated column
-        razorpay_params: {
-          notes: {
-            manual: true,
-            payment_method: normalizedPaymentMethod, // Also store in notes for reference
-            admin_created: true,
-            created_by: req.user.id,
-            created_at: new Date().toISOString(),
-            payment_received_date: payment_received_date
-          }
-        },
-        completed_at: payment_received_date,
-        created_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (paymentError) {
-      console.error('❌ Error creating payment record:', paymentError);
-      return res.status(500).json(
-        errorResponse('Failed to create payment record')
-      );
-    }
-
-    console.log('✅ Manual payment record created:', paymentRecord.id);
-
-    // Generate Google Meet link (non-blocking - continue even if it takes time)
-    const meetLinkService = require('../utils/meetLinkService');
-    const { addMinutesToTime } = require('../utils/helpers');
-    let meetData = null;
-
-    try {
-      console.log('🔄 Creating Google Meet meeting for manual booking...');
-      
-      const sessionData = {
-        summary: `Therapy Session - ${client.child_name || client.first_name} with ${psychologist.first_name}`,
-        description: `Online therapy session between ${client.child_name || client.first_name} and ${psychologist.first_name} ${psychologist.last_name}`,
-        startDate: scheduled_date,
-        startTime: scheduled_time,
-        endTime: addMinutesToTime(scheduled_time, 50) // Add 50 minutes
-      };
-      
-      // Try to use psychologist's Google Calendar OAuth credentials for faster Meet link creation
-      let userAuth = null;
-      if (psychologist.google_calendar_credentials) {
-        try {
-          const credentials = typeof psychologist.google_calendar_credentials === 'string' 
-            ? JSON.parse(psychologist.google_calendar_credentials) 
-            : psychologist.google_calendar_credentials;
-          
-          // Check if access token is still valid (not expired, with 5 min buffer)
-          const now = Date.now();
-          const expiryDate = credentials.expiry_date;
-          const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
-          
-          if (credentials.access_token) {
-            if (!expiryDate || expiryDate > (now + bufferTime)) {
-              // Token is valid
-              userAuth = {
-                access_token: credentials.access_token,
-                refresh_token: credentials.refresh_token,
-                expiry_date: credentials.expiry_date
-              };
-              console.log('✅ Using psychologist Google Calendar OAuth credentials for Meet link creation (token valid)');
-            } else if (credentials.refresh_token) {
-              // Token expired but we have refresh token - pass both to service for auto-refresh
-              userAuth = {
-                access_token: credentials.access_token, // May be expired, service will refresh
-                refresh_token: credentials.refresh_token,
-                expiry_date: credentials.expiry_date
-              };
-              console.log('⚠️ Psychologist OAuth token expired, but refresh token available - service will attempt refresh');
-            } else {
-              console.log('⚠️ Psychologist OAuth credentials expired and no refresh token - will use fallback method');
-            }
-          }
-        } catch (credError) {
-          console.warn('⚠️ Error parsing psychologist OAuth credentials:', credError.message);
-        }
-      } else {
-        console.log('ℹ️ Psychologist does not have Google Calendar connected - will use service account method');
-      }
-      
-      // Create Meet link - will use OAuth if available, otherwise falls back to Calendar API
-      // The service will try to get the link immediately, and if not available,
-      // it waits up to 30 seconds for the conference to be ready.
-      // Even if it times out, the calendar event is created and the Meet link becomes available later.
-      const meetResult = await meetLinkService.generateSessionMeetLink(sessionData, userAuth);
-      
-      if (meetResult.success && meetResult.meetLink && !meetResult.meetLink.includes('meet.google.com/new')) {
-        // Real Meet link created
-        meetData = {
-          meetLink: meetResult.meetLink,
-          eventId: meetResult.eventId,
-          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
-          method: meetResult.method
-        };
-        console.log('✅ Real Google Meet link created successfully:', meetResult.method);
-      } else if (meetResult.requiresOAuth || meetResult.method === 'service_account_limitation') {
-        // Service account limitation - psychologist needs to connect Google Calendar
-        console.log('⚠️ ⚠️ ⚠️ IMPORTANT: Real Meet link NOT created');
-        console.log('⚠️ Reason: Service accounts cannot create Meet conferences');
-        console.log('⚠️ Solution: Psychologist must connect their Google Calendar for OAuth authentication');
-        console.log('⚠️ Calendar event created:', meetResult.eventLink);
-        console.log('⚠️ Meet link must be added manually or psychologist needs to connect Google Calendar');
-        
-        // Return null for meetLink to indicate it needs manual creation or OAuth
-        meetData = {
-          meetLink: null, // No Meet link available
-          eventId: meetResult.eventId,
-          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
-          method: meetResult.method || 'oauth_required',
-          requiresOAuth: true,
-          note: 'Psychologist must connect Google Calendar to generate real Meet links'
-        };
-      } else {
-        // Fallback case
-        meetData = {
-          meetLink: meetResult.meetLink || null,
-          eventId: meetResult.eventId || null,
-          calendarLink: meetResult.eventLink || meetResult.calendarLink || null,
-          method: meetResult.method || 'fallback'
-        };
-        console.log('⚠️ Using fallback or no Meet link');
-      }
-    } catch (meetError) {
-      console.error('❌ Error creating Meet link:', meetError);
-      // Use fallback link and continue
-      meetData = {
-        meetLink: 'https://meet.google.com/new?hs=122&authuser=0',
-        eventId: null,
-        calendarLink: null,
-        method: 'fallback'
-      };
-      console.log('⚠️ Continuing with fallback Meet link');
-    }
-
-    // Create session
-    const sessionData = {
-      client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
-      psychologist_id: psychologist_id,
-      package_id: package_id || null,
-      scheduled_date: scheduled_date,
-      scheduled_time: scheduled_time,
-      status: 'booked',
-      payment_id: paymentRecord.id,
-      price: amount, // Sessions table uses 'price' column, not 'amount'
-      session_notes: notes || null, // Sessions table uses 'session_notes' column, not 'notes'
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-          // Add meet data if available
-          // IMPORTANT: Only add Meet link if it's a real Meet link (not fallback)
-          if (meetData && meetData.eventId) {
-            sessionData.google_calendar_event_id = meetData.eventId;
-            // Only set Meet link if it's a real link (not fallback URL)
-            if (meetData.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
-              sessionData.google_meet_link = meetData.meetLink;
-              sessionData.google_meet_join_url = meetData.meetLink;
-              sessionData.google_meet_start_url = meetData.meetLink;
-            } else {
-              // Leave Meet link fields as null - indicates manual creation needed
-              sessionData.google_meet_link = null;
-              sessionData.google_meet_join_url = null;
-              sessionData.google_meet_start_url = null;
-            }
-            // Always add calendar link if available
-            if (meetData.calendarLink) {
-              sessionData.google_calendar_link = meetData.calendarLink;
-            }
-          }
-
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .insert([sessionData])
-      .select('*')
-      .single();
-
-    if (sessionError) {
-      console.error('❌ Session creation failed:', sessionError);
-        
-        // Check if it's a unique constraint violation (double booking)
-        if (sessionError.code === '23505' || 
-            sessionError.message?.includes('unique') || 
-            sessionError.message?.includes('duplicate')) {
-          console.log('⚠️ Double booking detected - slot was just booked by another user');
-          // Rollback payment record
-          await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
-          return res.status(409).json(
-            errorResponse('This time slot was just booked by another user. Please select another time.')
-          );
-        }
-        
-      // Rollback payment record
-      await supabaseAdmin.from('payments').delete().eq('id', paymentRecord.id);
-      return res.status(500).json(
-        errorResponse('Failed to create session')
-      );
-    }
-
-    console.log('✅ Session created successfully:', session.id);
-
-    // Update payment record with session_id (use admin client to bypass RLS)
-    await supabaseAdmin
-      .from('payments')
-      .update({ session_id: session.id })
-      .eq('id', paymentRecord.id);
-
-    // Generate PDF receipt FIRST (before sending email/WhatsApp so we can attach it)
-    let receiptResult = null;
-    try {
-      console.log('📄 Generating PDF receipt...');
-      const { generateAndStoreReceipt } = require('../controllers/paymentController');
-      receiptResult = await generateAndStoreReceipt(
-        session,
-        paymentRecord,
-        client,
-        psychologist
-      );
-      if (receiptResult && receiptResult.receiptNumber) {
-        console.log('✅ Receipt generated successfully:', {
-          receiptNumber: receiptResult.receiptNumber,
-          pdfGenerated: !!receiptResult.pdfBuffer,
-          pdfSize: receiptResult.pdfBuffer?.length || 0
-        });
-      }
-    } catch (receiptError) {
-      console.error('❌ Error generating receipt:', receiptError);
-      // Continue even if receipt generation fails
-    }
-
-    // Send email notifications (with receipt attachment)
-    try {
-      console.log('📧 Sending email notifications...');
-      const emailService = require('../utils/emailService');
-      
-      // Use client_name from receiptDetails if available (first_name + last_name), otherwise use first_name + last_name directly
-      const emailClientName = receiptResult?.receiptDetails?.client_name || 
-                              `${client.first_name || ''} ${client.last_name || ''}`.trim() || 
-                              'Client';
-      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
-
-      console.log('📧 Client details for email:', {
-        clientName: emailClientName,
-        clientEmail: client.user?.email,
-        clientPhone: client.phone_number,
-        psychologistName
-      });
-
-      await emailService.sendSessionConfirmation({
-        clientName: emailClientName,
-        psychologistName: psychologistName,
-        sessionDate: scheduled_date,
-        sessionTime: scheduled_time,
-        sessionDuration: '60 minutes',
-        clientEmail: client.user?.email,
-        psychologistEmail: psychologist.email,
-        googleMeetLink: meetData?.meetLink,
-        meetLink: meetData?.meetLink,
-        sessionId: session.id,
-        transactionId: transactionId,
-        amount: amount,
-        price: amount,
-        status: session.status || 'booked',
-        psychologistId: psychologist_id,
-        clientId: client.id,
-        receiptPdfBuffer: receiptResult?.pdfBuffer || null,
-        receiptNumber: receiptResult?.receiptNumber || null
-      });
-
-      console.log('✅ Email notifications sent');
-    } catch (emailError) {
-      console.error('❌ Error sending emails:', emailError);
-      // Continue even if email fails
-    }
-
-    // Send WhatsApp notifications (with receipt PDF)
-    try {
-      console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
-      const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
-      
-      // Fix clientName: Don't use child_name if it's "Pending", null, or empty
-      const clientName = (client.child_name && 
-        client.child_name.trim() !== '' && 
-        client.child_name.toLowerCase() !== 'pending')
-        ? client.child_name
-        : `${client.first_name || ''} ${client.last_name || ''}`.trim();
-      const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
-
-      console.log('📱 Client details for WhatsApp:', {
-        clientName,
-        clientPhone: client.phone_number,
-        psychologistName,
-        hasReceiptPdf: !!receiptResult?.pdfBuffer
-      });
-
-      // Send WhatsApp to client
-      if (client.phone_number) {
-        console.log(`📱 Sending WhatsApp to client at: ${client.phone_number}`);
-        const meetLinkText = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new') 
-          ? `🔗 Google Meet Link: ${meetData.meetLink}` 
-          : meetData?.requiresOAuth
-            ? `⚠️ Note: Google Meet link will be shared once available.`
-            : `🔗 Google Meet Link: Will be shared shortly`;
-        
-        const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
-          timeZone: 'Asia/Kolkata',
-          dateStyle: 'long',
-          timeStyle: 'short'
-        });
-        
-        if (meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
-          // Use booking confirmation for real Meet links
-          // Only include childName if child_name exists and is not empty/null/'Pending'
-          const childName = client.child_name && 
-            client.child_name.trim() !== '' && 
-            client.child_name.toLowerCase() !== 'pending'
-            ? client.child_name 
-            : null;
-          
-          // Get client name from receiptDetails (first_name + last_name) for receipt filename
-          const receiptClientName = receiptResult?.receiptDetails?.client_name || clientName || null;
-          
-          const clientDetails = {
-            childName: childName,
-            date: scheduled_date,
-            time: scheduled_time,
-            meetLink: meetData.meetLink,
-            psychologistName: psychologistName, // Add psychologist name to WhatsApp message
-            receiptPdfBuffer: receiptResult?.pdfBuffer || null, // Add receipt PDF buffer
-            receiptNumber: receiptResult?.receiptNumber || null, // Add receipt number
-            clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
-          };
-          await sendBookingConfirmation(client.phone_number, clientDetails);
-        } else {
-          // Use plain text for cases without Meet link
-          const clientMessage = `🎉 Your session with Dr. ${psychologistName} is confirmed!\n\n` +
-            `📅 Date: ${sessionDateTime}\n` +
-            `${meetLinkText}\n\n` +
-            `We look forward to seeing you!`;
-          await sendWhatsAppTextWithRetry(client.phone_number, clientMessage);
-        }
-        console.log('✅ WhatsApp sent to client');
-      }
-
-      // Send WhatsApp to psychologist
-      if (psychologist.phone) {
-        // Format date and time using the same functions as client messages
-        const { formatFriendlyTime } = require('../utils/whatsappService');
-        const formatBookingDateShort = (dateStr) => {
-          if (!dateStr) return '';
-          try {
-            const d = new Date(`${dateStr}T00:00:00+05:30`);
-            return d.toLocaleDateString('en-IN', {
-              weekday: 'short',
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-              timeZone: 'Asia/Kolkata'
-            });
-          } catch {
-            return dateStr;
-          }
-        };
-        
-        const bullet = '•⁠  ⁠';
-        const formattedDate = formatBookingDateShort(scheduled_date);
-        const formattedTime = formatFriendlyTime(scheduled_time);
-        const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
-        
-        const meetLinkLine = meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')
-          ? `Join link:\n${meetData.meetLink}\n\n`
-          : meetData?.requiresOAuth
-            ? `⚠️ IMPORTANT: Please connect your Google Calendar in your profile to enable automatic Meet link creation.\n\n`
-            : `Join link: Will be shared shortly\n\n`;
-        
-        const psychologistMessage =
-          `Hey 👋\n\n` +
-          `New session booked with Little Care.\n\n` +
-          `${bullet}Client: ${clientName}\n` +
-          `${bullet}Date: ${formattedDate}\n` +
-          `${bullet}Time: ${formattedTime} (IST)\n\n` +
-          meetLinkLine +
-          `Please be ready 5 mins early.\n\n` +
-          `For help: ${supportPhone}\n\n` +
-          `— Little Care 💜`;
-        
-        await sendWhatsAppTextWithRetry(psychologist.phone, psychologistMessage);
-        console.log('✅ WhatsApp sent to psychologist');
-      }
-      
-      console.log('✅ WhatsApp notifications sent successfully');
-    } catch (whatsappError) {
-      console.error('❌ Error sending WhatsApp:', whatsappError);
-      // Continue even if WhatsApp fails
-    }
-
-    // If package booking, create client package record
-    if (package_id && packageData) {
-      console.log('📦 Creating client package record...');
-      try {
-        // Check if client package already exists (use admin client to bypass RLS)
-        const { data: existingClientPackage } = await supabaseAdmin
-          .from('client_packages')
-          .select('*')
-          .eq('client_id', client.id) // Use the actual client.id we found, not the user_id that was sent
-          .eq('package_id', package_id)
-          .eq('status', 'active')
-          .single();
-
-        if (existingClientPackage) {
-          // Update existing package: increment used sessions
-          await supabaseAdmin
-            .from('client_packages')
-            .update({
-              remaining_sessions: existingClientPackage.remaining_sessions - 1
-            })
-            .eq('id', existingClientPackage.id);
-          console.log('✅ Updated existing client package');
-        } else {
-          // Create new client package
-          const clientPackageData = {
-            client_id: client.id, // Use the actual client.id we found, not the user_id that was sent
-            psychologist_id: psychologist_id,
-            package_id: package_id,
-            package_type: packageData.package_type,
-            total_sessions: packageData.session_count,
-            remaining_sessions: packageData.session_count - 1,
-            total_amount: packageData.price,
-            amount_paid: packageData.price,
-            status: 'active',
-            purchased_at: payment_received_date,
-            first_session_id: session.id
-          };
-
-          await supabaseAdmin
-            .from('client_packages')
-            .insert([clientPackageData]);
-          console.log('✅ Client package record created');
-        }
-      } catch (packageError) {
-        console.error('❌ Error creating client package:', packageError);
-        // Continue even if package creation fails
-      }
-    }
-
-    // Fetch the complete session with relations for response
-    const { data: completeSession, error: fetchError } = await supabaseAdmin
-      .from('sessions')
-      .select(`
-        *,
-        client:clients(
-          id,
-          first_name,
-          last_name,
-          child_name,
-          phone_number,
-          user:users(email)
-        ),
-        psychologist:psychologists(
-          id,
-          first_name,
-          last_name,
-          email
-        ),
-        package:packages(*)
-      `)
-      .eq('id', session.id)
-      .single();
-
-    console.log('✅ Manual booking created successfully');
-    
-    // PRIORITY: Check and send reminder immediately if manual booking is 12 hours away
-    // This gives manual bookings priority over batch reminder processing
-    try {
-      const sessionReminderService = require('../services/sessionReminderService');
-      // Run asynchronously to not block the response
-      sessionReminderService.checkAndSendReminderForSessionId(session.id).catch(err => {
-        console.error('❌ Error in priority reminder check:', err);
-        // Don't block response - reminder will be sent in next hourly check
-      });
-    } catch (reminderError) {
-      console.error('❌ Error initiating priority reminder check:', reminderError);
-      // Don't block response
-    }
-
-    res.status(201).json(
-      successResponse(completeSession || session, 'Manual booking created successfully')
-    );
-
-  } catch (error) {
-    console.error('Create manual booking error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while creating manual booking')
-    );
-  }
-};
-
-// Get all reschedule requests (for admin dashboard)
-const getRescheduleRequests = async (req, res) => {
-  try {
-    const { status } = req.query; // 'pending', 'approved', 'rejected', or undefined for all
-
-    // Get all notifications that are reschedule requests
-    // Filter by type='warning' and message contains 'reschedule' or title contains 'Reschedule'
-    let query = supabaseAdmin
-      .from('notifications')
-      .select('*')
-      .or('type.eq.warning,type.eq.info')
-      .order('created_at', { ascending: false });
-
-    const { data: allNotifications, error: fetchError } = await query;
-
-    if (fetchError) {
-      console.error('Get reschedule requests error:', fetchError);
-      return res.status(500).json(
-        errorResponse('Failed to fetch reschedule requests')
-      );
-    }
-
-    // Filter for reschedule-related notifications
-    let rescheduleRequests = (allNotifications || []).filter(notif => 
-      (notif.message?.toLowerCase().includes('reschedule') || 
-       notif.title?.toLowerCase().includes('reschedule')) &&
-      notif.related_type === 'session'
-    );
-
-    // Filter by status
-    if (status === 'pending') {
-      rescheduleRequests = rescheduleRequests.filter(req => !req.is_read);
-    } else if (status === 'approved') {
-      rescheduleRequests = rescheduleRequests.filter(req => req.is_read);
-    }
-
-    // Enrich with session, client, and psychologist data
-    const enrichedRequests = await Promise.all(
-      rescheduleRequests.map(async (request) => {
-        const sessionId = request.related_id;
-        
-        // Get session details with client user email
-        const { data: session } = await supabaseAdmin
-          .from('sessions')
-          .select(`
-            *,
-            client:clients(
-              *,
-              user:users(email)
-            ),
-            psychologist:psychologists(*)
-          `)
-          .eq('id', sessionId)
-          .single();
-
-        return {
-          ...request,
-          session: session || null,
-          client: session?.client || null,
-          psychologist: session?.psychologist || null
-        };
-      })
-    );
-
-    res.json(successResponse(enrichedRequests || [], 'Reschedule requests fetched successfully'));
-
-  } catch (error) {
-    console.error('Get reschedule requests error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching reschedule requests')
-    );
-  }
-};
-
-// Daily task to add next day availability (called at 12 AM)
-const addNextDayAvailability = async (req, res) => {
-  try {
-    const result = await defaultAvailabilityService.addNextDayAvailability();
-    if (result.success) {
-      res.json(successResponse(result, 'Next day availability added successfully'));
-    } else {
-      res.status(500).json(errorResponse(result.message || 'Failed to add next day availability'));
-    }
-  } catch (error) {
-    console.error('Error in addNextDayAvailability endpoint:', error);
-    res.status(500).json(errorResponse('Internal server error while adding next day availability'));
-  }
-};
-
-// Update all existing psychologists with default availability
-const updateAllPsychologistsAvailability = async (req, res) => {
-  try {
-    const result = await defaultAvailabilityService.updateAllPsychologistsAvailability();
-    if (result.success) {
-      res.json(successResponse(result, `Updated ${result.updated} psychologists with default availability`));
-    } else {
-      res.status(500).json(errorResponse(result.message || 'Failed to update psychologists availability'));
-    }
-  } catch (error) {
-    console.error('Error in updateAllPsychologistsAvailability endpoint:', error);
-    res.status(500).json(errorResponse('Internal server error while updating psychologists availability'));
-  }
-};
-
-// Check which doctors are missing 3-session and 6-session packages
-const checkMissingPackages = async (req, res) => {
-  try {
-    // Get all psychologists
-    const { data: psychologists, error: psychError } = await supabaseAdmin
-      .from('psychologists')
-      .select('id, first_name, last_name, email')
-      .order('first_name');
-
-    if (psychError) {
-      return res.status(500).json(
-        errorResponse('Failed to fetch psychologists')
-      );
-    }
-
-    if (!psychologists || psychologists.length === 0) {
-      return res.json(
-        successResponse({
-          total: 0,
-          complete: 0,
-          missing: 0,
-          missingDoctors: []
-        }, 'No psychologists found')
-      );
-    }
-
-    const missingPackages = [];
-    const allGood = [];
-
-    // Check each psychologist
-    for (const psychologist of psychologists) {
-      const { data: packages, error: packagesError } = await supabaseAdmin
-        .from('packages')
-        .select('id, session_count, name, price')
-        .eq('psychologist_id', psychologist.id)
-        .in('session_count', [3, 6]);
-
-      if (packagesError) {
-        console.error(`Error fetching packages for ${psychologist.first_name} ${psychologist.last_name}:`, packagesError);
-        continue;
-      }
-
-      const sessionCounts = (packages || []).map(p => p.session_count);
-      const has3Session = sessionCounts.includes(3);
-      const has6Session = sessionCounts.includes(6);
-
-      const missing = [];
-      if (!has3Session) missing.push('3-session');
-      if (!has6Session) missing.push('6-session');
-
-      if (missing.length > 0) {
-        missingPackages.push({
-          id: psychologist.id,
-          name: `${psychologist.first_name} ${psychologist.last_name}`,
-          email: psychologist.email,
-          missing: missing,
-          existingPackages: packages || []
-        });
-      } else {
-        allGood.push({
-          id: psychologist.id,
-          name: `${psychologist.first_name} ${psychologist.last_name}`
-        });
-      }
-    }
-
-    res.json(
-      successResponse({
-        total: psychologists.length,
-        complete: allGood.length,
-        missing: missingPackages.length,
-        missingDoctors: missingPackages,
-        completeDoctors: allGood
-      }, 'Package check completed')
-    );
-
-  } catch (error) {
-    console.error('Check missing packages error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while checking packages')
-    );
-  }
-};
-
-// Delete package (admin only)
-const deletePackage = async (req, res) => {
-  try {
-    const { packageId } = req.params;
-
-    // Check if package exists
-    const { data: packageData, error: packageError } = await supabaseAdmin
-      .from('packages')
-      .select('id, psychologist_id, name, session_count')
-      .eq('id', packageId)
-      .single();
-
-    if (packageError || !packageData) {
-      return res.status(404).json(
-        errorResponse('Package not found')
-      );
-    }
-
-    // Check if package is being used in any sessions
-    const { data: sessions, error: sessionsError } = await supabaseAdmin
-      .from('sessions')
-      .select('id')
-      .eq('package_id', packageId)
-      .limit(1);
-
-    if (sessionsError) {
-      console.error('Error checking sessions:', sessionsError);
-      return res.status(500).json(
-        errorResponse('Failed to check package usage')
-      );
-    }
-
-    if (sessions && sessions.length > 0) {
-      return res.status(400).json(
-        errorResponse('Cannot delete package that is being used in sessions')
-      );
-    }
-
-    // Delete the package
-    const { error: deleteError } = await supabaseAdmin
-      .from('packages')
-      .delete()
-      .eq('id', packageId);
-
-    if (deleteError) {
-      console.error('Delete package error:', deleteError);
-      return res.status(500).json(
-        errorResponse('Failed to delete package')
-      );
-    }
-
-    res.json(
-      successResponse(null, 'Package deleted successfully')
-    );
-
-  } catch (error) {
-    console.error('Delete package error:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while deleting package')
-    );
-  }
-};
-
-// Get stuck slot locks (for debugging)
-const getStuckSlotLocks = async (req, res) => {
-  try {
-    const { checkStuckSlotLocks } = require('../scripts/checkStuckSlotLocks');
-    const result = await checkStuckSlotLocks();
-    
-    res.json(
-      successResponse(result, 'Stuck slot locks retrieved successfully')
-    );
-  } catch (error) {
-    console.error('Error fetching stuck slot locks:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while fetching stuck slot locks')
-    );
-  }
-};
-
-// Update session payment details (admin only)
-const updateSessionPayment = async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { 
-      payment_method, 
-      transaction_id, 
-      razorpay_order_id, 
-      razorpay_payment_id 
-    } = req.body;
-
-    console.log('📝 Admin updating session payment:', {
-      sessionId,
-      payment_method,
-      transaction_id,
-      razorpay_order_id,
-      razorpay_payment_id
-    });
-
-    // Validate required fields
-    if (!transaction_id) {
-      return res.status(400).json(
-        errorResponse('Transaction ID is required')
-      );
-    }
-
-    // Check if session exists
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('id, payment_id')
-      .eq('id', sessionId)
-      .single();
-
-    if (sessionError || !session) {
-      console.error('❌ Session not found:', sessionError);
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
-    // Check if payment exists
-    if (!session.payment_id) {
-      return res.status(400).json(
-        errorResponse('This session does not have an associated payment record')
-      );
-    }
-
-    // Get existing payment data to compare
-    const { data: existingPayment, error: paymentFetchError } = await supabaseAdmin
-      .from('payments')
-      .select('*')
-      .eq('id', session.payment_id)
-      .single();
-
-    if (paymentFetchError || !existingPayment) {
-      return res.status(404).json(
-        errorResponse('Payment record not found')
-      );
-    }
-
-    // Prepare update data - only include fields that have actually changed
-    const paymentUpdateData = {};
-    const trimmedTransactionId = transaction_id.trim();
-
-    if (trimmedTransactionId !== existingPayment.transaction_id) {
-      paymentUpdateData.transaction_id = trimmedTransactionId;
-    }
-
-    // Add payment_method if provided and changed
-    if (payment_method) {
-      const normalizedPaymentMethod = payment_method.toLowerCase();
-      if (normalizedPaymentMethod !== existingPayment.payment_method) {
-        paymentUpdateData.payment_method = normalizedPaymentMethod;
-      }
-    }
-
-    // Add Razorpay fields if provided and changed
-    if (razorpay_order_id !== undefined) {
-      const trimmedRazorpayOrderId = razorpay_order_id?.trim() || null;
-      if (trimmedRazorpayOrderId !== existingPayment.razorpay_order_id) {
-        paymentUpdateData.razorpay_order_id = trimmedRazorpayOrderId;
-      }
-    }
-
-    if (razorpay_payment_id !== undefined) {
-      const trimmedRazorpayPaymentId = razorpay_payment_id?.trim() || null;
-      if (trimmedRazorpayPaymentId !== existingPayment.razorpay_payment_id) {
-        paymentUpdateData.razorpay_payment_id = trimmedRazorpayPaymentId;
-      }
-    }
-
-    // Only perform update if there are actual changes (besides updated_at)
-    if (Object.keys(paymentUpdateData).length === 0) {
-      // Fetch updated session with payment details
-      const { data: updatedSession } = await supabaseAdmin
-        .from('sessions')
-        .select(`
-          *,
-          payment:payments(*)
-        `)
-        .eq('id', sessionId)
-        .single();
-
-      return res.json(
-        successResponse(updatedSession || { payment: existingPayment }, 'No changes detected')
-      );
-    }
-
-    // Add updated_at timestamp
-    paymentUpdateData.updated_at = new Date().toISOString();
-
-    // Update payment record
-    const { data: updatedPayment, error: paymentUpdateError } = await supabaseAdmin
-      .from('payments')
-      .update(paymentUpdateData)
-      .eq('id', session.payment_id)
-      .select()
-      .single();
-
-    if (paymentUpdateError) {
-      console.error('❌ Error updating payment:', paymentUpdateError);
-      return res.status(500).json(
-        errorResponse('Failed to update payment details')
-      );
-    }
-
-    console.log('✅ Payment updated successfully:', updatedPayment.id);
-
-    // Also update razorpay_params notes if payment_method is provided
-    if (payment_method && updatedPayment.razorpay_params) {
-      const updatedParams = {
-        ...updatedPayment.razorpay_params,
-        notes: {
-          ...(updatedPayment.razorpay_params.notes || {}),
-          payment_method: payment_method.toLowerCase()
-        }
-      };
-
-      await supabaseAdmin
-        .from('payments')
-        .update({ razorpay_params: updatedParams })
-        .eq('id', session.payment_id);
-    }
-
-    // Fetch updated session with payment details
-    const { data: updatedSession, error: fetchError } = await supabaseAdmin
-      .from('sessions')
-      .select(`
-        *,
-        payment:payments(*)
-      `)
-      .eq('id', sessionId)
-      .single();
-
-    if (fetchError) {
-      console.error('❌ Error fetching updated session:', fetchError);
-      // Still return success since payment was updated
-      return res.json(
-        successResponse(updatedPayment, 'Payment details updated successfully')
-      );
-    }
-
-    res.json(
-      successResponse(updatedSession, 'Session payment details updated successfully')
-    );
-  } catch (error) {
-    console.error('❌ Exception in updateSessionPayment:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while updating payment details')
-    );
-  }
-};
-
-// Update session details (admin only - comprehensive update)
-const updateSession = async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const {
-      psychologist_id,
-      client_id,
-      scheduled_date,
-      scheduled_time,
-      status,
-      price,
-      payment_method,
-      transaction_id,
-      razorpay_order_id,
-      razorpay_payment_id
-    } = req.body;
-
-    console.log('📝 Admin updating session:', {
-      sessionId,
-      psychologist_id,
-      client_id,
-      scheduled_date,
-      scheduled_time,
-      status,
-      price
-    });
-
-    // Check if session exists
-    const { data: session, error: sessionError } = await supabaseAdmin
-      .from('sessions')
-      .select('id, psychologist_id, client_id, scheduled_date, scheduled_time, status, price, payment_id')
-      .eq('id', sessionId)
-      .single();
-
-    if (sessionError || !session) {
-      console.error('❌ Session not found:', sessionError);
-      return res.status(404).json(
-        errorResponse('Session not found')
-      );
-    }
-
-    // Define allowed statuses
-    const ALLOWED_STATUSES = ['booked', 'scheduled', 'rescheduled', 'reschedule_requested', 'confirmed', 'completed', 'cancelled', 'no_show', 'noshow'];
-
-    // Validate status if provided
-    if (status && !ALLOWED_STATUSES.includes(status)) {
-      return res.status(400).json(
-        errorResponse(`Invalid session status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`)
-      );
-    }
-
-    // Prepare session update data - only include fields that have actually changed
-    const sessionUpdateData = {};
-
-    // Update psychologist if provided and changed
-    if (psychologist_id !== undefined && psychologist_id !== null) {
-      // Verify psychologist exists
-      const { data: psychologist, error: psychError } = await supabaseAdmin
-        .from('psychologists')
-        .select('id')
-        .eq('id', psychologist_id)
-        .single();
-
-      if (psychError || !psychologist) {
-        return res.status(404).json(
-          errorResponse('Psychologist not found')
-        );
-      }
-      if (psychologist_id !== session.psychologist_id) {
-        sessionUpdateData.psychologist_id = psychologist_id;
-      }
-    }
-
-    // Update client if provided and changed
-    if (client_id !== undefined && client_id !== null) {
-      // Verify client exists
-      const { data: client, error: clientError } = await supabaseAdmin
-        .from('clients')
-        .select('id')
-        .eq('id', client_id)
-        .single();
-
-      if (clientError || !client) {
-        return res.status(404).json(
-          errorResponse('Client not found')
-        );
-      }
-      if (client_id !== session.client_id) {
-        sessionUpdateData.client_id = client_id;
-      }
-    }
-
-    // Update date/time if provided and changed
-    if (scheduled_date && scheduled_date !== session.scheduled_date) {
-      sessionUpdateData.scheduled_date = scheduled_date;
-    }
-    if (scheduled_time && scheduled_time !== session.scheduled_time) {
-      sessionUpdateData.scheduled_time = scheduled_time;
-    }
-
-    // Update status if provided and changed
-    if (status && status !== session.status) {
-      sessionUpdateData.status = status;
-    }
-
-    // Update price if provided and changed
-    if (price !== undefined && price !== null) {
-      const newPrice = parseFloat(price);
-      if (newPrice !== parseFloat(session.price || 0)) {
-        sessionUpdateData.price = newPrice;
-      }
-    }
-
-    // Only perform update if there are actual changes (besides updated_at)
-    if (Object.keys(sessionUpdateData).length === 0) {
-      // Fetch full session data to return
-      const { data: fullSession } = await supabaseAdmin
-        .from('sessions')
-        .select(`
-          *,
-          client:clients(
-            id,
-            first_name,
-            last_name,
-            child_name,
-            child_age,
-            phone_number,
-            user:users(email)
-          ),
-          psychologist:psychologists(
-            id,
-            first_name,
-            last_name,
-            email,
-            phone
-          )
-        `)
-        .eq('id', sessionId)
-        .single();
-
-      return res.json(
-        successResponse(fullSession || session, 'No changes detected')
-      );
-    }
-
-    // Add updated_at timestamp
-    sessionUpdateData.updated_at = new Date().toISOString();
-
-    // Check for conflicts if date/time/psychologist changed
-    if ((scheduled_date || scheduled_time || psychologist_id !== undefined) && sessionUpdateData.psychologist_id) {
-      const checkPsychologistId = sessionUpdateData.psychologist_id || session.psychologist_id;
-      const checkDate = sessionUpdateData.scheduled_date || session.scheduled_date;
-      const checkTime = sessionUpdateData.scheduled_time || session.scheduled_time;
-
-      const { data: conflictingSessions, error: conflictError } = await supabaseAdmin
-        .from('sessions')
-        .select('id')
-        .eq('psychologist_id', checkPsychologistId)
-        .eq('scheduled_date', checkDate)
-        .eq('scheduled_time', checkTime)
-        .in('status', ['booked', 'rescheduled', 'confirmed', 'scheduled'])
-        .neq('id', sessionId);
-
-      if (conflictError) {
-        console.error('❌ Error checking conflicts:', conflictError);
-      } else if (conflictingSessions && conflictingSessions.length > 0) {
-        return res.status(400).json(
-          errorResponse('Selected time slot is already booked for the psychologist')
-        );
-      }
-    }
-
-    // Update session
-    const { data: updatedSession, error: updateError } = await supabaseAdmin
-      .from('sessions')
-      .update(sessionUpdateData)
-      .eq('id', sessionId)
-      .select(`
-        *,
-        client:clients(
-          id,
-          first_name,
-          last_name,
-          child_name,
-          child_age,
-          phone_number,
-          user:users(email)
-        ),
-        psychologist:psychologists(
-          id,
-          first_name,
-          last_name,
-          email,
-          phone
-        )
-      `)
-      .single();
-
-    if (updateError) {
-      console.error('❌ Error updating session:', updateError);
-      return res.status(500).json(
-        errorResponse('Failed to update session')
-      );
-    }
-
-    // Update payment details if provided and payment exists
-    if (session.payment_id && (payment_method || transaction_id || razorpay_order_id !== undefined || razorpay_payment_id !== undefined)) {
-      const paymentUpdateData = {
-        updated_at: new Date().toISOString()
-      };
-
-      if (payment_method) {
-        paymentUpdateData.payment_method = payment_method.toLowerCase();
-      }
-      if (transaction_id) {
-        paymentUpdateData.transaction_id = transaction_id.trim();
-      }
-      if (razorpay_order_id !== undefined) {
-        paymentUpdateData.razorpay_order_id = razorpay_order_id?.trim() || null;
-      }
-      if (razorpay_payment_id !== undefined) {
-        paymentUpdateData.razorpay_payment_id = razorpay_payment_id?.trim() || null;
-      }
-
-      const { error: paymentUpdateError } = await supabaseAdmin
-        .from('payments')
-        .update(paymentUpdateData)
-        .eq('id', session.payment_id);
-
-      if (paymentUpdateError) {
-        console.error('❌ Error updating payment:', paymentUpdateError);
-        // Don't fail the request, just log the error
-      }
-    }
-
-    console.log('✅ Session updated successfully:', updatedSession.id);
-
-    res.json(
-      successResponse(updatedSession, 'Session updated successfully')
-    );
-  } catch (error) {
-    console.error('❌ Exception in updateSession:', error);
-    res.status(500).json(
-      errorResponse('Internal server error while updating session')
-    );
-  }
+  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
 };
 
 module.exports = {
   getAllUsers,
-  getAllPsychologists,
   getUserDetails,
   updateUserRole,
   deactivateUser,
-  checkCalendarSyncStatus,
   getPlatformStats,
   searchUsers,
-  createPsychologist,
-  updatePsychologist,
-  deletePsychologist,
-  createPsychologistPackages,
-  createUser,
-  updateUser,
-  deleteUser,
   getRecentActivities,
   getRecentUsers,
   getRecentBookings,
-  rescheduleSession,
-  getPsychologistAvailabilityForReschedule,
-  getPsychologistCalendarEvents,
+  getAllPsychologists,
+  createPsychologist,
+  updatePsychologist,
+  deletePsychologist,
   addNextDayAvailability,
   updateAllPsychologistsAvailability,
-  handleRescheduleRequest,
-  createManualBooking,
-  updateSessionPayment,
-  updateSession,
-  approveAssessmentRescheduleRequest,
-  getRescheduleRequests,
+  createPsychologistPackages,
   checkMissingPackages,
   deletePackage,
-  getStuckSlotLocks
+  getStuckSlotLocks,
+  createUser,
+  updateUser,
+  deleteUser,
+  rescheduleSession,
+  updateSessionPayment,
+  updateSession,
+  getPsychologistAvailabilityForReschedule,
+  createManualBooking,
+  handleRescheduleRequest,
+  getRescheduleRequests,
+  approveAssessmentRescheduleRequest,
+  getPsychologistCalendarEvents,
+  checkCalendarSyncStatus
 };

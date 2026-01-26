@@ -1084,14 +1084,30 @@ const createPaymentOrder = async (req, res) => {
     console.log('📦 Creating Razorpay order...');
     let razorpayOrder;
     try {
-      razorpayOrder = await razorpay.orders.create(orderOptions);
+      // Add timeout for Razorpay API call (30 seconds)
+      const razorpayPromise = razorpay.orders.create(orderOptions);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Razorpay API timeout - server is taking too long to respond')), 30000)
+      );
+      
+      razorpayOrder = await Promise.race([razorpayPromise, timeoutPromise]);
       console.log('✅ Razorpay order created:', razorpayOrder.id);
     } catch (razorpayError) {
       console.error('❌ Razorpay order creation failed:', razorpayError);
+      
+      // Provide user-friendly error message
+      let errorMessage = 'Failed to create payment order with Razorpay';
+      if (razorpayError.message?.includes('timeout')) {
+        errorMessage = 'Payment gateway is taking too long to respond. Please try again in a moment.';
+      } else if (razorpayError.message) {
+        errorMessage = `Payment gateway error: ${razorpayError.message}`;
+      }
+      
       return res.status(500).json({
         success: false,
-        message: 'Failed to create payment order with Razorpay',
-        error: razorpayError.message || 'Razorpay API error'
+        message: errorMessage,
+        error: razorpayError.message || 'Razorpay API error',
+        isTimeout: razorpayError.message?.includes('timeout') || false
       });
     }
 
@@ -1858,7 +1874,8 @@ const handlePaymentSuccess = async (req, res) => {
       scheduled_time: actualScheduledTime,
       status: 'booked',
       price: paymentRecord.amount,
-      payment_id: paymentRecord.id
+      payment_id: paymentRecord.id,
+      original_scheduled_date: actualScheduledDate
     };
 
     // Only add package_id if it's provided and valid (not individual)
@@ -2910,9 +2927,21 @@ const handlePaymentFailure = async (req, res) => {
   try {
     const params = req.body;
 
-    console.log('Razorpay Failure Response:', params);
+    console.log('Razorpay Failure Response:', JSON.stringify(params, null, 2));
 
     const { razorpay_order_id, error } = params;
+
+    // Log specific error details for risk check failures
+    if (error?.reason === 'payment_risk_check_failed') {
+      console.warn('⚠️ Payment Risk Check Failed:', {
+        orderId: razorpay_order_id,
+        errorCode: error?.code,
+        errorDescription: error?.description,
+        errorReason: error?.reason,
+        errorStep: error?.step,
+        metadata: error?.metadata
+      });
+    }
 
     if (!razorpay_order_id) {
       console.error('❌ Missing Razorpay order ID in failure response');
@@ -3001,13 +3030,54 @@ const handlePaymentFailure = async (req, res) => {
       }
     }
 
+    // Determine user-friendly error message based on error type
+    let userMessage = 'Payment failed';
+    if (error?.reason === 'payment_risk_check_failed') {
+      userMessage = 'Payment was declined due to security checks. Please try again or use a different payment method.';
+    } else if (error?.description) {
+      userMessage = error.description;
+    } else if (error?.reason) {
+      userMessage = `Payment failed: ${error.reason}`;
+    }
+
+    // Send admin notification for risk check failures
+    if (error?.reason === 'payment_risk_check_failed') {
+      try {
+        // emailService is already imported at the top of the file
+        await emailService.sendEmail({
+          to: 'abhishekravi063@gmail.com',
+          subject: '⚠️ Payment Risk Check Failed - Review Required',
+          html: `
+            <h2>Payment Risk Check Failed</h2>
+            <p><strong>Order ID:</strong> ${razorpay_order_id}</p>
+            <p><strong>Payment ID:</strong> ${error?.metadata?.payment_id || 'N/A'}</p>
+            <p><strong>Error Code:</strong> ${error?.code || 'N/A'}</p>
+            <p><strong>Error Description:</strong> ${error?.description || 'N/A'}</p>
+            <p><strong>Error Reason:</strong> ${error?.reason || 'N/A'}</p>
+            <p><strong>Error Step:</strong> ${error?.step || 'N/A'}</p>
+            <p><strong>Client ID:</strong> ${paymentRecord.client_id || 'N/A'}</p>
+            <p><strong>Amount:</strong> ₹${paymentRecord.amount || 'N/A'}</p>
+            <p><em>This payment was declined by Razorpay's risk check system. Please review if this is a legitimate transaction.</em></p>
+            <p><strong>Full Error Details:</strong></p>
+            <pre>${JSON.stringify(params, null, 2)}</pre>
+          `
+        });
+        console.log('✅ Risk check failure notification sent to admin');
+      } catch (emailErr) {
+        console.error('❌ Failed to send risk check failure notification:', emailErr);
+      }
+    }
+
     res.json({
       success: false,
-      message: 'Payment failed',
+      message: userMessage,
       data: {
         transactionId: paymentRecord.transaction_id,
         orderId: razorpay_order_id,
-        errorMessage: error?.description || error?.reason || 'Payment failed'
+        errorMessage: userMessage,
+        errorCode: error?.code,
+        errorReason: error?.reason,
+        isRiskCheckFailure: error?.reason === 'payment_risk_check_failed'
       }
     });
 

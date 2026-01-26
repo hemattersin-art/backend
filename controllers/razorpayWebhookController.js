@@ -566,7 +566,8 @@ const handleLegacyPaymentDirect = async (paymentRecord, paymentId, amount) => {
       scheduled_time: scheduledTime,
       status: 'booked',
       price: paymentRecord.amount,
-      payment_id: paymentRecord.id
+      payment_id: paymentRecord.id,
+      original_scheduled_date: scheduledDate
     };
 
     if (paymentRecord.package_id && paymentRecord.package_id !== 'null' && paymentRecord.package_id !== 'undefined' && paymentRecord.package_id !== 'individual') {

@@ -99,7 +99,8 @@ const createSessionFromSlotLock = async (slotLock) => {
       scheduled_time: slotLock.scheduled_time,
       status: 'booked',
       price: paymentRecord.amount,
-      payment_id: paymentRecord.id
+      payment_id: paymentRecord.id,
+      original_scheduled_date: slotLock.scheduled_date
     };
 
     // Add package_id if available (not individual session)

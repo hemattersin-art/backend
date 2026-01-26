@@ -49,7 +49,7 @@ const getDashboard = async (req, res) => {
     try {
       const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
-        .select('id, scheduled_date, price, psychologist_id, client_id, status, payment_id, session_type')
+        .select('id, scheduled_date, original_scheduled_date, price, psychologist_id, client_id, status, payment_id, session_type')
         .in('status', ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'])
         .neq('session_type', 'free_assessment');
 
@@ -67,13 +67,17 @@ const getDashboard = async (req, res) => {
     // Calculate revenue metrics
     // Include all sessions where payment was made (regardless of final status)
     // Statuses: completed, booked, rescheduled, reschedule_requested, no_show, cancelled
+    // IMPORTANT: Use original_scheduled_date for revenue calculation (when session was first booked)
+    // This ensures revenue is counted in the month when payment was received, not when rescheduled
     const calculateRevenue = (sessions, fromDate, toDate) => {
       if (!sessions || !Array.isArray(sessions)) {
         return { total: 0, count: 0, sessions: [] };
       }
       const filtered = sessions.filter(s => {
-        if (!s || !s.scheduled_date) return false;
-        const date = s.scheduled_date;
+        if (!s) return false;
+        // Use original_scheduled_date if available (first booking date), fallback to scheduled_date for old sessions
+        const date = s.original_scheduled_date || s.scheduled_date;
+        if (!date) return false;
         if (date < fromDate || date > toDate) return false;
         
         // Include all statuses where payment was made (these sessions exist only after successful payment)
@@ -471,17 +475,18 @@ const getDashboard = async (req, res) => {
     }
 
     // Calculate commission breakdown - simple: use same logic as doctors page and sum all totals
-    let totalCompanyCommission = 0; // Total company commission for sessions scheduled in date range (for revenue/net profit)
+    let totalCompanyCommission = 0; // Total company commission for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date, for revenue/net profit)
     let totalCompanyCommissionCompleted = 0; // Company commission from completed sessions (completed in date range)
-    let totalDoctorWallet = 0; // Total doctor wallet for sessions scheduled in date range (for revenue calculation)
-    let totalRevenueFromSessions = 0; // Calculate total revenue from sessions scheduled in date range
+    let totalDoctorWallet = 0; // Total doctor wallet for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date, for revenue calculation)
+    let totalRevenueFromSessions = 0; // Calculate total revenue from sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
     let pendingPayout = 0; // Doctor commission for ALL non-completed sessions (regardless of scheduled date - includes last month's no-show)
     let payout = 0; // Doctor commission for completed sessions (completed in date range)
     let pendingSessionsCount = 0; // Count of pending sessions scheduled in date range
     let completedSessionsCount = 0; // Count of completed sessions scheduled in date range
-    let rescheduledSessionsCount = 0; // Count of rescheduled sessions scheduled in date range
+    let rescheduledSessionsCount = 0; // Count of rescheduled sessions rescheduled FROM date range (original_scheduled_date in range)
     let rescheduleRequestedSessionsCount = 0; // Count of reschedule requested sessions scheduled in date range
     let noShowSessionsCount = 0; // Count of no show sessions scheduled in date range
+    let upcomingSessionsCount = 0; // Count of upcoming sessions scheduled TO date range (scheduled_date in range, status booked/rescheduled)
     
     try {
       // Get all psychologists (exclude assessment specialist)
@@ -500,7 +505,7 @@ const getDashboard = async (req, res) => {
         // We'll filter in the processing loop based on different criteria for each metric
         const allSessionsQuery = supabaseAdmin
           .from('sessions')
-          .select('id, psychologist_id, client_id, session_type, package_id, price, scheduled_date, status, payment_id, created_at, updated_at')
+          .select('id, psychologist_id, client_id, session_type, package_id, price, scheduled_date, original_scheduled_date, status, payment_id, created_at, updated_at')
           .not('psychologist_id', 'is', null)
           .neq('session_type', 'free_assessment')
           .in('status', ['booked', 'completed', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'])
@@ -620,9 +625,13 @@ const getDashboard = async (req, res) => {
         // Helper function to check if a date falls within the date range
         const isInDateRange = (dateStr) => {
           if (!dateFrom || !dateTo || !dateStr) return true; // If no date range, include all
-          const date = dateStr.split('T')[0]; // Extract date part (YYYY-MM-DD)
+          const date = (dateStr || '').split('T')[0]; // Extract date part (YYYY-MM-DD)
           return date >= dateFrom && date <= dateTo;
         };
+        
+        // "Passed" statuses: rescheduled, no_show, reschedule_requested (forward to scheduled month, exclude from total)
+        const passedStatuses = ['rescheduled', 'reschedule_requested', 'no_show', 'noshow'];
+        const isPassedStatus = (st) => passedStatuses.includes(st);
         
         // Track packages that have been processed for pending payout (to avoid duplicates)
         const processedPackagesForPending = new Set();
@@ -635,66 +644,105 @@ const getDashboard = async (req, res) => {
           const historyRecord = commissionHistoryMap[s.id];
           const isCompleted = s.status === 'completed';
           const isFirstSession = clientFirstSessions.has(s.id);
+          const origDate = s.original_scheduled_date || s.scheduled_date;
           
-          // Determine if this session should be included based on date range
-          // IMPORTANT: For session counts (total, completed, pending, etc.), we use scheduled_date
-          // This ensures that when filtering by "this month", we see sessions scheduled this month
-          let shouldIncludeForPending = true;
-          let shouldIncludeForCompleted = true;
-          let shouldIncludeForRevenue = true;
-          let shouldIncludeForCounts = true; // For session counts (total, completed, pending, etc.)
+          // Determine inclusion flags
+          let shouldIncludeForPending = false;
+          let shouldIncludeForCompleted = false;
+          let shouldIncludeForRevenue = false;
+          let shouldIncludeForRescheduledCount = false;   // rescheduled FROM this month (original_scheduled_date in range)
+          let shouldIncludeForNoShowCount = false;   // no_show with scheduled_date in range
+          let shouldIncludeForRescheduleRequestedCount = false;   // reschedule_requested with scheduled_date in range
+          let shouldIncludeForUpcoming = false;   // upcoming sessions TO this month (scheduled_date in range, status booked/rescheduled)
+          let shouldIncludeForTotal = false;   // new bookings only (original in range, NOT passed statuses)
+          let shouldIncludeForPendingCount = false;
+          let shouldIncludeForCompletedCount = false;
           
           if (dateFrom && dateTo) {
-            // For session COUNTS: Always use scheduled_date (what user expects when filtering by month)
-            // Only count sessions scheduled in the selected date range
-            shouldIncludeForCounts = isInDateRange(s.scheduled_date);
+            const origInRange = origDate ? isInDateRange(origDate) : false;
+            const schedInRange = s.scheduled_date ? isInDateRange(s.scheduled_date) : false;
             
-            // For PENDING payouts: Include ALL non-completed sessions (regardless of payment date)
-            // This ensures that sessions from last month that are still pending (no_show, booked, etc.)
-            // show up in the current month's pending payouts
-            // IMPORTANT: Pending payouts represent money owed to doctors that hasn't been paid yet,
-            // so we include ALL pending sessions, not just those paid in the date range
-            if (isCompleted) {
-              shouldIncludeForPending = false; // Completed sessions don't go to pending
-            } else {
-              // Include all pending sessions (no date filter for pending payouts)
-              // This way, last month's no_show sessions appear in this month's pending payouts
-              shouldIncludeForPending = true;
+            // REVENUE: Only that month booked (original_scheduled_date). No past rescheduled.
+            shouldIncludeForRevenue = origInRange;
+            
+            // TOTAL SESSIONS: Count all sessions originally booked this month (original_scheduled_date in range)
+            // Include all statuses - this represents how many sessions were booked in that month
+            shouldIncludeForTotal = origInRange;
+            
+            // Rescheduled: count if rescheduled FROM this month (original_scheduled_date in range)
+            if (s.status === 'rescheduled') {
+              shouldIncludeForRescheduledCount = origInRange;
             }
             
-            // For COMPLETED payouts: Include if session was completed (updated_at) in the date range
-            // AND session IS completed
-            // Only show completed payouts for sessions completed in the selected date range
+            // No show / Reschedule requested: use scheduled_date, separate buckets
+            if (s.status === 'no_show' || s.status === 'noshow') {
+              shouldIncludeForNoShowCount = schedInRange;
+            }
+            if (s.status === 'reschedule_requested') {
+              shouldIncludeForRescheduleRequestedCount = schedInRange;
+            }
+            
+            // Upcoming sessions: scheduled TO this month (scheduled_date in range, status booked or rescheduled)
+            if ((s.status === 'booked' || s.status === 'rescheduled') && schedInRange) {
+              shouldIncludeForUpcoming = true;
+            }
+            
+            // COMPLETED payouts: completion date in range
             if (isCompleted) {
-              // Use updated_at (completion date) for completed sessions
               shouldIncludeForCompleted = isInDateRange(s.updated_at || s.created_at);
+              shouldIncludeForCompletedCount = origInRange;
             } else {
-              shouldIncludeForCompleted = false; // Non-completed sessions don't go to completed payout
+              // PENDING payout: month-specific, forward/remove
+              // Include if: (booked + original in M) OR (rescheduled/no_show/reschedule_requested + scheduled_date in M)
+              if (s.status === 'booked') {
+                shouldIncludeForPending = origInRange;
+                shouldIncludeForPendingCount = origInRange;
+              } else if (isPassedStatus(s.status)) {
+                shouldIncludeForPending = schedInRange; // forward to scheduled month
+                // pending "count" for passed stays in rescheduled/no_show/reschedule_requested, not pending_sessions
+              }
             }
-            
-            // For REVENUE: Include if scheduled_date is in the date range
-            // Revenue should only include sessions scheduled in the selected period
-            shouldIncludeForRevenue = isInDateRange(s.scheduled_date);
+          } else {
+            shouldIncludeForPending = !isCompleted;
+            shouldIncludeForRevenue = true;
+            shouldIncludeForTotal = true;
+            shouldIncludeForRescheduledCount = (s.status === 'rescheduled');
+            shouldIncludeForNoShowCount = (s.status === 'no_show' || s.status === 'noshow');
+            shouldIncludeForRescheduleRequestedCount = (s.status === 'reschedule_requested');
+            shouldIncludeForUpcoming = (s.status === 'booked' || s.status === 'rescheduled');
+            shouldIncludeForPendingCount = !isCompleted;
+            shouldIncludeForCompletedCount = isCompleted;
+            if (isCompleted) shouldIncludeForCompleted = true;
           }
           
           // Skip if not relevant for any calculation
-          if (!shouldIncludeForPending && !shouldIncludeForCompleted && !shouldIncludeForRevenue) {
+          if (!shouldIncludeForPending && !shouldIncludeForCompleted && !shouldIncludeForRevenue && 
+              !shouldIncludeForRescheduledCount && !shouldIncludeForNoShowCount && !shouldIncludeForRescheduleRequestedCount && 
+              !shouldIncludeForUpcoming && !shouldIncludeForTotal) {
             continue;
           }
           
           let commissionToCompany = 0;
           let toDoctorWallet = sessionPrice;
           
-          // Count rescheduled, reschedule_requested, and no_show for sessions in date range
-          // Use shouldIncludeForCounts (based on scheduled_date) for accurate counts
-          if (shouldIncludeForCounts) {
-            if (s.status === 'rescheduled') {
-              rescheduledSessionsCount++;
-            } else if (s.status === 'reschedule_requested') {
-              rescheduleRequestedSessionsCount++;
-            } else if (s.status === 'no_show' || s.status === 'noshow') {
-              noShowSessionsCount++;
-            }
+          // Count rescheduled sessions rescheduled FROM this month (original_scheduled_date in range)
+          if (shouldIncludeForRescheduledCount) {
+            rescheduledSessionsCount++;
+          }
+          
+          // Count reschedule_requested sessions (scheduled_date in range)
+          if (shouldIncludeForRescheduleRequestedCount) {
+            rescheduleRequestedSessionsCount++;
+          }
+          
+          // Count no_show sessions (scheduled_date in range)
+          if (shouldIncludeForNoShowCount) {
+            noShowSessionsCount++;
+          }
+          
+          // Count upcoming sessions scheduled TO this month (scheduled_date in range, status booked/rescheduled)
+          if (shouldIncludeForUpcoming) {
+            upcomingSessionsCount++;
           }
           
           if (isCompleted) {
@@ -736,9 +784,8 @@ const getDashboard = async (req, res) => {
                   totalCompanyCommissionCompleted += commissionToCompany;
                   payout += toDoctorWallet;
                   
-                  // Count completed sessions based on scheduled_date (for accurate dashboard counts)
-                  // Only count if this session's scheduled_date is in the date range
-                  if (shouldIncludeForCounts) {
+                  // Count completed sessions: that month booked only (original_scheduled_date)
+                  if (shouldIncludeForCompletedCount) {
                     completedSessionsCount += totalSessions;
                   }
                 } else {
@@ -787,8 +834,8 @@ const getDashboard = async (req, res) => {
                 payout += toDoctorWallet;
               }
               
-              // Count completed sessions based on scheduled_date (for accurate dashboard counts)
-              if (shouldIncludeForCounts && isCompleted) {
+              // Count completed sessions: that month booked only (original_scheduled_date)
+              if (shouldIncludeForCompletedCount && isCompleted) {
                 completedSessionsCount++;
               }
             }
@@ -904,8 +951,8 @@ const getDashboard = async (req, res) => {
                   pendingPayout += toDoctorWallet;
                 }
                 
-                // Count pending sessions based on scheduled_date (for accurate dashboard counts)
-                if (shouldIncludeForCounts && !allSessionsCompleted) {
+                // Count pending sessions: that month booked only (original_scheduled_date), exclude passed
+                if (shouldIncludeForPendingCount && !allSessionsCompleted) {
                   pendingSessionsCount += totalSessions - completedSessions; // Count remaining sessions
                 }
               } else {
@@ -932,16 +979,16 @@ const getDashboard = async (req, res) => {
                 pendingPayout += toDoctorWallet;
               }
               
-              // Count pending sessions based on scheduled_date (for accurate dashboard counts)
-              if (shouldIncludeForCounts && !isCompleted) {
+              // Count pending sessions: that month booked only (original_scheduled_date), exclude passed
+              if (shouldIncludeForPendingCount && !isCompleted) {
                 pendingSessionsCount++;
               }
             }
           }
           
           // Add to commission totals based on different criteria:
-          // 1. Revenue/Commission for sessions scheduled in date range (for revenue/net profit calculation)
-          // Only include commissions for sessions scheduled in the selected date range
+          // 1. Revenue/Commission for sessions ORIGINALLY BOOKED in date range (for revenue/net profit calculation)
+          // Only include commissions for sessions originally booked in the selected date range (uses original_scheduled_date)
           if (shouldIncludeForRevenue) {
             totalCompanyCommission += commissionToCompany;
             totalDoctorWallet += toDoctorWallet;
@@ -953,16 +1000,16 @@ const getDashboard = async (req, res) => {
           // payout includes only sessions completed in date range - this is correct
         }
         
-        // Update totalSessions count based on sessions in the date range
-        // Count only sessions where scheduled_date is within the date range
+        // Total sessions: count all sessions originally booked this month (original_scheduled_date in range)
+        // This represents how many sessions were booked in that month, regardless of current status
         if (dateFrom && dateTo) {
           totalSessions = sessionsToProcess.filter(s => {
-            if (!s || !s.scheduled_date) return false;
-            const sessionDate = s.scheduled_date.split('T')[0]; // Extract date part (YYYY-MM-DD)
-            return sessionDate >= dateFrom && sessionDate <= dateTo;
+            if (!s) return false;
+            const d = (s.original_scheduled_date || s.scheduled_date || '').split('T')[0];
+            if (!d || d < dateFrom || d > dateTo) return false;
+            return true; // Include all statuses - total represents original bookings
           }).length;
         } else {
-          // If no date range specified, count all sessions
           totalSessions = sessionsToProcess.length;
         }
       }
@@ -1003,33 +1050,34 @@ const getDashboard = async (req, res) => {
     const expensesForSelectedRange = dateFrom && dateTo ? 
       calculateExpenses(expensesData, dateFrom, dateTo) : ytdExpenses;
     
-    // Net profit = Company commission from sessions scheduled in date range - expenses in date range
-    // Note: totalCompanyCommission includes commissions for sessions scheduled in the date range
-    // This represents the company's commission from revenue received for sessions scheduled in this period
+    // Net profit = Company commission from sessions ORIGINALLY BOOKED in date range - expenses in date range
+    // Note: totalCompanyCommission includes commissions for sessions ORIGINALLY BOOKED in the date range (uses original_scheduled_date)
+    // This represents the company's commission from revenue received for sessions originally booked in this period
     const netProfitForSelectedRange = totalCompanyCommission - expensesForSelectedRange;
     
-    // For MTD/QTD/YTD metrics, use totalCompanyCommission (sessions scheduled in those periods)
+    // For MTD/QTD/YTD metrics, use totalCompanyCommission (sessions originally booked in those periods)
     const mtdNetProfit = totalCompanyCommission - mtdExpenses;
     const qtdNetProfit = totalCompanyCommission - qtdExpenses;
     const ytdNetProfit = totalCompanyCommission - ytdExpenses;
     
     res.json(successResponse({
       summary: {
-        total_revenue: totalRevenueFromSessions, // Sum of session prices for sessions SCHEDULED in date range
-        net_profit: dateFrom && dateTo ? netProfitForSelectedRange : ytdNetProfit, // Net Profit = Company commission from sessions scheduled in date range - expenses
+        total_revenue: totalRevenueFromSessions, // Sum of session prices for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date, so rescheduled sessions count revenue in the month they were first booked)
+        net_profit: dateFrom && dateTo ? netProfitForSelectedRange : ytdNetProfit, // Net Profit = Company commission from sessions originally booked in date range - expenses
         total_expenses: dateFrom && dateTo ? expensesForSelectedRange : ytdExpenses, // Total approved expenses for date range or YTD
-        pending_payouts: pendingPayout || 0, // Doctor wallet for ALL non-completed sessions (includes last month's no-show, etc.)
+        pending_payouts: pendingPayout || 0, // Month-specific: (booked + original in range) OR (rescheduled/no_show/reschedule_requested + scheduled_date in range). Forward to next month, remove from previous.
         payout: payout || 0, // Doctor wallet for completed sessions (completed in date range)
-        total_sessions: totalSessions, // Count of sessions scheduled in date range
-        pending_sessions: pendingSessionsCount || 0, // Count of non-completed sessions scheduled in date range
-        completed_sessions: completedSessionsCount || 0, // Count of completed sessions scheduled in date range
-        rescheduled_sessions: rescheduledSessionsCount || 0, // Count of rescheduled sessions scheduled in date range
-        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0, // Count of reschedule requested sessions scheduled in date range
-        no_show_sessions: noShowSessionsCount || 0, // Count of no show sessions scheduled in date range
+        total_sessions: totalSessions, // Count of all sessions originally booked in that month (original_scheduled_date in range, includes all statuses)
+        pending_sessions: pendingSessionsCount || 0, // Non-completed, that month booked only (original in range), exclude passed
+        completed_sessions: completedSessionsCount || 0, // Completed, that month booked only (original_scheduled_date in range)
+        rescheduled_sessions: rescheduledSessionsCount || 0, // Rescheduled FROM this month (original_scheduled_date in range, status rescheduled)
+        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0, // Reschedule requested with scheduled_date in range (separate; not in total)
+        no_show_sessions: noShowSessionsCount || 0, // No-show with scheduled_date in range (separate; not in total)
+        upcoming_sessions: upcomingSessionsCount || 0, // Upcoming sessions scheduled TO this month (scheduled_date in range, status booked/rescheduled)
         active_doctors: activeDoctors,
-        total_company_commission: totalCompanyCommission, // Total company commission for sessions scheduled in date range
+        total_company_commission: totalCompanyCommission, // Total company commission for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
         total_company_commission_completed: totalCompanyCommissionCompleted, // Company commission from completed sessions (completed in date range)
-        total_doctor_wallet: totalDoctorWallet, // Total doctor wallet for sessions scheduled in date range
+        total_doctor_wallet: totalDoctorWallet, // Total doctor wallet for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
         revenue_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
         revenue_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
         profit_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,

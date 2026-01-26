@@ -1093,7 +1093,8 @@ const bookFreeAssessment = async (req, res) => {
       scheduled_time: scheduledTime,
       status: 'booked',
       price: 0,
-      session_type: 'free_assessment'
+      session_type: 'free_assessment',
+      original_scheduled_date: scheduledDate
     };
 
     // Create session first (don't wait for meet link - it will be created asynchronously)

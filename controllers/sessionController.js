@@ -139,7 +139,8 @@ const bookSession = async (req, res) => {
       status: 'booked',
       session_notes: req.body.notes || null,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      original_scheduled_date: scheduled_date
     };
 
     // Add meet data if available
