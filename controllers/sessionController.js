@@ -324,7 +324,7 @@ const getAllSessions = async (req, res) => {
       );
     }
 
-    const { page = 1, limit = 10, status, psychologist_id, client_id, date, sort = 'created_at', order = 'desc' } = req.query;
+    const { page = 1, limit = 10, status, psychologist_id, client_id, date, dateFrom, dateTo, sort = 'created_at', order = 'desc' } = req.query;
 
     // First, get the total count of sessions (without pagination)
     // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
@@ -346,6 +346,12 @@ const getAllSessions = async (req, res) => {
     }
     if (date) {
       countQuery = countQuery.eq('scheduled_date', date);
+    }
+    if (dateFrom) {
+      countQuery = countQuery.gte('scheduled_date', dateFrom);
+    }
+    if (dateTo) {
+      countQuery = countQuery.lte('scheduled_date', dateTo);
     }
     // Note: free_assessment exclusion already applied above
 
@@ -394,6 +400,12 @@ const getAllSessions = async (req, res) => {
     }
     if (date) {
       query = query.eq('scheduled_date', date);
+    }
+    if (dateFrom) {
+      query = query.gte('scheduled_date', dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte('scheduled_date', dateTo);
     }
 
     // Apply sorting
@@ -491,6 +503,12 @@ const getAllSessions = async (req, res) => {
       if (date) {
         assessCountQuery = assessCountQuery.eq('scheduled_date', date);
       }
+      if (dateFrom) {
+        assessCountQuery = assessCountQuery.gte('scheduled_date', dateFrom);
+      }
+      if (dateTo) {
+        assessCountQuery = assessCountQuery.lte('scheduled_date', dateTo);
+      }
 
       const { count: assessCount, error: assessCountError } = await assessCountQuery;
       assessmentSessionsCount = assessCount || 0;
@@ -551,6 +569,12 @@ const getAllSessions = async (req, res) => {
       }
       if (date) {
         assessQuery = assessQuery.eq('scheduled_date', date);
+      }
+      if (dateFrom) {
+        assessQuery = assessQuery.gte('scheduled_date', dateFrom);
+      }
+      if (dateTo) {
+        assessQuery = assessQuery.lte('scheduled_date', dateTo);
       }
 
       // Apply sorting
@@ -1460,13 +1484,7 @@ const deleteSession = async (req, res) => {
       );
     }
 
-    // Only allow deletion of sessions that are not completed
-    if (session.status === 'completed') {
-      return res.status(400).json(
-        errorResponse('Cannot delete completed sessions')
-      );
-    }
-
+    // Allow deletion of all sessions including completed ones (admin can delete any session)
     // COMMENTED OUT: Google Calendar sync (Delete from Google Calendar if event exists)
     /*
     if (session.google_calendar_event_id) {
@@ -1752,7 +1770,7 @@ const handleRescheduleRequest = async (req, res) => {
 const completeSession = async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { summary, report, summary_notes } = req.body;
+    const { summary, report, summary_notes, completion_date } = req.body;
     const userId = req.user.id;
     const userRole = req.user.role;
     const isAdmin = ['admin', 'superadmin'].includes(userRole);
@@ -1821,6 +1839,15 @@ const completeSession = async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
+    // Add completion_date if provided (for finance dashboard filtering)
+    // If not provided, use scheduled_date as default
+    if (completion_date) {
+      updateData.completion_date = completion_date;
+    } else {
+      // Default to scheduled_date if completion_date not provided
+      updateData.completion_date = session.scheduled_date || session.original_scheduled_date;
+    }
+
     // Only add report for non-free-assessment sessions
     if (!isFreeAssessment && report) {
       updateData.report = report.trim();
@@ -1872,7 +1899,7 @@ const completeSession = async (req, res) => {
       }
     }
 
-    // Calculate commission and GST (if payment is completed)
+    // Calculate commission (if payment is completed)
     try {
       if (updatedSession.payment_status === 'paid') {
         const commissionService = require('../services/commissionCalculationService');

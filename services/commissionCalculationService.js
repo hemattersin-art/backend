@@ -2,7 +2,7 @@ const { supabaseAdmin } = require('../config/supabase');
 
 /**
  * Commission Calculation Service
- * Automatically calculates commission, company revenue, and GST when sessions are completed
+ * Automatically calculates commission and company revenue when sessions are completed
  */
 
 /**
@@ -341,18 +341,8 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
     const doctorWalletAmount = Math.max(0, sessionAmount - finalCommissionAmount);
     const companyCommission = finalCommissionAmount; // Company gets this commission amount
 
-    // Get GST settings
-    const { data: gstSettings } = await supabaseAdmin
-      .from('gst_settings')
-      .select('healthcare_gst_rate, default_gst_rate')
-      .limit(1)
-      .single();
-
-    // Determine GST rate (healthcare services typically 5% or 12%)
-    // GST is calculated on the company commission amount
-    const gstRate = parseFloat(gstSettings?.healthcare_gst_rate || 5);
-    const gstAmount = (companyCommission * gstRate) / 100;
-    const netCompanyRevenue = companyCommission - gstAmount;
+    // Net company revenue equals company commission (no GST deduction)
+    const netCompanyRevenue = companyCommission;
 
     // Create commission history record
     // commission_amount = final commission amount (first session = 1x, follow-up = 2x) = what COMPANY gets
@@ -370,7 +360,6 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
         commission_amount: finalCommissionAmount, // Final commission (1x for first, 2x for follow-up) = what COMPANY gets
         commission_amount_fixed: commissionAmount, // Store base fixed amount (before first/follow-up multiplier)
         company_revenue: companyCommission, // Company gets this commission amount
-        gst_amount: gstAmount,
         net_company_revenue: netCompanyRevenue,
         payment_status: 'pending',
         created_at: new Date().toISOString(),
@@ -383,28 +372,6 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
       console.error('Error creating commission record:', commissionError);
       throw commissionError;
     }
-
-    // Create GST record (GST is calculated on company commission)
-    await supabaseAdmin
-      .from('gst_records')
-      .insert([{
-        record_type: 'session',
-        record_id: sessionId,
-        transaction_date: session.scheduled_date,
-        amount: companyCommission, // GST base is the company commission
-        gst_rate: gstRate,
-        gst_amount: gstAmount,
-        cgst: gstAmount / 2, // Split GST (assuming intra-state)
-        sgst: gstAmount / 2,
-        hsn_sac_code: '999311', // Medical services SAC code
-        is_input_tax: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .catch(err => {
-        console.error('Error creating GST record:', err);
-        // Don't throw - GST record is secondary
-      });
 
     console.log(`✅ Commission calculated for session ${sessionId}:`);
     console.log(`   Session type: ${sessionType}`);
@@ -426,7 +393,6 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
     }
     console.log(`   Final company commission: ₹${finalCommissionAmount.toFixed(2)}`);
     console.log(`   Doctor wallet: ₹${doctorWalletAmount.toFixed(2)}`);
-    console.log(`   GST: ₹${gstAmount.toFixed(2)} (${gstRate}%)`);
     console.log(`   Net company revenue: ₹${netCompanyRevenue.toFixed(2)}`);
 
     return commissionHistoryRecord;
@@ -443,17 +409,11 @@ async function calculateAndRecordCommission(sessionId, sessionData = null) {
  */
 async function recalculateCommission(sessionId) {
   try {
-    // Delete existing commission and GST records
+    // Delete existing commission records
     await supabaseAdmin
       .from('commission_history')
       .delete()
       .eq('session_id', sessionId);
-
-    await supabaseAdmin
-      .from('gst_records')
-      .delete()
-      .eq('record_id', sessionId)
-      .eq('record_type', 'session');
 
     // Recalculate
     return await calculateAndRecordCommission(sessionId);

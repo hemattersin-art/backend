@@ -2061,7 +2061,180 @@ const updateSessionPayment = async (req, res) => {
 };
 
 const updateSession = async (req, res) => {
-  return res.status(501).json(errorResponse('Function needs to be restored from backup'));
+  try {
+    const { sessionId } = req.params;
+    const {
+      psychologist_id,
+      client_id,
+      scheduled_date,
+      scheduled_time,
+      original_scheduled_date,
+      status,
+      price,
+      payment_method,
+      transaction_id,
+      razorpay_order_id,
+      razorpay_payment_id,
+      notify_doctor
+    } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json(errorResponse('Session ID is required'));
+    }
+
+    // Get current session to check if doctor changed
+    const { data: currentSession, error: fetchError } = await supabaseAdmin
+      .from('sessions')
+      .select(`
+        *,
+        psychologist:psychologists(id, first_name, last_name, email, phone),
+        client:clients(id, first_name, last_name, child_name, phone_number)
+      `)
+      .eq('id', sessionId)
+      .single();
+
+    if (fetchError || !currentSession) {
+      return res.status(404).json(errorResponse('Session not found'));
+    }
+
+    const originalPsychId = currentSession.psychologist_id;
+    const doctorChanged = notify_doctor && psychologist_id && psychologist_id !== originalPsychId;
+
+    // Prepare update data
+    const updateData = {};
+    if (psychologist_id) updateData.psychologist_id = psychologist_id;
+    if (client_id) updateData.client_id = client_id; // Keep original client (read-only on frontend)
+    if (scheduled_date) updateData.scheduled_date = scheduled_date;
+    if (scheduled_time) updateData.scheduled_time = scheduled_time;
+    if (original_scheduled_date !== undefined) {
+      // Allow setting original_scheduled_date explicitly (for finance calculations)
+      // If empty string, use scheduled_date as fallback
+      updateData.original_scheduled_date = original_scheduled_date || scheduled_date || null;
+    }
+    if (status) updateData.status = status;
+    if (price !== undefined) updateData.price = price ? parseFloat(price) : null;
+
+    // Update session
+    const { data: updatedSession, error: updateError } = await supabaseAdmin
+      .from('sessions')
+      .update(updateData)
+      .eq('id', sessionId)
+      .select(`
+        *,
+        psychologist:psychologists(id, first_name, last_name, email, phone),
+        client:clients(id, first_name, last_name, child_name, phone_number)
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('Error updating session:', updateError);
+      return res.status(500).json(errorResponse('Failed to update session'));
+    }
+
+    // Update payment details if provided
+    if (payment_method || transaction_id || razorpay_order_id || razorpay_payment_id) {
+      const { data: payment } = await supabaseAdmin
+        .from('payments')
+        .select('id')
+        .eq('session_id', sessionId)
+        .maybeSingle();
+
+      if (payment) {
+        const paymentUpdate = {};
+        if (payment_method) paymentUpdate.payment_method = payment_method;
+        if (transaction_id !== undefined) paymentUpdate.transaction_id = transaction_id || null;
+        if (razorpay_order_id !== undefined) paymentUpdate.razorpay_order_id = razorpay_order_id || null;
+        if (razorpay_payment_id !== undefined) paymentUpdate.razorpay_payment_id = razorpay_payment_id || null;
+
+        await supabaseAdmin
+          .from('payments')
+          .update(paymentUpdate)
+          .eq('id', payment.id);
+      }
+    }
+
+    // If doctor was changed, send notification to new doctor (async, don't wait)
+    if (doctorChanged && updatedSession.psychologist) {
+      (async () => {
+        try {
+          const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
+          
+          // Get meeting link from session
+          const meetLink = updatedSession.google_meet_link || 
+                          updatedSession.google_meet_join_url || 
+                          updatedSession.google_calendar_link || 
+                          null;
+
+          // Get client name
+          const clientName = updatedSession.client?.child_name || 
+                            `${updatedSession.client?.first_name || ''} ${updatedSession.client?.last_name || ''}`.trim() ||
+                            'Client';
+
+          // Format date and time
+          const formatBookingDateShort = (dateStr) => {
+            if (!dateStr) return '';
+            try {
+              const d = new Date(`${dateStr}T00:00:00+05:30`);
+              return d.toLocaleDateString('en-IN', {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                timeZone: 'Asia/Kolkata'
+              });
+            } catch {
+              return dateStr;
+            }
+          };
+
+          const formatFriendlyTime = (timeStr) => {
+            if (!timeStr) return '';
+            try {
+              const [hours, minutes] = timeStr.split(':');
+              const hour24 = parseInt(hours, 10);
+              const hour12 = hour24 === 0 ? 12 : hour24 > 12 ? hour24 - 12 : hour24;
+              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+              return `${hour12}:${minutes} ${ampm}`;
+            } catch {
+              return timeStr;
+            }
+          };
+
+          const bullet = '•⁠  ⁠';
+          const formattedDate = formatBookingDateShort(updatedSession.scheduled_date);
+          const formattedTime = formatFriendlyTime(updatedSession.scheduled_time);
+          const supportPhone = process.env.SUPPORT_PHONE || process.env.COMPANY_PHONE || '+91 95390 07766';
+
+          const psychologistMessage =
+            `Hey 👋\n\n` +
+            `You have been assigned to a session with Little Care.\n\n` +
+            `${bullet}Client: ${clientName}\n` +
+            `${bullet}Date: ${formattedDate}\n` +
+            `${bullet}Time: ${formattedTime} (IST)\n\n` +
+            (meetLink ? `Join link:\n${meetLink}\n\n` : '') +
+            `Please be ready 5 mins early.\n\n` +
+            `For help: ${supportPhone}\n\n`;
+
+          const psychologistPhone = updatedSession.psychologist?.phone;
+          if (psychologistPhone) {
+            await sendWhatsAppTextWithRetry(psychologistPhone, psychologistMessage);
+            console.log('✅ Notification sent to new psychologist:', updatedSession.psychologist.email);
+          } else {
+            console.log('ℹ️ No phone number found for psychologist, skipping WhatsApp notification');
+          }
+        } catch (notifError) {
+          console.error('❌ Error sending notification to new psychologist:', notifError);
+          // Don't fail the request if notification fails
+        }
+      })();
+    }
+
+    return res.json(successResponse(updatedSession, 'Session updated successfully'));
+
+  } catch (error) {
+    console.error('Update session error:', error);
+    return res.status(500).json(errorResponse('Internal server error while updating session'));
+  }
 };
 
 const getPsychologistAvailabilityForReschedule = async (req, res) => {

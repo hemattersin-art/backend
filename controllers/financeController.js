@@ -3,6 +3,62 @@ const { successResponse, errorResponse } = require('../utils/helpers');
 const auditLogger = require('../utils/auditLogger');
 
 /**
+ * Store monthly finance dashboard snapshot
+ * @param {Object} snapshotData - Monthly snapshot data
+ * @param {Boolean} forceUpdate - If true, update even if locked (default: false)
+ */
+const storeMonthlySnapshot = async (snapshotData, forceUpdate = false) => {
+  try {
+    const { year, month, ...data } = snapshotData;
+    
+    // First, check if snapshot exists and is locked
+    const { data: existingSnapshot, error: checkError } = await supabaseAdmin
+      .from('monthly_finance_dashboard')
+      .select('id, snapshot_locked')
+      .eq('year', year)
+      .eq('month', month)
+      .maybeSingle();
+    
+    if (checkError && checkError.code !== 'PGRST116') {
+      // PGRST116 is "not found" which is fine, but other errors are not
+      console.error('Error checking existing snapshot:', checkError);
+      throw checkError;
+    }
+    
+    // If snapshot exists and is locked, don't overwrite unless forceUpdate is true
+    if (existingSnapshot && existingSnapshot.snapshot_locked && !forceUpdate) {
+      console.log(`⚠️ Monthly snapshot for ${year}-${month} is locked. Skipping update to preserve historical data.`);
+      return; // Don't overwrite locked snapshots
+    }
+    
+    // Upsert monthly snapshot (update if exists, insert if not)
+    // Only update if not locked or forceUpdate is true
+    const { error } = await supabaseAdmin
+      .from('monthly_finance_dashboard')
+      .upsert({
+        year,
+        month,
+        ...data,
+        // Preserve snapshot_locked status if it exists and we're not forcing update
+        snapshot_locked: existingSnapshot?.snapshot_locked || false,
+        last_updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'year,month'
+      });
+    
+    if (error) {
+      console.error('Error storing monthly snapshot:', error);
+      throw error;
+    }
+    
+    console.log(`✅ Monthly snapshot stored for ${year}-${month}${existingSnapshot?.snapshot_locked ? ' (locked, preserved)' : ''}`);
+  } catch (err) {
+    console.error('Exception storing monthly snapshot:', err);
+    throw err;
+  }
+};
+
+/**
  * Finance Controller
  * Handles all finance-related operations with security protection
  */
@@ -17,6 +73,7 @@ const auditLogger = require('../utils/auditLogger');
  */
 const getDashboard = async (req, res) => {
   try {
+    console.log('Finance dashboard request received:', { dateFrom: req.query.dateFrom, dateTo: req.query.dateTo });
     const userId = req.user.id;
     const userRole = req.user.role;
 
@@ -28,15 +85,87 @@ const getDashboard = async (req, res) => {
     }
 
     const { dateFrom, dateTo, includeCharts } = req.query;
+    console.log('Processing dashboard with dates:', { dateFrom, dateTo });
     const shouldIncludeCharts = includeCharts !== 'false'; // Default to true for backward compatibility
+    
+    // Get current date in IST timezone for accurate defaults
+    const getISTDateString = (date) => {
+      // Convert to IST and format as YYYY-MM-DD
+      const istString = date.toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      // Parse MM/DD/YYYY format and convert to YYYY-MM-DD
+      const [month, day, year] = istString.split('/').map(num => num.padStart(2, '0'));
+      return `${year}-${month}-${day}`;
+    };
+    
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const startOfQuarter = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
     const startOfYear = new Date(today.getFullYear(), 0, 1);
 
     // Calculate date ranges
-    const mtdFrom = dateFrom || startOfMonth.toISOString().split('T')[0];
-    const mtdTo = dateTo || today.toISOString().split('T')[0];
+    // If dateFrom/dateTo are provided, use them for filtering (user-selected range)
+    // If not provided, default to current month (start of month to today) in IST
+    const mtdFrom = dateFrom || getISTDateString(startOfMonth);
+    const mtdTo = dateTo || getISTDateString(today);
+    
+    // Check if we should use stored monthly snapshot
+    // Extract year and month from mtdFrom (assuming it's start of month)
+    const filterDate = new Date(mtdFrom);
+    const filterYear = filterDate.getFullYear();
+    const filterMonth = filterDate.getMonth() + 1; // JavaScript months are 0-indexed
+    
+    // Check if this is a full month filter (from start to end of month)
+    const isFullMonthFilter = dateFrom && dateTo;
+    let monthStartDate = null;
+    let monthEndDate = null;
+    if (isFullMonthFilter) {
+      const fromDate = new Date(dateFrom);
+      const toDate = new Date(dateTo);
+      // Check if it's exactly a full month (e.g., 2025-12-01 to 2025-12-31)
+      const isStartOfMonth = fromDate.getDate() === 1;
+      const isEndOfMonth = toDate.getDate() === new Date(toDate.getFullYear(), toDate.getMonth() + 1, 0).getDate();
+      const sameMonth = fromDate.getMonth() === toDate.getMonth() && fromDate.getFullYear() === toDate.getFullYear();
+      if (isStartOfMonth && isEndOfMonth && sameMonth) {
+        monthStartDate = dateFrom;
+        monthEndDate = dateTo;
+      }
+    }
+    
+    // Try to retrieve stored monthly snapshot if it's a full month filter
+    let storedSnapshot = null;
+    if (monthStartDate && monthEndDate) {
+      try {
+        const { data: snapshot, error: snapshotError } = await supabaseAdmin
+          .from('monthly_finance_dashboard')
+          .select('*')
+          .eq('year', filterYear)
+          .eq('month', filterMonth)
+          .maybeSingle();
+        
+        if (!snapshotError && snapshot && snapshot.snapshot_locked) {
+          // Use stored snapshot if it's locked (preserved historical data)
+          storedSnapshot = snapshot;
+          console.log(`Using stored monthly snapshot for ${filterYear}-${filterMonth}`);
+        }
+      } catch (err) {
+        console.error('Error checking monthly snapshot:', err);
+        // Continue with live calculation if snapshot check fails
+      }
+    }
+    
+    console.log('Finance dashboard date filtering:', {
+      reqQueryDateFrom: dateFrom,
+      reqQueryDateTo: dateTo,
+      mtdFrom,
+      mtdTo,
+      startOfMonth: startOfMonth.toISOString().split('T')[0],
+      today: today.toISOString().split('T')[0]
+    });
     const qtdFrom = startOfQuarter.toISOString().split('T')[0];
     const qtdTo = today.toISOString().split('T')[0];
     const ytdFrom = startOfYear.toISOString().split('T')[0];
@@ -75,10 +204,21 @@ const getDashboard = async (req, res) => {
       }
       const filtered = sessions.filter(s => {
         if (!s) return false;
+        
+        // If no date filter provided (fromDate/toDate are null), include all sessions
+        if (!fromDate || !toDate) {
+          // Include all statuses where payment was made (these sessions exist only after successful payment)
+          const paidStatuses = ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'];
+          return paidStatuses.includes(s.status);
+        }
+        
         // Use original_scheduled_date if available (first booking date), fallback to scheduled_date for old sessions
         const date = s.original_scheduled_date || s.scheduled_date;
         if (!date) return false;
-        if (date < fromDate || date > toDate) return false;
+        
+        // Extract date part (YYYY-MM-DD) from date string (handle both date-only and ISO timestamp formats)
+        const dateStr = typeof date === 'string' ? date.split('T')[0] : date;
+        if (!dateStr || dateStr < fromDate || dateStr > toDate) return false;
         
         // Include all statuses where payment was made (these sessions exist only after successful payment)
         const paidStatuses = ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'];
@@ -126,6 +266,14 @@ const getDashboard = async (req, res) => {
     const calculateExpenses = (expenses, fromDate, toDate) => {
       if (!expenses || !Array.isArray(expenses)) {
         return 0;
+      }
+      
+      // If no date filter provided, include all expenses
+      if (!fromDate || !toDate) {
+        return expenses.reduce((sum, e) => {
+          if (!e) return sum;
+          return sum + (parseFloat(e.total_amount) || 0);
+        }, 0);
       }
       
       let total = 0;
@@ -188,39 +336,43 @@ const getDashboard = async (req, res) => {
       pendingPayments = 0;
     }
 
-    // Get pending commission (handle table not existing)
+    // Get pending commission for the selected date range
+    // Filter by sessions scheduled/completed in the date range
     let totalPendingCommission = 0;
     try {
-      const { data: pendingCommission, error: commissionError } = await supabaseAdmin
-        .from('commission_history')
-        .select('commission_amount')
-        .eq('payment_status', 'pending');
+      // First, get session IDs that fall within the date range
+      // For pending commissions, we need sessions that are scheduled in the date range
+      let pendingSessionsQuery = supabaseAdmin
+        .from('sessions')
+        .select('id')
+        .eq('status', 'booked'); // Only booked (pending) sessions
+      
+      if (mtdFrom && mtdTo) {
+        // Filter by scheduled_date for pending sessions
+        pendingSessionsQuery = pendingSessionsQuery
+          .gte('scheduled_date', mtdFrom)
+          .lte('scheduled_date', mtdTo);
+      }
+      
+      const { data: pendingSessions, error: sessionsError } = await pendingSessionsQuery;
+      
+      if (!sessionsError && pendingSessions && pendingSessions.length > 0) {
+        const sessionIds = pendingSessions.map(s => s.id);
+        
+        // Get commission_history for these sessions with pending status
+        const { data: pendingCommission, error: commissionError } = await supabaseAdmin
+          .from('commission_history')
+          .select('commission_amount')
+          .in('session_id', sessionIds)
+          .eq('payment_status', 'pending');
 
-      if (!commissionError && pendingCommission) {
-        totalPendingCommission = pendingCommission.reduce((sum, c) => sum + (parseFloat(c.commission_amount) || 0), 0);
+        if (!commissionError && pendingCommission) {
+          totalPendingCommission = pendingCommission.reduce((sum, c) => sum + (parseFloat(c.commission_amount) || 0), 0);
+        }
       }
     } catch (err) {
-      console.error('Exception fetching commission:', err);
+      console.error('Exception fetching pending commission:', err);
       totalPendingCommission = 0;
-    }
-
-    // Get GST payable (handle table not existing)
-    let gstPayable = 0;
-    try {
-      const { data: gstRecords, error: gstError } = await supabaseAdmin
-        .from('gst_records')
-        .select('gst_amount, is_input_tax')
-        .gte('transaction_date', mtdFrom)
-        .lte('transaction_date', mtdTo);
-
-      if (!gstError && gstRecords) {
-        const gstCollected = gstRecords.filter(g => !g.is_input_tax).reduce((sum, g) => sum + (parseFloat(g.gst_amount) || 0), 0);
-        const gstInput = gstRecords.filter(g => g.is_input_tax).reduce((sum, g) => sum + (parseFloat(g.gst_amount) || 0), 0);
-        gstPayable = gstCollected - gstInput;
-      }
-    } catch (err) {
-      console.error('Exception fetching GST records:', err);
-      gstPayable = 0;
     }
 
     // Get active sessions count
@@ -240,11 +392,11 @@ const getDashboard = async (req, res) => {
         .neq('session_type', 'free_assessment')
         .in('status', ['completed', 'booked', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled']);
       
-      // Apply date filtering if date range is provided
-      if (dateFrom && dateTo) {
+      // Apply date filtering using mtdFrom/mtdTo (defaults to current month)
+      if (mtdFrom && mtdTo) {
         totalSessionsQuery = totalSessionsQuery
-          .gte('scheduled_date', dateFrom)
-          .lte('scheduled_date', dateTo);
+          .gte('scheduled_date', mtdFrom)
+          .lte('scheduled_date', mtdTo);
       }
       
       const { count: totalSessionsCount } = await totalSessionsQuery;
@@ -270,22 +422,6 @@ const getDashboard = async (req, res) => {
     } catch (err) {
       console.error('Error fetching active doctors:', err);
       activeDoctors = 0;
-    }
-
-    // Get GST collected (output tax)
-    let gstCollected = 0;
-    try {
-      const { data: gstData } = await supabaseAdmin
-        .from('gst_records')
-        .select('gst_amount, is_input_tax')
-        .eq('is_input_tax', false);
-      
-      if (gstData) {
-        gstCollected = gstData.reduce((sum, g) => sum + (parseFloat(g.gst_amount) || 0), 0);
-      }
-    } catch (err) {
-      console.error('Error fetching GST collected:', err);
-      gstCollected = 0;
     }
 
     // Get total commission paid
@@ -329,8 +465,15 @@ const getDashboard = async (req, res) => {
 
     // Filter sessions by date range for recent sessions and top doctors
     // Use scheduled_date to match the rest of the dashboard filtering logic
+    // If no date filter is provided (mtdFrom/mtdTo are null), include all sessions
     const filteredSessionsForDisplay = sessionsData.filter(s => {
       if (!s || !s.scheduled_date) return false;
+      
+      // If no date filter, include all sessions
+      if (!mtdFrom || !mtdTo) {
+        return true;
+      }
+      
       const scheduledDate = s.scheduled_date.split('T')[0]; // Get YYYY-MM-DD part
       return scheduledDate >= mtdFrom && scheduledDate <= mtdTo;
     });
@@ -479,7 +622,7 @@ const getDashboard = async (req, res) => {
     let totalCompanyCommissionCompleted = 0; // Company commission from completed sessions (completed in date range)
     let totalDoctorWallet = 0; // Total doctor wallet for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date, for revenue calculation)
     let totalRevenueFromSessions = 0; // Calculate total revenue from sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
-    let pendingPayout = 0; // Doctor commission for ALL non-completed sessions (regardless of scheduled date - includes last month's no-show)
+    let pendingPayout = 0; // Doctor commission for non-completed sessions scheduled in date range (uses scheduled_date for booked sessions)
     let payout = 0; // Doctor commission for completed sessions (completed in date range)
     let pendingSessionsCount = 0; // Count of pending sessions scheduled in date range
     let completedSessionsCount = 0; // Count of completed sessions scheduled in date range
@@ -623,10 +766,11 @@ const getDashboard = async (req, res) => {
         let sessionsToProcess = allSessions || [];
         
         // Helper function to check if a date falls within the date range
+        // Use mtdFrom/mtdTo which defaults to current month if not provided
         const isInDateRange = (dateStr) => {
-          if (!dateFrom || !dateTo || !dateStr) return true; // If no date range, include all
+          if (!mtdFrom || !mtdTo || !dateStr) return true; // If no date range, include all
           const date = (dateStr || '').split('T')[0]; // Extract date part (YYYY-MM-DD)
-          return date >= dateFrom && date <= dateTo;
+          return date >= mtdFrom && date <= mtdTo;
         };
         
         // "Passed" statuses: rescheduled, no_show, reschedule_requested (forward to scheduled month, exclude from total)
@@ -658,18 +802,36 @@ const getDashboard = async (req, res) => {
           let shouldIncludeForPendingCount = false;
           let shouldIncludeForCompletedCount = false;
           
-          if (dateFrom && dateTo) {
+          // Always use mtdFrom/mtdTo for filtering (defaults to current month if not provided)
+          if (mtdFrom && mtdTo) {
             const origInRange = origDate ? isInDateRange(origDate) : false;
             const schedInRange = s.scheduled_date ? isInDateRange(s.scheduled_date) : false;
             
-            // REVENUE: Only that month booked (original_scheduled_date). No past rescheduled.
-            shouldIncludeForRevenue = origInRange;
+            // REVENUE: Use original_scheduled_date for non-completed, completion_date for completed sessions
+            // This ensures revenue is counted in the month when session was originally booked, not when rescheduled
+            if (isCompleted && s.completion_date) {
+              // Completed sessions: use completion_date if available
+              shouldIncludeForRevenue = isInDateRange(s.completion_date);
+            } else {
+              // Non-completed sessions: use original_scheduled_date (where it was originally booked)
+              // This prevents revenue from being counted in current month when session was rescheduled from last month
+              shouldIncludeForRevenue = origInRange;
+            }
             
-            // TOTAL SESSIONS: Count all sessions originally booked this month (original_scheduled_date in range)
-            // Include all statuses - this represents how many sessions were booked in that month
-            shouldIncludeForTotal = origInRange;
+            // TOTAL SESSIONS: Count sessions BOOKED in this month (original_scheduled_date), NOT rescheduled to this month
+            // For completed sessions: use completion_date
+            // For non-completed sessions: use original_scheduled_date (where it was originally booked)
+            if (isCompleted && s.completion_date) {
+              // Completed sessions: use completion_date if available
+              shouldIncludeForTotal = isInDateRange(s.completion_date);
+            } else {
+              // Non-completed sessions: use original_scheduled_date (booked in this month)
+              shouldIncludeForTotal = origInRange;
+            }
+            
             
             // Rescheduled: count if rescheduled FROM this month (original_scheduled_date in range)
+            // This shows rescheduled count in the month where the session was originally booked
             if (s.status === 'rescheduled') {
               shouldIncludeForRescheduledCount = origInRange;
             }
@@ -687,19 +849,61 @@ const getDashboard = async (req, res) => {
               shouldIncludeForUpcoming = true;
             }
             
-            // COMPLETED payouts: completion date in range
+            // COMPLETED payouts: Use completion_date if available, otherwise use original scheduled date
+            // This allows admins to set when a session was actually completed for accurate finance reporting
             if (isCompleted) {
-              shouldIncludeForCompleted = isInDateRange(s.updated_at || s.created_at);
-              shouldIncludeForCompletedCount = origInRange;
+              // Use completion_date if set, otherwise fall back to original scheduled date
+              const completionDate = s.completion_date || origDate;
+              const completionInRange = completionDate ? isInDateRange(completionDate) : false;
+              shouldIncludeForCompleted = completionInRange;
+              // Count uses completion date for accurate monthly reporting
+              shouldIncludeForCompletedCount = completionInRange;
+              
+              // Also check if this completed session was pending during this month
+              // (i.e., completed AFTER this month, so it was pending during this month)
+              if (s.completion_date) {
+                const completionDateStr = s.completion_date.split('T')[0];
+                const wasPendingInThisMonth = completionDateStr > mtdTo;
+                const bookedInThisMonth = origInRange;
+                const bookedInPreviousMonth = origDate && mtdFrom && origDate < mtdFrom;
+                
+                // If completed after this month and was booked in this month or before, include in pending payout
+                if (wasPendingInThisMonth && (bookedInThisMonth || bookedInPreviousMonth)) {
+                  shouldIncludeForPending = true;
+                  shouldIncludeForPendingCount = bookedInThisMonth; // Only count if booked in this month
+                }
+              }
             } else {
-              // PENDING payout: month-specific, forward/remove
-              // Include if: (booked + original in M) OR (rescheduled/no_show/reschedule_requested + scheduled_date in M)
-              if (s.status === 'booked') {
-                shouldIncludeForPending = origInRange;
+              // PENDING payout: Forward to next months if still pending, preserve historical data
+              // Include if:
+              // 1. Session was booked in this month (original_scheduled_date in range) - preserve original month
+              // 2. OR session was booked in a previous month and was pending in this month - forward to current month
+              // Revenue/profit remain isolated per month (not forwarded)
+              
+              // Check if session was booked in this month
+              const bookedInThisMonth = origInRange;
+              
+              // Check if session was booked in a previous month (before mtdFrom)
+              const bookedInPreviousMonth = origDate && mtdFrom && origDate < mtdFrom;
+              
+              // Still pending, was pending in this month if booked before or in this month
+              const wasPendingInThisMonth = bookedInPreviousMonth || bookedInThisMonth;
+              
+              if (bookedInThisMonth) {
+                // Session booked in this month - include in pending payout
+                shouldIncludeForPending = true;
+                shouldIncludeForPendingCount = true; // Count pending sessions booked in this month
+              } else if (bookedInPreviousMonth && wasPendingInThisMonth) {
+                // Session booked in previous month and was pending during this month
+                // Forward pending payout to current month (preserve historical data)
+                // But don't count it in pending_sessions (it's already counted in original month)
+                shouldIncludeForPending = true;
+                shouldIncludeForPendingCount = false; // Don't count - already counted in original month
+              } else if (schedInRange && wasPendingInThisMonth) {
+                // Fallback: if scheduled in this month and was pending, include
+                shouldIncludeForPending = true;
+                // Only count if booked in this month (origInRange), not if rescheduled to this month
                 shouldIncludeForPendingCount = origInRange;
-              } else if (isPassedStatus(s.status)) {
-                shouldIncludeForPending = schedInRange; // forward to scheduled month
-                // pending "count" for passed stays in rescheduled/no_show/reschedule_requested, not pending_sessions
               }
             }
           } else {
@@ -974,9 +1178,30 @@ const getDashboard = async (req, res) => {
               commissionToCompany = sessionPrice - doctorCommission;
               toDoctorWallet = doctorCommission;
               
-              // Add to pending payout (non-completed sessions) - only if payment date is in range
+              // Add to pending payout (non-completed sessions including no_show, rescheduled, etc.)
+              // Only include if scheduled_date is in the selected date range
+              // For no_show sessions, shouldIncludeForPending should be set to schedInRange (line 750)
               if (shouldIncludeForPending) {
                 pendingPayout += toDoctorWallet;
+              }
+              
+              // Debug logging for no_show sessions to trace the issue
+              if (s.status === 'no_show' || s.status === 'noshow') {
+                console.log(`[NO_SHOW DEBUG] Session ${s.id.substring(0, 8)}...:`, {
+                  status: s.status,
+                  scheduled_date: s.scheduled_date?.split('T')[0],
+                  original_scheduled_date: s.original_scheduled_date?.split('T')[0],
+                  isCompleted,
+                  shouldIncludeForPending,
+                  shouldIncludeForRevenue,
+                  schedInRange,
+                  mtdFrom,
+                  mtdTo,
+                  doctorWallet: toDoctorWallet,
+                  price: sessionPrice,
+                  'pendingPayoutAfter': pendingPayout,
+                  'totalDoctorWalletBefore': totalDoctorWallet
+                });
               }
               
               // Count pending sessions: that month booked only (original_scheduled_date), exclude passed
@@ -987,8 +1212,8 @@ const getDashboard = async (req, res) => {
           }
           
           // Add to commission totals based on different criteria:
-          // 1. Revenue/Commission for sessions ORIGINALLY BOOKED in date range (for revenue/net profit calculation)
-          // Only include commissions for sessions originally booked in the selected date range (uses original_scheduled_date)
+          // 1. Revenue/Commission for sessions scheduled/completed in date range
+          // Uses scheduled_date for non-completed, completion_date for completed sessions
           if (shouldIncludeForRevenue) {
             totalCompanyCommission += commissionToCompany;
             totalDoctorWallet += toDoctorWallet;
@@ -996,18 +1221,21 @@ const getDashboard = async (req, res) => {
           }
           
           // Note: pendingPayout and payout are already being added above in their respective sections
-          // pendingPayout includes ALL pending sessions (regardless of date) - this is correct
-          // payout includes only sessions completed in date range - this is correct
+          // pendingPayout includes pending sessions scheduled in date range (uses scheduled_date for booked sessions) - this is correct
+          // payout includes only sessions completed in date range (uses completion_date) - this is correct
         }
         
-        // Total sessions: count all sessions originally booked this month (original_scheduled_date in range)
-        // This represents how many sessions were booked in that month, regardless of current status
-        if (dateFrom && dateTo) {
+        // Total sessions: count sessions BOOKED in this month (original_scheduled_date), NOT rescheduled to this month
+        // Always use original_scheduled_date to count sessions booked in that month, regardless of current status
+        // This ensures sessions booked in last month show in last month's total, even if rescheduled/completed later
+        if (mtdFrom && mtdTo) {
+          // Count sessions that were booked in this month (use original_scheduled_date for all sessions)
           totalSessions = sessionsToProcess.filter(s => {
             if (!s) return false;
-            const d = (s.original_scheduled_date || s.scheduled_date || '').split('T')[0];
-            if (!d || d < dateFrom || d > dateTo) return false;
-            return true; // Include all statuses - total represents original bookings
+            // Always use original_scheduled_date to count where session was originally booked
+            const dateToCheck = (s.original_scheduled_date || s.scheduled_date || '').split('T')[0];
+            if (!dateToCheck) return false;
+            return dateToCheck >= mtdFrom && dateToCheck <= mtdTo;
           }).length;
         } else {
           totalSessions = sessionsToProcess.length;
@@ -1046,9 +1274,8 @@ const getDashboard = async (req, res) => {
     // - Additional: count only in the month they were added
     // Use total company commission (completed + pending) for net profit calculation
     
-    // Calculate expenses for the selected date range (or use YTD if no range specified)
-    const expensesForSelectedRange = dateFrom && dateTo ? 
-      calculateExpenses(expensesData, dateFrom, dateTo) : ytdExpenses;
+    // Calculate expenses for the selected date range (uses mtdFrom/mtdTo which defaults to current month)
+    const expensesForSelectedRange = calculateExpenses(expensesData, mtdFrom, mtdTo);
     
     // Net profit = Company commission from sessions ORIGINALLY BOOKED in date range - expenses in date range
     // Note: totalCompanyCommission includes commissions for sessions ORIGINALLY BOOKED in the date range (uses original_scheduled_date)
@@ -1060,31 +1287,123 @@ const getDashboard = async (req, res) => {
     const qtdNetProfit = totalCompanyCommission - qtdExpenses;
     const ytdNetProfit = totalCompanyCommission - ytdExpenses;
     
-    res.json(successResponse({
-      summary: {
-        total_revenue: totalRevenueFromSessions, // Sum of session prices for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date, so rescheduled sessions count revenue in the month they were first booked)
-        net_profit: dateFrom && dateTo ? netProfitForSelectedRange : ytdNetProfit, // Net Profit = Company commission from sessions originally booked in date range - expenses
-        total_expenses: dateFrom && dateTo ? expensesForSelectedRange : ytdExpenses, // Total approved expenses for date range or YTD
-        pending_payouts: pendingPayout || 0, // Month-specific: (booked + original in range) OR (rescheduled/no_show/reschedule_requested + scheduled_date in range). Forward to next month, remove from previous.
-        payout: payout || 0, // Doctor wallet for completed sessions (completed in date range)
-        total_sessions: totalSessions, // Count of all sessions originally booked in that month (original_scheduled_date in range, includes all statuses)
-        pending_sessions: pendingSessionsCount || 0, // Non-completed, that month booked only (original in range), exclude passed
-        completed_sessions: completedSessionsCount || 0, // Completed, that month booked only (original_scheduled_date in range)
-        rescheduled_sessions: rescheduledSessionsCount || 0, // Rescheduled FROM this month (original_scheduled_date in range, status rescheduled)
-        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0, // Reschedule requested with scheduled_date in range (separate; not in total)
-        no_show_sessions: noShowSessionsCount || 0, // No-show with scheduled_date in range (separate; not in total)
-        upcoming_sessions: upcomingSessionsCount || 0, // Upcoming sessions scheduled TO this month (scheduled_date in range, status booked/rescheduled)
-        active_doctors: activeDoctors,
-        total_company_commission: totalCompanyCommission, // Total company commission for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
-        total_company_commission_completed: totalCompanyCommissionCompleted, // Company commission from completed sessions (completed in date range)
-        total_doctor_wallet: totalDoctorWallet, // Total doctor wallet for sessions ORIGINALLY BOOKED in date range (uses original_scheduled_date)
+    console.log('Finance dashboard summary calculated:', {
+      totalRevenueFromSessions,
+      totalCompanyCommission,
+      expensesForSelectedRange,
+      totalSessions,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      mtdFrom,
+      mtdTo,
+      pendingSessionsCount,
+      completedSessionsCount,
+      usingStoredSnapshot: !!storedSnapshot
+    });
+    
+    // If we have a stored snapshot for this month, use it instead of calculated values
+    // This preserves historical data even when sessions are completed/rescheduled later
+    let finalSummary = {};
+    if (storedSnapshot && storedSnapshot.snapshot_locked) {
+      // Use stored snapshot data (preserved historical data)
+      finalSummary = {
+        total_revenue: parseFloat(storedSnapshot.total_revenue || 0),
+        net_profit: parseFloat(storedSnapshot.net_profit || 0),
+        total_expenses: parseFloat(storedSnapshot.total_expenses || 0),
+        pending_payouts: parseFloat(storedSnapshot.pending_payout || 0),
+        payout: parseFloat(storedSnapshot.payout_received || 0),
+        total_sessions: storedSnapshot.total_sessions || 0,
+        pending_sessions: storedSnapshot.pending_sessions || 0,
+        completed_sessions: storedSnapshot.completed_sessions || 0,
+        rescheduled_sessions: storedSnapshot.rescheduled_sessions || 0,
+        reschedule_requested_sessions: storedSnapshot.reschedule_requested_sessions || 0,
+        no_show_sessions: storedSnapshot.no_show_sessions || 0,
+        upcoming_sessions: storedSnapshot.upcoming_sessions || 0,
+        active_doctors: storedSnapshot.active_doctors || 0,
+        total_company_commission: parseFloat(storedSnapshot.total_company_commission || 0),
+        total_company_commission_completed: parseFloat(storedSnapshot.total_company_commission || 0), // Use same for completed
+        total_doctor_wallet: parseFloat(storedSnapshot.total_doctor_wallet || 0),
         revenue_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
         revenue_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
         profit_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
         profit_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
         expenses_change: null,
         expenses_change_type: null
-      },
+      };
+      console.log('Using stored monthly snapshot for historical data preservation');
+    } else {
+      // Use calculated values (live data)
+      finalSummary = {
+        total_revenue: totalRevenueFromSessions,
+        net_profit: netProfitForSelectedRange,
+        total_expenses: expensesForSelectedRange,
+        pending_payouts: pendingPayout || 0,
+        payout: payout || 0,
+        total_sessions: totalSessions,
+        pending_sessions: pendingSessionsCount || 0,
+        completed_sessions: completedSessionsCount || 0,
+        rescheduled_sessions: rescheduledSessionsCount || 0,
+        reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0,
+        no_show_sessions: noShowSessionsCount || 0,
+        upcoming_sessions: upcomingSessionsCount || 0,
+        active_doctors: activeDoctors,
+        total_company_commission: totalCompanyCommission,
+        total_company_commission_completed: totalCompanyCommissionCompleted,
+        total_doctor_wallet: totalDoctorWallet,
+        revenue_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
+        revenue_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
+        profit_change: revenueGrowthMoM ? `${revenueGrowthMoM > 0 ? '+' : ''}${revenueGrowthMoM}%` : null,
+        profit_change_type: parseFloat(revenueGrowthMoM) >= 0 ? 'increase' : 'decrease',
+        expenses_change: null,
+        expenses_change_type: null
+      };
+      
+      // Store monthly snapshot if it's a full month filter
+      // Only store if snapshot doesn't exist or is not locked
+      // Only store for past months or current month (not future months)
+      if (monthStartDate && monthEndDate) {
+        const snapshotDate = new Date(monthStartDate);
+        const todayDate = new Date();
+        const isPastOrCurrentMonth = snapshotDate <= todayDate;
+        
+        // Only store if:
+        // 1. No stored snapshot exists, OR
+        // 2. Stored snapshot exists but is NOT locked (can be updated)
+        const shouldStore = !storedSnapshot || (storedSnapshot && !storedSnapshot.snapshot_locked);
+        
+        if (isPastOrCurrentMonth && shouldStore) {
+          // Store snapshot asynchronously (don't block response)
+          // Don't force update - respect locked snapshots
+          storeMonthlySnapshot({
+            year: filterYear,
+            month: filterMonth,
+            total_sessions: totalSessions,
+            pending_sessions: pendingSessionsCount || 0,
+            completed_sessions: completedSessionsCount || 0,
+            rescheduled_sessions: rescheduledSessionsCount || 0,
+            reschedule_requested_sessions: rescheduleRequestedSessionsCount || 0,
+            no_show_sessions: noShowSessionsCount || 0,
+            upcoming_sessions: upcomingSessionsCount || 0,
+            total_revenue: totalRevenueFromSessions,
+            total_company_commission: totalCompanyCommission,
+            total_doctor_wallet: totalDoctorWallet,
+            pending_payout: pendingPayout || 0,
+            payout_received: payout || 0,
+            total_expenses: expensesForSelectedRange,
+            net_profit: netProfitForSelectedRange,
+            active_doctors: activeDoctors,
+            snapshot_locked: false // Default to false, can be locked manually later
+          }, false).catch(err => {
+            console.error('Error storing monthly snapshot (non-blocking):', err);
+          });
+        } else if (storedSnapshot && storedSnapshot.snapshot_locked) {
+          console.log(`📌 Monthly snapshot for ${filterYear}-${filterMonth} is locked. Using stored data and skipping update.`);
+        }
+      }
+    }
+    
+    res.json(successResponse({
+      summary: finalSummary,
       metrics: {
         revenue: {
           mtd: mtdRevenue.total,
@@ -1105,7 +1424,6 @@ const getDashboard = async (req, res) => {
         },
         pendingPayments,
         pendingCommission: totalPendingCommission,
-        gstPayable,
         activeSessions: activeSessions?.length || 0
       },
       charts: shouldIncludeCharts ? {
@@ -1152,8 +1470,9 @@ const getDashboard = async (req, res) => {
 
   } catch (error) {
     console.error('Finance dashboard error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json(
-      errorResponse('Internal server error while fetching dashboard data')
+      errorResponse(`Internal server error while fetching dashboard data: ${error.message || 'Unknown error'}`)
     );
   }
 };
@@ -1192,7 +1511,7 @@ const getDoctorPayouts = async (req, res) => {
     // Get all sessions
     const allSessionsQuery = supabaseAdmin
       .from('sessions')
-      .select('id, psychologist_id, client_id, session_type, package_id, price, scheduled_date, status, payment_id, created_at, updated_at')
+      .select('id, psychologist_id, client_id, session_type, package_id, price, scheduled_date, original_scheduled_date, status, payment_id, created_at, updated_at')
       .not('psychologist_id', 'is', null)
       .neq('session_type', 'free_assessment')
       .in('status', ['booked', 'completed', 'rescheduled', 'reschedule_requested', 'no_show', 'noshow', 'cancelled', 'canceled'])
@@ -1319,8 +1638,9 @@ const getDoctorPayouts = async (req, res) => {
           shouldInclude = true;
         }
       } else if (status === 'completed') {
-        // For completed: completion date in range AND completed
-        if (isCompleted && isInDateRange(s.updated_at || s.created_at)) {
+        // For completed: filter by completion_date if available, otherwise use original scheduled date
+        const completionDate = s.completion_date || s.original_scheduled_date || s.scheduled_date;
+        if (isCompleted && completionDate && isInDateRange(completionDate)) {
           shouldInclude = true;
         }
       } else {
@@ -1835,14 +2155,6 @@ const getSessionDetails = async (req, res) => {
       .eq('session_id', sessionId)
       .single();
 
-    // Get GST data
-    const { data: gst } = await supabaseAdmin
-      .from('gst_records')
-      .select('*')
-      .eq('record_id', sessionId)
-      .eq('record_type', 'session')
-      .single();
-
     await auditLogger.logAction({
       userId: req.user.id,
       userEmail: req.user.email,
@@ -1889,8 +2201,7 @@ const getSessionDetails = async (req, res) => {
         } : null,
         payment: paymentDetails,
         receipt: receiptDetails,
-        commission: commission || null,
-        gst: gst || null
+        commission: commission || null
       }
     }, 'Session details fetched successfully'));
 
@@ -1950,14 +2261,13 @@ const getRevenue = async (req, res) => {
     const sessionIds = sessions?.map(s => s.id) || [];
     const { data: commissions } = await supabaseAdmin
       .from('commission_history')
-      .select('session_id, commission_amount, company_revenue, net_company_revenue, gst_amount')
+      .select('session_id, commission_amount, company_revenue, net_company_revenue')
       .in('session_id', sessionIds);
 
     // Calculate totals
     const totalRevenue = sessions?.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0) || 0;
     const totalCommission = commissions?.reduce((sum, c) => sum + (parseFloat(c.commission_amount) || 0), 0) || 0;
     const totalCompanyRevenue = commissions?.reduce((sum, c) => sum + (parseFloat(c.company_revenue) || 0), 0) || 0;
-    const totalGST = commissions?.reduce((sum, c) => sum + (parseFloat(c.gst_amount) || 0), 0) || 0;
     const totalNetRevenue = commissions?.reduce((sum, c) => sum + (parseFloat(c.net_company_revenue) || 0), 0) || 0;
 
     // Revenue by doctor
@@ -2155,7 +2465,6 @@ const createExpense = async (req, res) => {
       custom_category,
       description,
       amount,
-      gst_amount = 0,
       payment_method,
       vendor_supplier,
       receipt_url,
@@ -2174,7 +2483,7 @@ const createExpense = async (req, res) => {
       );
     }
 
-    const total_amount = parseFloat(amount) + parseFloat(gst_amount);
+    const total_amount = parseFloat(amount);
     const expenseDate = new Date(date);
     const expenseMonth = expenseDate.getMonth() + 1;
     const expenseYear = expenseDate.getFullYear();
@@ -2239,8 +2548,7 @@ const createExpense = async (req, res) => {
         custom_category: custom_category && custom_category.trim() ? custom_category.trim() : null,
         description,
         amount: finalAmount,
-        gst_amount: parseFloat(gst_amount),
-        total_amount: finalAmount + parseFloat(gst_amount),
+        total_amount: finalAmount,
         payment_method,
         vendor_supplier,
         receipt_url,
@@ -2382,7 +2690,6 @@ const updateExpense = async (req, res) => {
       custom_category,
       description,
       amount,
-      gst_amount,
       payment_method,
       vendor_supplier,
       receipt_url,
@@ -2434,18 +2741,7 @@ const updateExpense = async (req, res) => {
       if (parsedAmount !== existingAmount) {
         updateData.amount = parsedAmount;
         // Recalculate total_amount if amount changed
-        const gst = gst_amount !== undefined ? parseFloat(gst_amount) : parseFloat(existingExpense.gst_amount || 0);
-        updateData.total_amount = parsedAmount + gst;
-      }
-    }
-    if (gst_amount !== undefined) {
-      const parsedGst = parseFloat(gst_amount);
-      const existingGst = parseFloat(existingExpense.gst_amount || 0);
-      if (parsedGst !== existingGst) {
-        updateData.gst_amount = parsedGst;
-        // Recalculate total_amount
-        const amt = amount !== undefined ? parseFloat(amount) : parseFloat(existingExpense.amount || 0);
-        updateData.total_amount = amt + parsedGst;
+        updateData.total_amount = parsedAmount;
       }
     }
     if (payment_method !== undefined && payment_method !== (existingExpense.payment_method || '')) updateData.payment_method = payment_method;
@@ -4382,7 +4678,7 @@ const createIncomeSource = async (req, res) => {
       );
     }
 
-    const { name, description, default_gst_rate, is_auto_calculated } = req.body;
+    const { name, description, is_auto_calculated } = req.body;
 
     if (!name) {
       return res.status(400).json(
@@ -4395,7 +4691,6 @@ const createIncomeSource = async (req, res) => {
       .insert([{
         name,
         description,
-        default_gst_rate: parseFloat(default_gst_rate || 0),
         is_auto_calculated: is_auto_calculated || false,
         is_active: true,
         created_at: new Date().toISOString(),
