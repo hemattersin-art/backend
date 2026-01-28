@@ -282,37 +282,10 @@ const formatPublicPsychologist = (psych) => {
     extractedPrice = priceMatch ? parseInt(priceMatch[1]) : null;
   }
 
-  // Default languages for all psychologists
+  // OPTIMIZED: Removed languages_json processing (not displayed on frontend)
+  // Default languages for all psychologists (if needed in future)
   const defaultLanguages = ['English', 'Malayalam'];
-  
-  // Parse existing languages_json if it exists
-  let existingLanguages = [];
-  if (psych.languages_json) {
-    try {
-      if (typeof psych.languages_json === 'string') {
-        existingLanguages = JSON.parse(psych.languages_json);
-      } else if (Array.isArray(psych.languages_json)) {
-        existingLanguages = psych.languages_json;
-      }
-    } catch (error) {
-      console.error('Error parsing languages_json:', error);
-    }
-  }
-  
-  
-  // Merge default languages with existing languages, removing duplicates
-  const allLanguages = [...defaultLanguages];
-  if (Array.isArray(existingLanguages)) {
-    existingLanguages.forEach(lang => {
-      const langStr = String(lang).trim();
-      if (langStr && !allLanguages.some(l => l.toLowerCase() === langStr.toLowerCase())) {
-        allLanguages.push(langStr);
-      }
-    });
-  }
-  
-  // Convert to JSON string for storage
-  const mergedLanguagesJson = JSON.stringify(allLanguages);
+  const mergedLanguagesJson = JSON.stringify(defaultLanguages);
 
   return {
     id: psych.id,
@@ -320,25 +293,16 @@ const formatPublicPsychologist = (psych) => {
     first_name: psych.first_name,
     last_name: psych.last_name,
     email: psych.email,
-    phone: psych.phone || 'N/A',
     area_of_expertise: psych.area_of_expertise || [],
     personality_traits: psych.personality_traits || [],
     experience_years: psych.experience_years || 0,
     designation: psych.designation || '',
-    languages_json: mergedLanguagesJson,
-    ug_college: psych.ug_college || 'N/A',
-    pg_college: psych.pg_college || 'N/A',
-    phd_college: psych.phd_college || 'N/A',
+    languages_json: mergedLanguagesJson, // Keep for backward compatibility, but uses defaults only
     description: psych.description || 'Professional psychologist dedicated to helping clients achieve mental wellness.',
     profile_picture_url: null,
     cover_image_url: psych.cover_image_url,
-    price: extractedPrice,
-    faq_question_1: psych.faq_question_1 || null,
-    faq_answer_1: psych.faq_answer_1 || null,
-    faq_question_2: psych.faq_question_2 || null,
-    faq_answer_2: psych.faq_answer_2 || null,
-    faq_question_3: psych.faq_question_3 || null,
-    faq_answer_3: psych.faq_answer_3 || null
+    price: extractedPrice
+    // OPTIMIZED: Removed unused fields (phone, ug_college, pg_college, phd_college, faq fields)
   };
 };
 
@@ -352,6 +316,8 @@ app.get('/api/public/psychologists', async (req, res) => {
     
     // Use supabaseAdmin to bypass RLS (public endpoint, backend handles auth logic)
     // Only show active psychologists on client-facing pages
+    // OPTIMIZED: Removed unused fields (ug_college, pg_college, phd_college, phone, languages_json, faq fields)
+    // Description kept for modal view, but could be lazy-loaded in future optimization
     const { data: psychologists, error: psychologistsError } = await supabaseAdmin
       .from('psychologists')
       .select(`
@@ -363,22 +329,11 @@ app.get('/api/public/psychologists', async (req, res) => {
         personality_traits,
         description,
         experience_years,
-        ug_college,
-        pg_college,
-        phd_college,
-        phone,
         cover_image_url,
         individual_session_price,
         display_order,
         created_at,
-        designation,
-        languages_json,
-        faq_question_1,
-        faq_answer_1,
-        faq_question_2,
-        faq_answer_2,
-        faq_question_3,
-        faq_answer_3
+        designation
       `)
       .neq('email', assessmentEmail)
       .eq('active', true) // Only show active psychologists on client-facing pages
