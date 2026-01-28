@@ -81,8 +81,20 @@ app.use(helmet({
 }));
 
 // CORS configuration (MUST be before security middleware)
-// Explicitly handle OPTIONS preflight requests for PostHog headers
-app.options('*', cors({
+// PostHog sends multiple tracing headers - allow all common ones
+const postHogHeaders = [
+  'x-posthog-distinct-id',
+  'x-posthog-session-id',
+  'x-posthog-token',
+  'x-posthog-window-id',
+  // Case variations (some browsers/CORS implementations are case-sensitive)
+  'X-PostHog-Distinct-Id',
+  'X-PostHog-Session-Id',
+  'X-PostHog-Token',
+  'X-PostHog-Window-Id'
+];
+
+const corsConfig = {
   origin: [
     'https://kutikkal-one.vercel.app',
     'https://www.little.care',
@@ -98,41 +110,15 @@ app.options('*', cors({
     'X-Requested-With', 
     'Origin', 
     'Accept',
-    // PostHog tracing headers for session tracking (case-insensitive)
-    'x-posthog-distinct-id',
-    'X-PostHog-Distinct-Id',
-    'x-posthog-session-id',
-    'X-PostHog-Session-Id',
-    'x-posthog-token',
-    'X-PostHog-Token'
+    // PostHog tracing headers for session tracking
+    ...postHogHeaders
   ]
-}));
+};
 
-app.use(cors({
-  origin: [
-    'https://kutikkal-one.vercel.app',
-    'https://www.little.care',
-    'https://little.care', // Added: without www
-    'http://localhost:3000',
-    'http://localhost:3001'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Origin', 
-    'Accept',
-    // PostHog tracing headers for session tracking (case-insensitive)
-    'x-posthog-distinct-id',
-    'X-PostHog-Distinct-Id',
-    'x-posthog-session-id',
-    'X-PostHog-Session-Id',
-    'x-posthog-token',
-    'X-PostHog-Token'
-  ]
-}));
+// Explicitly handle OPTIONS preflight requests for PostHog headers
+app.options('*', cors(corsConfig));
+
+app.use(cors(corsConfig));
 
 // Trust Cloudflare proxy - Express will automatically use CF-Connecting-IP
 // With 'trust proxy' set, req.ip will automatically use the correct IP
