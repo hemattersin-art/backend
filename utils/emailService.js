@@ -19,7 +19,7 @@ function formatTimeFromString(timeStr) {
     const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
     const displayMinutes = minutes.padStart(2, '0');
     
-    return `${displayHours}:${displayMinutes} ${period} IST`;
+    return `${displayHours}:${displayMinutes} ${period}`;
   } catch {
     return timeStr;
   }
@@ -441,7 +441,7 @@ class EmailService {
                         •⁠  ⁠Specialist: ${psychologistName}<br>
                         ${packageLine}
                         •⁠  ⁠Date: ${formattedDateShort}<br>
-                        •⁠  ⁠Time: ${scheduledTime}<br>
+                        •⁠  ⁠Time: ${scheduledTime} (IST)<br>
                         ${formattedPrice ? `•⁠  ⁠Price: ₹${formattedPrice}<br>` : ''}
                       </div>
                       
@@ -629,7 +629,7 @@ class EmailService {
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}${scheduledTime && !scheduledTime.includes('(IST)') ? ' (IST)' : ''}</td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime} (IST)</td>
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>
@@ -814,7 +814,7 @@ class EmailService {
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Time:</strong></td>
-                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime}</td>
+                                <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${scheduledTime} (IST)</td>
                               </tr>
                               <tr>
                                 <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>

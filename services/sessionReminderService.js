@@ -294,8 +294,8 @@ class SessionReminderService {
       // Format session date and time
       // Parse directly in IST timezone to avoid UTC conversion issues
       const sessionDateTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
-      const formattedDate = sessionDateTime.format('DD MMMM YYYY');
-      const formattedTime = sessionDateTime.format('hh:mm A');
+      const formattedDate = sessionDateTime.format('DD MMM YYYY');
+      const formattedTime = sessionDateTime.format('h:mm A');
 
       const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
       const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
@@ -306,7 +306,8 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your therapy session with ${psychologistName} is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime} (IST)\n\nPlease be ready for your session. We look forward to seeing you! 💜`;
+        const bullet = '•⁠  ⁠';
+        const clientMessage = `See You Soon for Your Session,\nYour session with ${psychologistName} is scheduled in a little while.\n\n${bullet}${formattedDate}\n${bullet}${formattedTime} (IST)\n\nPlease join from a quiet space with good internet.\nWe're here for you.\n\n— Little Care 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(client.phone_number, clientMessage)
@@ -452,8 +453,8 @@ class SessionReminderService {
       // Format assessment date and time
       // Parse directly in IST timezone to avoid UTC conversion issues
       const assessmentDateTime = dayjs.tz(`${assessment.scheduled_date} ${assessment.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
-      const formattedDate = assessmentDateTime.format('DD MMMM YYYY');
-      const formattedTime = assessmentDateTime.format('hh:mm A');
+      const formattedDate = assessmentDateTime.format('DD MMM YYYY');
+      const formattedTime = assessmentDateTime.format('h:mm A');
 
       const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
       const psychologistName = psychologist ? `${psychologist.first_name} ${psychologist.last_name}`.trim() : 'our specialist';
@@ -463,7 +464,8 @@ class SessionReminderService {
 
       // Send reminder to client
       if (client.phone_number) {
-        const clientMessage = `🔔 Reminder: Your free assessment session with our specialist is scheduled.\n\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime} (IST)\n\nPlease be ready for your assessment session. We look forward to meeting you! 💜`;
+        const bullet = '•⁠  ⁠';
+        const clientMessage = `See You Soon for Your Session,\nYour free assessment session is scheduled in a little while.\n\n${bullet}${formattedDate}\n${bullet}${formattedTime} (IST)\n\nPlease join from a quiet space with good internet.\nWe're here for you.\n\n— Little Care 💜`;
 
         reminderPromises.push(
           whatsappService.sendWhatsAppTextWithRetry(client.phone_number, clientMessage)

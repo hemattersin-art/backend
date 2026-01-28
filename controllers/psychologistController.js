@@ -1491,10 +1491,49 @@ const completeSession = async (req, res) => {
 
             const sessionTypeLabel = regularSession.package_id ? 'package session' : (isFreeAssessment ? 'free assessment' : 'therapy session');
             console.log(`📱 Attempting to send WhatsApp completion for ${sessionTypeLabel} (Session ID: ${sessionId}) to client: ${clientPhone.substring(0, 3)}***`);
+            
+            // Fetch package information if this is a package session
+            let packageInfo = null;
+            if (regularSession.package_id) {
+              try {
+                // Get package data
+                const { data: packageData, error: packageError } = await supabaseAdmin
+                  .from('packages')
+                  .select('session_count')
+                  .eq('id', regularSession.package_id)
+                  .single();
+                
+                if (!packageError && packageData) {
+                  // Get all sessions for this package and count completed ones
+                  const { data: packageSessions, error: sessionsError } = await supabaseAdmin
+                    .from('sessions')
+                    .select('id, status')
+                    .eq('package_id', regularSession.package_id);
+                  
+                  if (!sessionsError && packageSessions) {
+                    const totalSessions = packageData.session_count || 0;
+                    // Count completed sessions (including the one just completed)
+                    const completedSessions = packageSessions.filter(s => s.status === 'completed').length;
+                    
+                    packageInfo = {
+                      totalSessions: totalSessions,
+                      completedSessions: completedSessions
+                    };
+                    
+                    console.log(`📦 Package info for session ${sessionId}: ${completedSessions}/${totalSessions} completed`);
+                  }
+                }
+              } catch (packageInfoError) {
+                console.warn(`⚠️ Error fetching package info for session ${sessionId}:`, packageInfoError);
+                // Continue without package info - will use regular template
+              }
+            }
+            
             const clientResult = await sendSessionCompletionNotification(clientPhone, {
               psychologistName: psychologistName,
               bookingLink: bookingLink,
-              feedbackLink: feedbackLink
+              feedbackLink: feedbackLink,
+              packageInfo: packageInfo
             });
             if (clientResult?.success) {
               console.log(`✅ Session completion WhatsApp sent to client for ${sessionTypeLabel} (Session ID: ${sessionId})`);

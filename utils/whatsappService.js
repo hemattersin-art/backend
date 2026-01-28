@@ -552,14 +552,16 @@ async function sendNoShowNotification(toPhoneE164, details) {
 /**
  * Send session completion WhatsApp message with feedback and booking links
  * @param {string} toPhoneE164 - Phone number in E.164 format
- * @param {Object} details - { psychologistName, bookingLink, feedbackLink }
+ * @param {Object} details - { psychologistName, bookingLink, feedbackLink, packageInfo? }
+ * @param {Object} packageInfo - { completedSessions, totalSessions } (optional, for package sessions)
  * @returns {Promise<Object>} - { success: boolean, ... }
  */
 async function sendSessionCompletionNotification(toPhoneE164, details) {
   const {
     psychologistName,
     bookingLink,
-    feedbackLink
+    feedbackLink,
+    packageInfo
   } = details || {};
 
   const specialist = psychologistName && psychologistName.trim() 
@@ -569,6 +571,23 @@ async function sendSessionCompletionNotification(toPhoneE164, details) {
   const bookingLinkText = bookingLink || 'https://www.little.care/psychologists';
   const feedbackLinkText = feedbackLink || 'https://www.little.care/profile/reports';
 
+  // Check if this is a package session and use appropriate template
+  if (packageInfo && packageInfo.totalSessions && packageInfo.completedSessions !== undefined) {
+    const completedSessions = packageInfo.completedSessions;
+    const totalSessions = packageInfo.totalSessions;
+    
+    const message =
+      `Hey,\n\n` +
+      `You've completed ${completedSessions}/${totalSessions} sessions with ${specialist}.\n` +
+      `It's time to book your next session: ${bookingLinkText}\n\n` +
+      `We'd love your feedback on your last session:\n` +
+      `How was it? Reply with 1–5 (1 = Poor, 5 = Excellent) or click here: ${feedbackLinkText}\n\n` +
+      `— Little Care 💜`;
+
+    return await sendWhatsAppTextWithRetry(toPhoneE164, message);
+  }
+
+  // Regular session completion template (non-package)
   const message =
     `Hey,\n\n` +
     `We hope your session with ${specialist} went well.\n\n` +
