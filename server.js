@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { 
@@ -62,6 +61,37 @@ const {
 const requestIdMiddleware = require('./middleware/requestId');
 app.use(requestIdMiddleware);
 
+// CORS: Handle preflight OPTIONS first so response always has Access-Control-* headers
+// (Other middleware may return errors without CORS headers, causing "No 'Access-Control-Allow-Origin'" in browser)
+const ALLOWED_ORIGINS = [
+  'https://kutikkal-one.vercel.app',
+  'https://www.little.care',
+  'https://little.care',
+  'http://localhost:3000',
+  'http://localhost:3001'
+];
+const ALLOWED_HEADERS = [
+  'Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept',
+  'x-posthog-distinct-id', 'x-posthog-session-id', 'x-posthog-token', 'x-posthog-window-id',
+  'X-PostHog-Distinct-Id', 'X-PostHog-Session-Id', 'X-PostHog-Token', 'X-PostHog-Window-Id'
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', ALLOWED_HEADERS.join(', '));
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
+
 // Security middleware stack
 app.use(helmet({
   contentSecurityPolicy: {
@@ -79,46 +109,6 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false
 }));
-
-// CORS configuration (MUST be before security middleware)
-// PostHog sends multiple tracing headers - allow all common ones
-const postHogHeaders = [
-  'x-posthog-distinct-id',
-  'x-posthog-session-id',
-  'x-posthog-token',
-  'x-posthog-window-id',
-  // Case variations (some browsers/CORS implementations are case-sensitive)
-  'X-PostHog-Distinct-Id',
-  'X-PostHog-Session-Id',
-  'X-PostHog-Token',
-  'X-PostHog-Window-Id'
-];
-
-const corsConfig = {
-  origin: [
-    'https://kutikkal-one.vercel.app',
-    'https://www.little.care',
-    'https://little.care',
-    'http://localhost:3000',
-    'http://localhost:3001'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'X-Requested-With', 
-    'Origin', 
-    'Accept',
-    // PostHog tracing headers for session tracking
-    ...postHogHeaders
-  ]
-};
-
-// Explicitly handle OPTIONS preflight requests for PostHog headers
-app.options('*', cors(corsConfig));
-
-app.use(cors(corsConfig));
 
 // Trust Cloudflare proxy - Express will automatically use CF-Connecting-IP
 // With 'trust proxy' set, req.ip will automatically use the correct IP
