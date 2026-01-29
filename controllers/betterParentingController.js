@@ -57,7 +57,7 @@ const getAllBetterParenting = async (req, res) => {
   }
 };
 
-// Public by slug
+// Public by slug - no caching so CMS changes reflect immediately
 const getBetterParentingBySlug = async (req, res) => {
   try {
     const { slug } = req.params;
@@ -68,6 +68,7 @@ const getBetterParentingBySlug = async (req, res) => {
       .eq('status', 'published')
       .single();
     if (error) throw error;
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.json(successResponse(data, 'Page retrieved'));
   } catch (err) {
     return res.status(500).json(errorResponse('Failed to fetch page', err.message));

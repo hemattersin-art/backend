@@ -1,6 +1,5 @@
 const { supabaseAdmin } = require('../config/supabase');
 const { successResponse, errorResponse } = require('../utils/helpers');
-const { globalCache } = require('../utils/cache');
 const multer = require('multer');
 
 // List (admin)
@@ -116,8 +115,7 @@ const getAllAssessments = async (req, res) => {
   }
 };
 
-// Public by slug
-// OPTIMIZED: Added indexes, caching, query timing, error handling
+// Public by slug - no caching so CMS changes reflect immediately
 const getAssessmentBySlug = async (req, res) => {
   try {
     const { slug } = req.params;
@@ -125,18 +123,7 @@ const getAssessmentBySlug = async (req, res) => {
       return res.status(400).json(errorResponse('Slug is required'));
     }
 
-    // Check for preview mode
     const isPreview = req.query.preview === '1' || req.query.preview === 'true';
-    
-    // OPTIMIZATION: Check cache first (only for published, not preview)
-    // Preview mode should always fetch fresh data
-    const cacheKey = `assessment:${slug}${isPreview ? ':preview' : ''}`;
-    if (!isPreview) {
-      const cached = globalCache.get(cacheKey);
-      if (cached) {
-        return res.json(successResponse(cached, 'Assessment retrieved (cached)'));
-      }
-    }
 
     // Use select('*') to get all columns (like counselling and better-parenting)
     // This avoids column mismatch errors if schema changes
@@ -177,15 +164,8 @@ const getAssessmentBySlug = async (req, res) => {
     if (!Array.isArray(data.assigned_doctor_ids)) {
       data.assigned_doctor_ids = [];
     }
-    
-    // OPTIMIZATION: Cache the result for 24 hours (86400000ms)
-    // Published assessments rarely change, so 24-hour cache is safe
-    // This reduces egress by 99%+ (cache hits = 0 egress)
-    // Only cache published assessments, not preview mode
-    if (!isPreview) {
-      globalCache.set(cacheKey, data, 86400000);
-    }
-    
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json(successResponse(data, 'Assessment retrieved'));
   } catch (err) {
     console.error('Error fetching assessment by slug:', err);
@@ -443,6 +423,7 @@ const updateAssessment = async (req, res) => {
       .select('*')
       .single();
     if (error) throw error;
+
     res.json(successResponse(data, 'Assessment updated'));
   } catch (err) {
     res.status(500).json(errorResponse('Failed to update assessment', err.message));

@@ -108,6 +108,7 @@ const getCounsellingServiceBySlug = async (req, res) => {
       return res.status(500).json(errorResponse('Failed to fetch counselling service', error.message));
     }
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json(successResponse(service, 'Counselling service retrieved successfully'));
   } catch (error) {
     console.error('Error fetching counselling service:', error);
