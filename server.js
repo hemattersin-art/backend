@@ -491,6 +491,20 @@ app.get('/api/public/psychologists/:psychologistId/details', async (req, res) =>
     }
 
     const formattedPsychologist = formatPublicPsychologist(psychologist);
+    // Include FAQ + education (studies) + area_of_expertise for profile page (list omits these for payload size)
+    Object.assign(formattedPsychologist, {
+      faq_question_1: psychologist.faq_question_1 ?? null,
+      faq_answer_1: psychologist.faq_answer_1 ?? null,
+      faq_question_2: psychologist.faq_question_2 ?? null,
+      faq_answer_2: psychologist.faq_answer_2 ?? null,
+      faq_question_3: psychologist.faq_question_3 ?? null,
+      faq_answer_3: psychologist.faq_answer_3 ?? null,
+      ug_college: psychologist.ug_college ?? null,
+      pg_college: psychologist.pg_college ?? null,
+      mphil_college: psychologist.mphil_college ?? null,
+      phd_college: psychologist.phd_college ?? null,
+      area_of_expertise: psychologist.area_of_expertise ?? formattedPsychologist.area_of_expertise ?? []
+    });
 
     res.json({
       success: true,
