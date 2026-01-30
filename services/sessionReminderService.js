@@ -68,7 +68,8 @@ class SessionReminderService {
       
       // Get all sessions scheduled for the date range
       // Use supabaseAdmin to bypass RLS and avoid fetch errors
-      // NOTE: Excluding free_assessment sessions - they are handled separately via free_assessments table
+      // NOTE: Excluding free_assessment sessions only - they are handled via free_assessments table.
+      // Use .or() so paid sessions with session_type IS NULL are included (SQL: NULL != 'x' excludes rows).
       const { data: sessions, error: sessionsError } = await supabaseAdmin
         .from('sessions')
         .select(`
@@ -80,6 +81,7 @@ class SessionReminderService {
           status,
           google_meet_link,
           reminder_sent,
+          session_type,
           client:clients(
             id,
             first_name,
@@ -98,7 +100,7 @@ class SessionReminderService {
         `)
         .in('scheduled_date', datesToCheck)
         .in('status', ['booked', 'rescheduled', 'confirmed'])
-        .neq('session_type', 'free_assessment') // Exclude free assessments - they are handled separately via free_assessments table
+        .or('session_type.neq.free_assessment,session_type.is.null')
         .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
 
@@ -264,6 +266,12 @@ class SessionReminderService {
    */
   async sendReminderForSession(session) {
     try {
+      // Free assessments get reminder only from free_assessments table (one reminder per session)
+      if (session.session_type === 'free_assessment') {
+        console.log(`⏭️  Session ${session.id} is free_assessment; reminder handled via free_assessments table, skipping...`);
+        return;
+      }
+
       // ATOMIC CHECK AND LOCK: Try to update reminder_sent from false to true
       // This acts as a distributed lock - only one process can successfully update
       // If update affects 0 rows, it means reminder_sent was already true (or another process got there first)
@@ -400,6 +408,19 @@ class SessionReminderService {
    */
   async sendReminderForFreeAssessment(assessment) {
     try {
+      // Already-sent check: only one reminder per free assessment (cron can run every hour; same assessment can fall in window twice)
+      const { data: existingReminder } = await supabaseAdmin
+        .from('notifications')
+        .select('id')
+        .eq('type', 'free_assessment_reminder_2h')
+        .eq('related_id', assessment.id)
+        .limit(1);
+
+      if (existingReminder && existingReminder.length > 0) {
+        console.log(`⏭️  Reminder already sent for free assessment ${assessment.id}, skipping...`);
+        return;
+      }
+
       // ATOMIC CHECK: Try to insert a "lock" notification first
       // This acts as a distributed lock - only one process can successfully insert
       // We'll insert a temporary lock notification, then send reminders, then update it
@@ -614,6 +635,7 @@ class SessionReminderService {
           google_meet_link,
           created_at,
           updated_at,
+          session_type,
           client:clients(
             id,
             first_name,
@@ -704,6 +726,7 @@ class SessionReminderService {
           status,
           google_meet_link,
           reminder_sent,
+          session_type,
           client:clients(
             id,
             first_name,
@@ -726,6 +749,12 @@ class SessionReminderService {
 
       if (sessionError || !session) {
         console.log(`ℹ️  [PRIORITY] Session ${sessionId} not found or not in valid status`);
+        return;
+      }
+
+      // Free assessments get reminder only from free_assessments batch (one reminder per session)
+      if (session.session_type === 'free_assessment') {
+        console.log(`⏭️  [PRIORITY] Session ${sessionId} is free_assessment; reminder handled via free_assessments table, skipping...`);
         return;
       }
 
