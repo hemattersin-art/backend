@@ -401,6 +401,18 @@ const processPaymentCaptured = async (payload, eventId, skipSignatureCheck = fal
       }
     });
 
+    // PRIORITY: Check and send reminder immediately if session is in next 2 hours (async)
+    if (sessionResult.session?.id) {
+      try {
+        const sessionReminderService = require('../services/sessionReminderService');
+        sessionReminderService.checkAndSendReminderForSessionId(sessionResult.session.id).catch(err => {
+          console.error('❌ Error in priority reminder check (webhook):', err);
+        });
+      } catch (reminderError) {
+        console.error('❌ Error initiating priority reminder check (webhook):', reminderError);
+      }
+    }
+
     // Return success
     return {
       success: true,

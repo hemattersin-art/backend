@@ -1,6 +1,11 @@
 const { calendar } = require('./googleOAuthClient');
 const { supabaseAdmin } = require('../config/supabase');
 const googleCalendarService = require('./googleCalendarService');
+const {
+  getRecurringBlocksForPsychologist,
+  isSlotBlockedByRecurring,
+  getDayOfWeekFromDate
+} = require('./recurringBlocksHelper');
 
 class AvailabilityCalendarService {
   constructor() {
@@ -242,14 +247,25 @@ class AvailabilityCalendarService {
       const normalizedTimeToMatch = timeToMatch.trim().replace(/\s+/g, ' ');
       
       // Check exact match
-      if (normalizedTimeSlots.includes(normalizedTimeToMatch)) {
-        return true;
+      if (!normalizedTimeSlots.includes(normalizedTimeToMatch)) {
+        // Also check case-insensitive match
+        const lowerTimeSlots = normalizedTimeSlots.map(s => s.toLowerCase());
+        const lowerTimeToMatch = normalizedTimeToMatch.toLowerCase();
+        if (!lowerTimeSlots.includes(lowerTimeToMatch)) {
+          console.log(`🔍 isTimeSlotAvailable result: ❌ Not available (not in availability)`);
+          return false;
+        }
       }
-      
-      // Also check case-insensitive match
-      const lowerTimeSlots = normalizedTimeSlots.map(s => s.toLowerCase());
-      const lowerTimeToMatch = normalizedTimeToMatch.toLowerCase();
-      const isAvailable = lowerTimeSlots.includes(lowerTimeToMatch);
+
+      // Recurring blocks (e.g. block every Sunday) - only this psychologist
+      const recurringBlocks = await getRecurringBlocksForPsychologist(psychologistId);
+      const dayOfWeek = getDayOfWeekFromDate(date);
+      if (dayOfWeek != null && isSlotBlockedByRecurring(recurringBlocks, dayOfWeek, time)) {
+        console.log(`🔍 isTimeSlotAvailable result: ❌ Not available (recurring block)`);
+        return false;
+      }
+
+      const isAvailable = true;
       
       console.log(`🔍 isTimeSlotAvailable result: ${isAvailable ? '✅ Available' : '❌ Not available'}`);
       console.log(`   - Input time: ${time}`);
@@ -339,6 +355,9 @@ class AvailabilityCalendarService {
       ];
 
       console.log(`🔒 Found ${bookedSessions?.length || 0} booked regular sessions and ${bookedAssessmentSessions?.length || 0} booked assessment sessions in date range`);
+
+      // Recurring blocks (e.g. block every Sunday) - only this psychologist
+      const recurringBlocks = await getRecurringBlocksForPsychologist(psychologistId);
 
       // SKIP Google Calendar check entirely to prevent any blocking
       // The scheduled cron job (every 10 minutes) will handle syncing and updating the database
@@ -493,11 +512,14 @@ class AvailabilityCalendarService {
             }
             
             const isGoogleCalendarBlocked = googleCalendarSlots.has(timeStr);
-            const isBlocked = isBooked || isGoogleCalendarBlocked;
+            const dayOfWeek = getDayOfWeekFromDate(dateStr);
+            const isRecurringBlocked = dayOfWeek != null && isSlotBlockedByRecurring(recurringBlocks, dayOfWeek, timeString);
+            const isBlocked = isBooked || isGoogleCalendarBlocked || isRecurringBlocked;
             
             let reason = 'available';
             if (isBooked) reason = 'booked';
             else if (isGoogleCalendarBlocked) reason = 'google_calendar_blocked';
+            else if (isRecurringBlocked) reason = 'recurring_block';
             
             return {
               time: timeString,

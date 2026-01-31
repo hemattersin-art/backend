@@ -99,7 +99,7 @@ class SessionReminderService {
           )
         `)
         .in('scheduled_date', datesToCheck)
-        .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .in('status', ['booked', 'rescheduled', 'confirmed', 'scheduled', 'reschedule_requested', 'upcoming'])
         .or('session_type.neq.free_assessment,session_type.is.null')
         .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
@@ -653,7 +653,7 @@ class SessionReminderService {
           )
         `)
         .in('scheduled_date', datesToCheck)
-        .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .in('status', ['booked', 'rescheduled', 'confirmed', 'scheduled', 'reschedule_requested', 'upcoming'])
         .order('scheduled_date', { ascending: true })
         .order('scheduled_time', { ascending: true });
 
@@ -744,7 +744,7 @@ class SessionReminderService {
           )
         `)
         .eq('id', sessionId)
-        .in('status', ['booked', 'rescheduled', 'confirmed'])
+        .in('status', ['booked', 'rescheduled', 'confirmed', 'scheduled', 'reschedule_requested', 'upcoming'])
         .single();
 
       if (sessionError || !session) {

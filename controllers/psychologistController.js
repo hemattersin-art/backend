@@ -6,6 +6,12 @@ const {
   formatTime
 } = require('../utils/helpers');
 const assessmentSessionService = require('../services/assessmentSessionService');
+const {
+  getRecurringBlocksForPsychologist,
+  filterSlotsByRecurringBlocks,
+  getDayName
+} = require('../utils/recurringBlocksHelper');
+const timeBlockingService = require('../utils/timeBlockingService');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
@@ -744,10 +750,13 @@ const getAvailability = async (req, res) => {
         }
       });
 
-      // Filter out booked slots from availability
+      // Fetch recurring blocks (e.g. block every Sunday) for this psychologist
+      const recurringBlocks = await getRecurringBlocksForPsychologist(psychologistId);
+
+      // Filter out booked slots from availability, then apply recurring blocks
       const filteredAvailability = (availability || []).map(dayAvailability => {
         const bookedTimes = bookedTimesByDate.get(dayAvailability.date) || new Set();
-        const availableSlots = (dayAvailability.time_slots || []).filter(slot => {
+        let availableSlots = (dayAvailability.time_slots || []).filter(slot => {
           const slotStr = typeof slot === 'string' ? slot.trim() : String(slot).trim();
           if (!slotStr) return false;
           
@@ -811,6 +820,8 @@ const getAvailability = async (req, res) => {
           
           return !isBooked;
         });
+        // Apply recurring blocks (e.g. block every Sunday) - only this psychologist affected
+        availableSlots = filterSlotsByRecurringBlocks(availableSlots, dayAvailability.date, recurringBlocks);
 
         return {
           ...dayAvailability,
@@ -1338,6 +1349,121 @@ const deleteAvailability = async (req, res) => {
     res.status(500).json(
       errorResponse('Internal server error while deleting availability')
     );
+  }
+};
+
+// Recurring blocks (e.g. block every Sunday as leave) - only affects this psychologist
+const getRecurringBlocks = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const { data: blocks, error } = await supabaseAdmin
+      .from('psychologist_recurring_blocks')
+      .select('*')
+      .eq('psychologist_id', psychologistId)
+      .order('day_of_week', { ascending: true });
+
+    if (error) {
+      console.error('Get recurring blocks error:', error);
+      return res.status(500).json(errorResponse('Failed to fetch recurring blocks'));
+    }
+    res.json(successResponse(blocks || [], 'Recurring blocks fetched'));
+  } catch (err) {
+    console.error('Get recurring blocks error:', err);
+    res.status(500).json(errorResponse('Internal server error while fetching recurring blocks'));
+  }
+};
+
+const addRecurringBlock = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const { day_of_week, block_entire_day = true, time_slots } = req.body;
+
+    if (day_of_week == null || day_of_week < 0 || day_of_week > 6) {
+      return res.status(400).json(errorResponse('day_of_week must be 0 (Sunday) through 6 (Saturday)'));
+    }
+
+    const dayNum = Number(day_of_week);
+    const payload = {
+      psychologist_id: psychologistId,
+      day_of_week: dayNum,
+      block_entire_day: !!block_entire_day,
+      time_slots: Array.isArray(time_slots) && time_slots.length > 0 ? time_slots : null
+    };
+
+    // If updating an existing block, remove old Google Calendar event first
+    const { data: existing } = await supabaseAdmin
+      .from('psychologist_recurring_blocks')
+      .select('id, google_calendar_event_id')
+      .eq('psychologist_id', psychologistId)
+      .eq('day_of_week', dayNum)
+      .maybeSingle();
+
+    if (existing?.google_calendar_event_id) {
+      await timeBlockingService.deleteRecurringBlockCalendarEvent(psychologistId, existing.google_calendar_event_id);
+    }
+
+    // Create recurring event on Google Calendar (full-day or time range) when GCal connected
+    if (payload.block_entire_day || (payload.time_slots && payload.time_slots.length > 0)) {
+      const gcalResult = await timeBlockingService.createRecurringBlockCalendarEvent(
+        psychologistId,
+        { day_of_week: dayNum, block_entire_day: payload.block_entire_day, time_slots: payload.time_slots },
+        'Recurring block'
+      );
+      if (gcalResult.success && gcalResult.eventId) {
+        payload.google_calendar_event_id = gcalResult.eventId;
+      }
+    }
+
+    const { data: block, error } = await supabaseAdmin
+      .from('psychologist_recurring_blocks')
+      .upsert(payload, {
+        onConflict: 'psychologist_id,day_of_week',
+        ignoreDuplicates: false
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Add recurring block error:', error);
+      return res.status(500).json(errorResponse(error.message || 'Failed to add recurring block'));
+    }
+    res.json(successResponse(block, 'Recurring block saved. It will apply to all future weeks.'));
+  } catch (err) {
+    console.error('Add recurring block error:', err);
+    res.status(500).json(errorResponse('Internal server error while adding recurring block'));
+  }
+};
+
+const deleteRecurringBlock = async (req, res) => {
+  try {
+    const psychologistId = req.user.id;
+    const blockId = req.params.blockId;
+
+    const { data: block } = await supabaseAdmin
+      .from('psychologist_recurring_blocks')
+      .select('id, google_calendar_event_id')
+      .eq('id', blockId)
+      .eq('psychologist_id', psychologistId)
+      .single();
+
+    if (block?.google_calendar_event_id) {
+      await timeBlockingService.deleteRecurringBlockCalendarEvent(psychologistId, block.google_calendar_event_id);
+    }
+
+    const { error } = await supabaseAdmin
+      .from('psychologist_recurring_blocks')
+      .delete()
+      .eq('id', blockId)
+      .eq('psychologist_id', psychologistId);
+
+    if (error) {
+      console.error('Delete recurring block error:', error);
+      return res.status(500).json(errorResponse('Failed to delete recurring block'));
+    }
+    res.json(successResponse(null, 'Recurring block removed'));
+  } catch (err) {
+    console.error('Delete recurring block error:', err);
+    res.status(500).json(errorResponse('Internal server error while deleting recurring block'));
   }
 };
 
@@ -1920,6 +2046,9 @@ module.exports = {
   addAvailability,
   updateAvailability,
   deleteAvailability,
+  getRecurringBlocks,
+  addRecurringBlock,
+  deleteRecurringBlock,
   deleteSession,
   deleteAssessmentSession,
   getMonthlyStats

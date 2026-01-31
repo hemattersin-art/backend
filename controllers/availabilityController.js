@@ -493,6 +493,8 @@ const getAvailableTimeSlots = async (req, res) => {
       );
     }
 
+    const { getRecurringBlocksForPsychologist, filterSlotsByRecurringBlocks } = require('../utils/recurringBlocksHelper');
+
     // Get availability for the specific date
     // Use supabaseAdmin to bypass RLS (backend has proper auth/authorization)
     const { data: availability, error: availabilityError } = await supabaseAdmin
@@ -532,9 +534,13 @@ const getAvailableTimeSlots = async (req, res) => {
       ...(bookedAssessmentSessions || []).map(s => s.scheduled_time)
     ];
 
-    const availableSlots = availability.time_slots.filter(slot => 
+    let availableSlots = availability.time_slots.filter(slot =>
       !bookedTimes.includes(slot)
     );
+
+    // Apply recurring blocks (e.g. block every Sunday) - only this psychologist
+    const recurringBlocks = await getRecurringBlocksForPsychologist(psychologist_id);
+    availableSlots = filterSlotsByRecurringBlocks(availableSlots, date, recurringBlocks);
 
     res.json(
       successResponse({

@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const psychologistController = require('../controllers/psychologistController');
 const assessmentBookingController = require('../controllers/assessmentBookingController');
-const timeBlockingController = require('../controllers/timeBlockingController');
 const { authenticateToken, requirePsychologist } = require('../middleware/auth');
 const { 
   validatePsychologistProfile,
@@ -34,9 +33,9 @@ router.post('/availability', validateAvailability, psychologistController.addAva
 router.put('/availability', validateAvailability, psychologistController.updateAvailability);
 router.delete('/availability/:availabilityId', psychologistController.deleteAvailability);
 
-// Time blocking management
-router.post('/block-time', timeBlockingController.blockTimeSlots);
-router.post('/unblock-time', timeBlockingController.unblockTimeSlots);
-router.get('/blocked-time', timeBlockingController.getBlockedTimeSlots);
+// Recurring blocks (e.g. block every Sunday - applies to all future weeks, only this psychologist)
+router.get('/recurring-blocks', psychologistController.getRecurringBlocks);
+router.post('/recurring-blocks', psychologistController.addRecurringBlock);
+router.delete('/recurring-blocks/:blockId', psychologistController.deleteRecurringBlock);
 
 module.exports = router;
