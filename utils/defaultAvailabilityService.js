@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('../config/supabase');
+const { getRecurringBlocksForPsychologist, filterSlotsByRecurringBlocks } = require('./recurringBlocksHelper');
 
 /**
  * Generate default time slots: continuous 1-hour slots from 8:00 AM to 10:00 PM IST
@@ -70,11 +71,18 @@ const setDefaultAvailability = async (psychologistId) => {
     endDate.setDate(endDate.getDate() + 21); // 3 weeks = 21 days
     
     // Generate availability records
-    const availabilityRecords = generateAvailabilityRecords(psychologistId, today, endDate);
+    let availabilityRecords = generateAvailabilityRecords(psychologistId, today, endDate);
     
     if (availabilityRecords.length === 0) {
       return { success: false, message: 'No availability records to create' };
     }
+    
+    // Apply recurring blocks so blocked days have empty/reduced slots (DB reflects blocked days for Wix etc.)
+    const recurringBlocks = await getRecurringBlocksForPsychologist(psychologistId);
+    availabilityRecords = availabilityRecords.map((r) => ({
+      ...r,
+      time_slots: filterSlotsByRecurringBlocks(r.time_slots, r.date, recurringBlocks)
+    }));
     
     // Check which dates already exist
     const existingDates = new Set();
@@ -151,14 +159,13 @@ const addNextDayAvailability = async () => {
     const day = String(targetDate.getDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
     
-    const timeSlots = generateDefaultTimeSlots();
+    const defaultTimeSlots = generateDefaultTimeSlots();
     let successCount = 0;
     let skipCount = 0;
     
-    // Add availability for each psychologist
+    // Add availability for each psychologist (apply recurring blocks so blocked days have empty/reduced slots)
     for (const psych of psychologists) {
       // Check if availability already exists for this date
-      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
       const { data: existing } = await supabaseAdmin
         .from('availability')
         .select('id')
@@ -171,14 +178,16 @@ const addNextDayAvailability = async () => {
         continue;
       }
       
-      // Insert new availability
-      // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
-    const { error: insertError } = await supabaseAdmin
+      // Apply recurring blocks: full-day block -> empty slots; partial block -> filtered slots; no block -> full default
+      const recurringBlocks = await getRecurringBlocksForPsychologist(psych.id);
+      const timeSlotsToInsert = filterSlotsByRecurringBlocks([...defaultTimeSlots], dateString, recurringBlocks);
+      
+      const { error: insertError } = await supabaseAdmin
         .from('availability')
         .insert({
           psychologist_id: psych.id,
           date: dateString,
-          time_slots: timeSlots,
+          time_slots: timeSlotsToInsert,
           is_available: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -359,12 +368,59 @@ const updateAllPsychologistsAvailability = async () => {
   }
 };
 
+/**
+ * Sync future availability rows for a psychologist for a given day-of-week to match recurring blocks.
+ * Called when a recurring block is added/updated (so blocked days get empty/reduced slots in DB)
+ * or deleted (so that day gets default slots back).
+ * @param {string} psychologistId - Psychologist ID
+ * @param {number} dayOfWeek - 0-6 (Sunday-Saturday)
+ * @param {{ useDefaultSlots?: boolean }} options - If true (e.g. after block delete), refill from default slots; else filter existing slots
+ * @returns {Promise<{ updated: number }>}
+ */
+const syncFutureAvailabilityForRecurringBlockDay = async (psychologistId, dayOfWeek, options = {}) => {
+  const { useDefaultSlots = false } = options;
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+    const recurringBlocks = await getRecurringBlocksForPsychologist(psychologistId);
+    const defaultSlots = generateDefaultTimeSlots();
+    const { data: rows, error } = await supabaseAdmin
+      .from('availability')
+      .select('id, date, time_slots')
+      .eq('psychologist_id', psychologistId)
+      .gte('date', todayStr);
+    if (error || !rows || rows.length === 0) return { updated: 0 };
+    const getDayOfWeek = (dateStr) => {
+      const d = new Date(dateStr + 'T12:00:00');
+      return Number.isNaN(d.getTime()) ? null : d.getDay();
+    };
+    let updated = 0;
+    for (const row of rows) {
+      if (getDayOfWeek(row.date) !== dayOfWeek) continue;
+      const baseSlots = useDefaultSlots ? defaultSlots : (row.time_slots || []);
+      const newSlots = filterSlotsByRecurringBlocks(baseSlots, row.date, recurringBlocks);
+      if (JSON.stringify(newSlots) === JSON.stringify(row.time_slots || [])) continue;
+      const { error: updateErr } = await supabaseAdmin
+        .from('availability')
+        .update({ time_slots: newSlots, updated_at: new Date().toISOString() })
+        .eq('id', row.id);
+      if (!updateErr) updated++;
+    }
+    return { updated };
+  } catch (err) {
+    console.error('Error syncing future availability for recurring block day:', err);
+    return { updated: 0 };
+  }
+};
+
 module.exports = {
   generateDefaultTimeSlots,
   generateAvailabilityRecords,
   setDefaultAvailability,
   addNextDayAvailability,
   cleanupPastAvailability,
-  updateAllPsychologistsAvailability
+  updateAllPsychologistsAvailability,
+  syncFutureAvailabilityForRecurringBlockDay
 };
 

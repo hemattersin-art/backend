@@ -12,6 +12,7 @@ const {
   getDayName
 } = require('../utils/recurringBlocksHelper');
 const timeBlockingService = require('../utils/timeBlockingService');
+const { syncFutureAvailabilityForRecurringBlockDay } = require('../utils/defaultAvailabilityService');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
@@ -1427,6 +1428,8 @@ const addRecurringBlock = async (req, res) => {
       console.error('Add recurring block error:', error);
       return res.status(500).json(errorResponse(error.message || 'Failed to add recurring block'));
     }
+    // Sync future availability so blocked day has empty/reduced slots in DB (Wix etc. see it as blocked)
+    await syncFutureAvailabilityForRecurringBlockDay(psychologistId, dayNum, { useDefaultSlots: false });
     res.json(successResponse(block, 'Recurring block saved. It will apply to all future weeks.'));
   } catch (err) {
     console.error('Add recurring block error:', err);
@@ -1441,7 +1444,7 @@ const deleteRecurringBlock = async (req, res) => {
 
     const { data: block } = await supabaseAdmin
       .from('psychologist_recurring_blocks')
-      .select('id, google_calendar_event_id')
+      .select('id, google_calendar_event_id, day_of_week')
       .eq('id', blockId)
       .eq('psychologist_id', psychologistId)
       .single();
@@ -1459,6 +1462,10 @@ const deleteRecurringBlock = async (req, res) => {
     if (error) {
       console.error('Delete recurring block error:', error);
       return res.status(500).json(errorResponse('Failed to delete recurring block'));
+    }
+    // Restore default slots for that day in future availability (so Wix etc. see it as available again)
+    if (block?.day_of_week != null) {
+      await syncFutureAvailabilityForRecurringBlockDay(psychologistId, block.day_of_week, { useDefaultSlots: true });
     }
     res.json(successResponse(null, 'Recurring block removed'));
   } catch (err) {
