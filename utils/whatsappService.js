@@ -250,20 +250,20 @@ function formatFriendlyTime(timeStr) {
 
 /**
  * Build main booking confirmation message
- * @param {Object} details - { childName, date, time, meetLink, psychologistName?, isFreeAssessment?, packageInfo? }
+ * @param {Object} details - { clientName, date, time, meetLink, psychologistName?, isFreeAssessment?, packageInfo? }
  * @returns {string} Formatted message
  */
-function buildBookingMessage({ childName, date, time, meetLink, psychologistName = null, isFreeAssessment = false, packageInfo = null }) {
+function buildBookingMessage({ clientName, date, time, meetLink, psychologistName = null, isFreeAssessment = false, packageInfo = null }) {
   const friendlyDate = formatFriendlyDate(date);
   const friendlyTime = formatFriendlyTime(time);
   const sessionType = isFreeAssessment ? 'Free Assessment' : 'Therapy Session';
 
-  // Only include child line if childName is provided and not empty/null/'Pending'
-  const hasChildName = childName && 
-    childName.trim() !== '' && 
-    childName.toLowerCase() !== 'pending';
+  // Client name line (if provided)
+  const hasClientName = clientName && 
+    clientName.trim() !== '' && 
+    clientName.toLowerCase() !== 'pending';
   
-  const childLine = hasChildName ? `👧 Child: ${childName}\n\n` : '';
+  const clientLine = hasClientName ? `👤 Client: ${clientName}\n\n` : '';
 
   // Psychologist name line (if provided) - no Dr. prefix
   const psychologistLine = psychologistName && psychologistName.trim() 
@@ -286,7 +286,7 @@ function buildBookingMessage({ childName, date, time, meetLink, psychologistName
   return (
     `🧸 ${sessionType} Confirmed!\n\n` +
     `Session details:\n\n` +
-    childLine +
+    clientLine +
     psychologistLine +
     (packageLine || '') +
     `📅 Date: ${friendlyDate || date}\n\n` +
@@ -299,12 +299,12 @@ function buildBookingMessage({ childName, date, time, meetLink, psychologistName
 /**
  * Send booking confirmation WhatsApp messages (multi-part)
  * @param {string} toPhoneE164 - Phone number in E.164 format
- * @param {Object} details - { childName, date, time, meetLink, psychologistName?, receiptUrl?, isFreeAssessment?, packageInfo? }
+ * @param {Object} details - { clientName, date, time, meetLink, psychologistName?, receiptUrl?, isFreeAssessment?, packageInfo? }
  * @returns {Promise<Object>} - { success: boolean, ... }
  */
 async function sendBookingConfirmation(toPhoneE164, details) {
   const {
-    childName,
+    clientName,
     date,
     time,
     meetLink,
@@ -312,16 +312,9 @@ async function sendBookingConfirmation(toPhoneE164, details) {
     receiptUrl, // Legacy support - for old receipts stored in storage
     receiptPdfBuffer, // New: PDF buffer (will be discarded after sending)
     receiptNumber, // Receipt number for reference
-    clientName, // Client name (first_name + last_name) for receipt filename
     isFreeAssessment = false,
     packageInfo = null
   } = details || {};
-
-  // New requirement: send a single WhatsApp confirmation message in a clean format
-  // and include a "For receipt: Click here" link (if we can generate one).
-
-  // NOTE: childName is intentionally not used in this WhatsApp template (per request).
-  void childName;
 
   // Receipt link requirement: always send users to the production receipts page
   // (no expiring signed links in WhatsApp).

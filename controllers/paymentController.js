@@ -2103,7 +2103,7 @@ const handlePaymentSuccess = async (req, res) => {
           amount: paymentRecord.amount,
           packageId: actualPackageId,
           sessionType: paymentRecord.session_type,
-          clientName: clientDetails?.child_name || `${clientDetails?.first_name} ${clientDetails?.last_name}`.trim(),
+          clientName: `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client',
           clientEmail: clientDetails?.user?.email || clientDetails?.email,
           clientPhone: clientDetails?.phone_number
         },
@@ -2309,8 +2309,8 @@ const handlePaymentSuccess = async (req, res) => {
           console.log('🔄 Creating Google Meet meeting via OAuth2 (async)...');
           
           const meetSessionData = {
-        summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
-        description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+        summary: `Therapy Session - ${`${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client'} with ${psychologistDetails.first_name}`,
+        description: `Online therapy session between ${`${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client'} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
         startDate: actualScheduledDate,
         startTime: actualScheduledTime,
             endTime: addMinutesToTime(actualScheduledTime, 50),
@@ -2468,33 +2468,21 @@ const handlePaymentSuccess = async (req, res) => {
           console.log('📱 Receipt URL available:', !!receiptResult?.fileUrl);
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+      const clientName = receiptResult?.receiptDetails?.client_name || 
+                         `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
       // Send WhatsApp to client
       const clientPhone = clientDetails.phone_number || null;
       if (clientPhone && meetData?.meetLink) {
-        // Only include childName if child_name exists and is not empty/null/'Pending'
-        const childName = clientDetails.child_name && 
-          clientDetails.child_name.trim() !== '' && 
-          clientDetails.child_name.toLowerCase() !== 'pending'
-          ? clientDetails.child_name 
-          : null;
-        
-        // Get client name from receiptDetails (first_name + last_name) for receipt filename
-        const receiptClientName = receiptResult?.receiptDetails?.client_name || 
-                                  `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || null;
-        
         const clientDetails_wa = {
-          childName: childName,
+          clientName: clientName,
           date: actualScheduledDate,
           time: actualScheduledTime,
           meetLink: meetData.meetLink,
-          psychologistName: psychologistName, // Add psychologist name to WhatsApp message
-          // Pass receipt PDF buffer so we can send the PDF via WhatsApp
+          psychologistName: psychologistName,
           receiptPdfBuffer: receiptResult?.pdfBuffer || null,
-          receiptNumber: receiptResult?.receiptNumber || null,
-          clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
+          receiptNumber: receiptResult?.receiptNumber || null
         };
         const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);
         if (clientWaResult?.success) {

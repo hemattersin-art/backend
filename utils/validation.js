@@ -49,16 +49,6 @@ const validateClientProfile = [
   body('phone_number')
     .matches(/^\+?[\d\s\-\(\)]+$/)
     .withMessage('Please provide a valid phone number'),
-  // Make child fields optional - allow null, empty, or valid values
-  body('child_name')
-    .optional({ nullable: true, checkFalsy: true })
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Child name must be between 2 and 50 characters if provided'),
-  body('child_age')
-    .optional({ nullable: true, checkFalsy: true })
-    .isInt({ min: 1, max: 18 })
-    .withMessage('Child age must be between 1 and 18 years if provided'),
   handleValidationErrors
 ];
 

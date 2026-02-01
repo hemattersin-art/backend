@@ -313,7 +313,7 @@ const getPlatformAnalytics = async (req, res) => {
     let usersQuery = supabaseAdmin.from('users').select('role, created_at', { count: 'exact' });
     let sessionsQuery = supabaseAdmin.from('sessions').select('status, scheduled_date, price, created_at', { count: 'exact' });
     let psychologistsQuery = supabaseAdmin.from('psychologists').select('area_of_expertise, created_at', { count: 'exact' });
-    let clientsQuery = supabaseAdmin.from('clients').select('child_age, created_at', { count: 'exact' });
+    let clientsQuery = supabaseAdmin.from('clients').select('created_at', { count: 'exact' });
 
     // Apply date filtering if provided
     if (start_date) {
@@ -439,12 +439,7 @@ const getPlatformAnalytics = async (req, res) => {
       });
     });
 
-    // Client analytics
-    (clients || []).forEach(client => {
-      const ageGroup = client.child_age <= 5 ? '0-5' : 
-                      client.child_age <= 12 ? '6-12' : '13-18';
-      analytics.clients.age_distribution[ageGroup] = (analytics.clients.age_distribution[ageGroup] || 0) + 1;
-    });
+    // Client analytics (no age distribution for men's mental health platform)
 
     // Platform health metrics
     const completedSessions = analytics.sessions.by_status['completed'] || 0;

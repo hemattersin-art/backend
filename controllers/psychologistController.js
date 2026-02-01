@@ -222,8 +222,6 @@ const getSessions = async (req, res) => {
             id,
             first_name,
             last_name,
-            child_name,
-            child_age,
             phone_number,
             user:users(
               email
@@ -272,8 +270,6 @@ const getSessions = async (req, res) => {
               id,
               first_name,
               last_name,
-              child_name,
-              child_age,
               phone_number,
               user:users(
                 email
@@ -395,8 +391,6 @@ const getSessions = async (req, res) => {
                     id,
                     first_name,
                     last_name,
-                    child_name,
-                    child_age,
                     phone_number,
                     user:users(email)
                   ),
@@ -1530,7 +1524,6 @@ const completeSession = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
           user_id,
           phone_number,
           user:users(email)

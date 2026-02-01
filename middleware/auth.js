@@ -180,8 +180,6 @@ const authenticateToken = async (req, res, next) => {
               first_name: supabaseUser.user_metadata?.full_name?.split(' ')[0] || 'User', 
               last_name: supabaseUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '', 
               phone_number: '+91', 
-              child_name: 'Pending', 
-              child_age: 1, 
               created_at: new Date().toISOString() 
             })
             .select()

@@ -217,7 +217,6 @@ const createSessionFromSlotLock = async (slotLock) => {
             id,
             first_name,
             last_name,
-            child_name,
             phone_number,
             user:users(email)
           `)
@@ -278,18 +277,7 @@ const createSessionFromSlotLock = async (slotLock) => {
         const endTime = addMinutesToTime(slotLock.scheduled_time, 50);
 
         // Create Google Meet link
-        // Handle client name: prefer child_name, but skip if it's "Pending" or empty
-        let clientName = clientDetails.child_name;
-        if (!clientName || clientName.trim() === '' || clientName.toLowerCase() === 'pending') {
-          // Fall back to first_name + last_name
-          const firstName = clientDetails.first_name || '';
-          const lastName = clientDetails.last_name || '';
-          clientName = `${firstName} ${lastName}`.trim();
-          // If still empty, use a default
-          if (!clientName) {
-            clientName = 'Client';
-          }
-        }
+        const clientName = `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client';
         const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`;
         
         const meetSessionData = {
@@ -447,27 +435,15 @@ const createSessionFromSlotLock = async (slotLock) => {
           // Send WhatsApp to client
           const clientPhone = clientDetails.phone_number || null;
           if (clientPhone && meetResult.meetLink) {
-            // Only include childName if child_name exists and is not empty/null/'Pending'
-            const childName = clientDetails.child_name && 
-              clientDetails.child_name.trim() !== '' && 
-              clientDetails.child_name.toLowerCase() !== 'pending'
-              ? clientDetails.child_name 
-              : null;
-            
-            // Get client name from receiptDetails (first_name + last_name) for receipt filename
-            const receiptClientName = receiptResult?.receiptDetails?.client_name || 
-                                      `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || null;
-            
             const clientDetails_wa = {
-              childName: childName,
+              clientName: clientName,
               date: slotLock.scheduled_date,
               time: slotLock.scheduled_time,
               meetLink: meetResult.meetLink,
               psychologistName: psychologistName,
-              packageInfo: packageInfo, // Include package details
+              packageInfo: packageInfo,
               receiptPdfBuffer: receiptResult?.pdfBuffer || null,
-              receiptNumber: receiptResult?.receiptNumber || null,
-              clientName: receiptClientName // Client name (first_name + last_name) for receipt filename
+              receiptNumber: receiptResult?.receiptNumber || null
             };
             
             const clientWaResult = await sendBookingConfirmation(clientPhone, clientDetails_wa);

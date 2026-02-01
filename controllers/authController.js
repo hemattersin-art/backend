@@ -161,10 +161,8 @@ const register = async (req, res) => {
         .insert({
           user_id: newUser.id,
           first_name: req.body.first_name || 'Pending',
-          last_name: req.body.last_name || '', // Use empty string instead of 'Update' since we only use full name as first_name
+          last_name: req.body.last_name || '',
           phone_number: req.body.phone_number || '+91',
-          child_name: req.body.child_name?.trim() || 'Pending', // Use 'Pending' as default since column has NOT NULL constraint
-          child_age: req.body.child_age || 1,
           client_message: req.body.client_message?.trim() || null,
           terms_accepted: req.body.terms_accepted || false,
           therapy_agreement_accepted: req.body.therapy_agreement_accepted || false,
@@ -418,8 +416,6 @@ const googleLogin = async (req, res) => {
           first_name: name?.split(' ')[0] || '',
           last_name: name?.split(' ').slice(1).join(' ') || '',
           phone_number: '+91',
-          child_name: 'Pending',
-          child_age: 1,
           created_at: new Date().toISOString()
         })
         .select()

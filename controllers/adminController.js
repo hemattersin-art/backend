@@ -243,8 +243,8 @@ const createManualBooking = async (req, res) => {
       console.log('🔄 [MANUAL BOOKING] Creating Google Meet link...');
       
       const sessionData = {
-        summary: `Therapy Session - ${client.child_name || client.first_name} with ${psychologist.first_name}`,
-        description: `Online therapy session between ${client.child_name || client.first_name} and ${psychologist.first_name} ${psychologist.last_name}`,
+        summary: `Therapy Session - ${`${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client'} with ${psychologist.first_name}`,
+        description: `Online therapy session between ${`${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client'} and ${psychologist.first_name} ${psychologist.last_name}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
         endTime: addMinutesToTime(scheduled_time, 50)
@@ -492,29 +492,18 @@ const createManualBooking = async (req, res) => {
         // WhatsApp notifications
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      const clientName = (client.child_name && 
-        client.child_name.trim() !== '' && 
-        client.child_name.toLowerCase() !== 'pending')
-        ? client.child_name
-        : `${client.first_name || ''} ${client.last_name || ''}`.trim();
+      const clientName = `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
 
         // Send to client
       if (client.phone_number) {
         if (meetData?.meetLink && !meetData.meetLink.includes('meet.google.com/new')) {
-          const childName = client.child_name && 
-            client.child_name.trim() !== '' && 
-            client.child_name.toLowerCase() !== 'pending'
-            ? client.child_name 
-            : null;
-          
             await sendBookingConfirmation(client.phone_number, {
-            childName: childName,
+            clientName: clientName,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
-            psychologistName: psychologistName,
-            clientName: clientName
+            psychologistName: psychologistName
             });
         } else {
             const sessionDateTime = new Date(`${scheduled_date}T${scheduled_time}`).toLocaleString('en-IN', { 
@@ -598,7 +587,6 @@ const createManualBooking = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
           phone_number,
           user:users(email)
         ),
@@ -669,8 +657,6 @@ const getAllUsers = async (req, res) => {
           first_name,
           last_name,
           phone_number,
-          child_name,
-          child_age,
           created_at,
           user_id,
           users:user_id (
@@ -683,7 +669,7 @@ const getAllUsers = async (req, res) => {
         `, { count: 'exact' });
       
       if (search) {
-        query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,child_name.ilike.%${search}%`);
+        query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%`);
       }
       
       query = query.range(offset, offset + limit - 1).order('created_at', { ascending: false });
@@ -707,14 +693,9 @@ const getAllUsers = async (req, res) => {
           profile: {
             first_name: client.first_name || '',
             last_name: client.last_name || '',
-            phone_number: client.phone_number || null,
-            child_name: client.child_name || null,
-            child_age: client.child_age || null
+            phone_number: client.phone_number || null
           },
-          // Add name field for easy access
-          name: client.first_name && client.last_name 
-            ? `${client.first_name} ${client.last_name}`.trim()
-            : client.first_name || client.child_name || 'No Name'
+          name: `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'No Name'
         };
       });
       
@@ -1807,7 +1788,7 @@ const getStuckSlotLocks = async (req, res) => {
 
 const createUser = async (req, res) => {
   try {
-    const { email, password, first_name, last_name, phone_number, child_name, child_age } = req.body;
+    const { email, password, first_name, last_name, phone_number } = req.body;
 
     // Check if user already exists
     const { data: existingUser } = await supabaseAdmin
@@ -1850,9 +1831,7 @@ const createUser = async (req, res) => {
         user_id: user.id,
         first_name,
         last_name,
-        phone_number,
-        child_name,
-        child_age
+        phone_number
       }])
       .select('*')
       .single();
@@ -2088,7 +2067,7 @@ const updateSession = async (req, res) => {
       .select(`
         *,
         psychologist:psychologists(id, first_name, last_name, email, phone),
-        client:clients(id, first_name, last_name, child_name, phone_number)
+        client:clients(id, first_name, last_name, phone_number)
       `)
       .eq('id', sessionId)
       .single();
@@ -2122,7 +2101,7 @@ const updateSession = async (req, res) => {
       .select(`
         *,
         psychologist:psychologists(id, first_name, last_name, email, phone),
-        client:clients(id, first_name, last_name, child_name, phone_number)
+        client:clients(id, first_name, last_name, phone_number)
       `)
       .single();
 
@@ -2166,7 +2145,7 @@ const updateSession = async (req, res) => {
                           null;
 
           // Get client name
-          const clientName = updatedSession.client?.child_name || 
+          const clientName = 
                             `${updatedSession.client?.first_name || ''} ${updatedSession.client?.last_name || ''}`.trim() ||
                             'Client';
 
@@ -2429,8 +2408,7 @@ const getPsychologistCalendarEvents = async (req, res) => {
         session_type,
         client:clients(
           first_name,
-          last_name,
-          child_name
+          last_name
         )
       `)
       .eq('psychologist_id', psychologistId)
@@ -2487,7 +2465,7 @@ const getPsychologistCalendarEvents = async (req, res) => {
     const internalEvents = internalSessions?.map(session => ({
       id: `internal-${session.scheduled_date}-${session.scheduled_time}`,
       summary: session.client ? 
-        `Session with ${session.client.first_name} ${session.client.last_name}${session.client.child_name ? ` (${session.client.child_name})` : ''}` :
+        `Session with ${session.client.first_name} ${session.client.last_name}` :
         'Session',
       start: {
         dateTime: `${session.scheduled_date}T${session.scheduled_time}:00`

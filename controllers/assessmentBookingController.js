@@ -507,7 +507,7 @@ const rescheduleAssessmentSession = async (req, res) => {
       // Get client and psychologist details
       const { data: clientDetails } = await supabaseAdmin
         .from('clients')
-        .select('first_name, last_name, child_name')
+        .select('first_name, last_name')
         .eq('id', assessmentSession.client_id)
         .single();
 
@@ -517,7 +517,7 @@ const rescheduleAssessmentSession = async (req, res) => {
         .eq('id', targetPsychologistId)
         .single();
 
-      const clientName = clientDetails?.child_name || 
+      const clientName = 
         `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
       const psychologistName = psychologistDetails ? 
         `${psychologistDetails.first_name} ${psychologistDetails.last_name}` : 'Psychologist';

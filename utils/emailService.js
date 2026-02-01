@@ -1938,7 +1938,6 @@ The Little Care Team
 
   async sendSessionCompletionNotification({
     clientName,
-    childName,
     psychologistName,
     sessionDate,
     sessionTime,
@@ -2001,8 +2000,8 @@ The Little Care Team
                               <h3 style="color: #3f2e73; margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Session Details</h3>
                               <table role="presentation" style="width: 100%; border-collapse: collapse;">
                                 <tr>
-                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Child:</strong></td>
-                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${childName}</td>
+                                  <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Client:</strong></td>
+                                  <td style="padding: 8px 0; color: #2d3748; font-size: 15px; text-align: right;">${clientName}</td>
                                 </tr>
                                 <tr>
                                   <td style="padding: 8px 0; color: #4a5568; font-size: 15px;"><strong style="color: #2d3748;">Date:</strong></td>

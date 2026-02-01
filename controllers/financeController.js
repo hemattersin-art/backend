@@ -1950,7 +1950,7 @@ const getSessions = async (req, res) => {
     if (clientIds.length > 0) {
       const { data: clientData } = await supabaseAdmin
         .from('clients')
-        .select('id, first_name, last_name, child_name')
+        .select('id, first_name, last_name')
         .in('id', clientIds);
       clients = clientData || [];
     }
@@ -1976,7 +1976,7 @@ const getSessions = async (req, res) => {
           id: client.id,
           first_name: client.first_name,
           last_name: client.last_name,
-          child_name: client.child_name
+          clientName: `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client'
         } : null,
         commission_amount: commission?.commission_amount || 0,
         company_revenue: commission?.company_revenue || 0,
@@ -2193,7 +2193,7 @@ const getSessionDetails = async (req, res) => {
           id: session.client.id,
           first_name: session.client.first_name,
           last_name: session.client.last_name,
-          child_name: session.client.child_name,
+          clientName: `${session.client?.first_name || ''} ${session.client?.last_name || ''}`.trim() || 'Client',
           phone_number: session.client.phone_number,
           email: session.client.user?.email || null,
           date_of_birth: session.client.date_of_birth,
@@ -5199,7 +5199,7 @@ const getFreeAssessments = async (req, res) => {
     if (clientIds.length > 0) {
       const { data: clientData } = await supabaseAdmin
         .from('clients')
-        .select('id, first_name, last_name, child_name')
+        .select('id, first_name, last_name')
         .in('id', clientIds);
       clients = clientData || [];
     }
@@ -5238,7 +5238,7 @@ const getFreeAssessments = async (req, res) => {
           id: client.id,
           first_name: client.first_name,
           last_name: client.last_name,
-          child_name: client.child_name
+          clientName: `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client'
         } : null,
         meet_link: session?.google_meet_link || null
       };

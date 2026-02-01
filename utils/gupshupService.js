@@ -101,15 +101,15 @@ async function sendWhatsAppTextWithRetry(toPhoneE164, message, retryCount = 0) {
 }
 
 // Build booking confirmation message
-function buildBookingMessage({ childName, date, time, meetLink }) {
-  const who = childName ? `${childName}'s` : 'your';
+function buildBookingMessage({ clientName, date, time, meetLink }) {
+  const who = clientName ? `${clientName}'s` : 'your';
   return (
     `🎉 *Your ${who} therapy session is booked!*\n\n` +
     `📅 *Date:* ${date}\n` +
     `⏰ *Time:* ${time}\n` +
     `🔗 *Join via Google Meet:* ${meetLink}\n\n` +
     `We look forward to seeing you! 😊\n\n` +
-    `_Powered by Little Care Child Therapy_`
+    `_Powered by He Matters - Men's Mental Health_`
   );
 }
 

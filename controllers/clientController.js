@@ -172,7 +172,7 @@ const updateProfile = async (req, res) => {
     const userRole = req.user.role;
     
     // HIGH-RISK FIX: Mass assignment protection - explicit allowlist
-    const allowedFields = ['first_name', 'last_name', 'phone_number', 'child_name', 'child_age'];
+    const allowedFields = ['first_name', 'last_name', 'phone_number'];
     const updateData = {};
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
@@ -191,32 +191,6 @@ const updateProfile = async (req, res) => {
       }
     }
     // If last_name is not in updateData, preserve existing value (don't update it)
-
-    // Handle optional child fields - allow clearing them
-    // If child_name is explicitly set to empty string, try to use empty string (database may allow it)
-    // If database has NOT NULL constraint and doesn't allow empty string, it will error and we can handle it
-    if (updateData.child_name !== undefined) {
-      if (updateData.child_name === null || updateData.child_name === '' || updateData.child_name.trim() === '') {
-        // User wants to clear it - try empty string first, database will reject if NOT NULL doesn't allow it
-        // In that case, we'll get an error and can handle it
-        updateData.child_name = '';
-      } else {
-        // Trim whitespace if provided
-        updateData.child_name = updateData.child_name.trim();
-      }
-    }
-    // If child_name is not in updateData, preserve existing value (don't update it)
-    
-    // Handle optional child_age - allow clearing by setting to null or default
-    if (updateData.child_age !== undefined) {
-      if (updateData.child_age === null || updateData.child_age === '' || updateData.child_age === 0) {
-        // User wants to clear it - try null first, if database rejects it, use default value 1
-        updateData.child_age = null;
-      } else {
-        updateData.child_age = Number(updateData.child_age);
-      }
-    }
-    // If child_age is not in updateData, preserve existing value (don't update it)
 
     // Use supabaseAdmin to bypass RLS
     const { supabaseAdmin } = require('../config/supabase');
@@ -261,95 +235,29 @@ const updateProfile = async (req, res) => {
             continue;
           }
 
-          // Prepare update payload - child_name is already handled above if null/empty
           const updatePayload = {
               ...updateData,
               updated_at: new Date().toISOString()
           };
 
-          // Now attempt the update
-          let updatePayloadToUse = { ...updatePayload };
-          
-          // Handle special cases for child_age and child_name that might need fallback values
-          let needsRetry = false;
-          let retryPayload = null;
-          
-          // Check if we need to handle child_age null -> default fallback
-          if (updatePayloadToUse.child_age === null && updatePayloadToUse.child_age !== undefined) {
-            needsRetry = true;
-            retryPayload = { ...updatePayloadToUse, child_age: 1 }; // Default fallback
-          }
-          
-          // Check if we need to handle child_name empty -> default fallback
-          if (updatePayloadToUse.child_name === '' && updatePayloadToUse.child_name !== undefined) {
-            needsRetry = true;
-            retryPayload = retryPayload || { ...updatePayloadToUse };
-            retryPayload.child_name = 'Pending'; // Default fallback
-          }
-          
-          if (needsRetry) {
-            // Try with original values first
-            let { data: updatedClient, error: updateError } = await supabaseAdmin
-              .from('clients')
-              .update(updatePayloadToUse)
+          const { data: updatedClient, error: updateError } = await supabaseAdmin
+            .from('clients')
+            .update(updatePayload)
             .eq(attempt.column, attempt.value)
             .select('*')
             .single();
 
-            // If update fails due to NOT NULL constraint, try with default values
-            if (updateError && updateError.code === '23502') {
-              if (updateError.message?.includes('child_age')) {
-                console.log('Null child_age rejected, using default value 1');
-              }
-              if (updateError.message?.includes('child_name')) {
-                console.log('Empty child_name rejected, using default "Pending"');
-              }
-              
-              const retryResult = await supabaseAdmin
-                .from('clients')
-                .update(retryPayload)
-                .eq(attempt.column, attempt.value)
-                .select('*')
-                .single();
-              updatedClient = retryResult.data;
-              updateError = retryResult.error;
-            }
-
           if (!updateError && updatedClient) {
             client = updatedClient;
             error = null;
-              lastErrorDetails = null;
+            lastErrorDetails = null;
             break;
           }
 
-          // Record the last error but continue trying other identifiers
           if (updateError) {
             error = updateError;
-              lastErrorDetails = { attempt, error: updateError };
-              console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
-            }
-          } else {
-            // Normal update path (no special handling needed for child fields)
-            const { data: updatedClient, error: updateError } = await supabaseAdmin
-              .from('clients')
-              .update(updatePayloadToUse)
-              .eq(attempt.column, attempt.value)
-              .select('*')
-              .single();
-
-            if (!updateError && updatedClient) {
-              client = updatedClient;
-              error = null;
-              lastErrorDetails = null;
-              break;
-            }
-
-            // Record the last error but continue trying other identifiers
-            if (updateError) {
-              error = updateError;
-              lastErrorDetails = { attempt, error: updateError };
-              console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
-            }
+            lastErrorDetails = { attempt, error: updateError };
+            console.error(`Update error (${attempt.column}=${attempt.value}):`, updateError);
           }
         } catch (attemptError) {
           error = attemptError;
@@ -907,7 +815,6 @@ const bookSession = async (req, res) => {
       .select(`
         first_name, 
         last_name, 
-        child_name,
         phone_number,
         user:users(email)
       `)
@@ -941,9 +848,10 @@ const bookSession = async (req, res) => {
     console.log('🔍 Step 5: Creating Google Calendar event...');
     let meetData = null;
     try {
+      const meetClientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
       const sessionData = {
-        summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
-        description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
+        summary: `Therapy Session - ${meetClientName} with ${psychologistDetails?.first_name || 'Psychologist'}`,
+        description: `Therapy session between ${meetClientName} and ${psychologistDetails?.first_name || 'Psychologist'}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
         endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
@@ -1098,7 +1006,7 @@ const bookSession = async (req, res) => {
     try {
       const emailService = require('../utils/emailService');
       
-      const clientName = clientDetails.child_name || 
+      const clientName = 
                         `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
       const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
@@ -1124,15 +1032,8 @@ const bookSession = async (req, res) => {
         // Send WhatsApp to client
         const clientPhone = clientDetails.phone_number || null;
         if (clientPhone && meetData?.meetLink) {
-          // Only include childName if child_name exists and is not empty/null/'Pending'
-          const childName = clientDetails.child_name && 
-            clientDetails.child_name.trim() !== '' && 
-            clientDetails.child_name.toLowerCase() !== 'pending'
-            ? clientDetails.child_name 
-            : null;
-          
           const clientDetails_wa = {
-            childName: childName,
+            clientName: clientName,
             date: scheduled_date,
             time: scheduled_time,
             meetLink: meetData.meetLink,
@@ -1498,7 +1399,7 @@ const cancelSession = async (req, res) => {
     // Use supabaseAdmin to bypass RLS (backend service, proper auth already handled)
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name, phone_number, email')
+      .select('first_name, last_name, phone_number, email')
       .eq('id', client.id)
       .single();
 
@@ -1533,7 +1434,7 @@ const cancelSession = async (req, res) => {
       console.log('📧 Sending cancellation email notifications...');
       const emailService = require('../utils/emailService');
       
-      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+      const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
       const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
@@ -1577,7 +1478,7 @@ const cancelSession = async (req, res) => {
       console.log('📱 Sending WhatsApp notifications for cancellation...');
       const { sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+      const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
       const sessionDateTime = new Date(`${session.scheduled_date}T${session.scheduled_time}`).toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
@@ -1930,7 +1831,7 @@ const rescheduleSession = async (req, res) => {
         // Create reschedule request notification for admin
         const { data: clientDetails } = await supabaseAdmin
           .from('clients')
-          .select('first_name, last_name, child_name, email')
+          .select('first_name, last_name, email')
           .eq('id', client.id)
           .single();
 
@@ -1940,7 +1841,7 @@ const rescheduleSession = async (req, res) => {
           .eq('id', session.psychologist_id)
           .single();
 
-        const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+        const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
         const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
 
         // Get all admin users to send notifications to
@@ -2110,7 +2011,7 @@ const rescheduleSession = async (req, res) => {
     // Get client and psychologist details for Meet link and notifications
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name, phone_number, user:users(email)')
+      .select('first_name, last_name, phone_number, user:users(email)')
       .eq('id', client.id)
       .single();
 
@@ -2238,11 +2139,11 @@ const rescheduleSession = async (req, res) => {
       
       const sessionDataForMeet = {
         summary: isFreeAssessment 
-          ? `Free Assessment - ${clientDetails?.child_name || clientDetails?.first_name}`
-          : `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name} with ${psychologistDetails?.first_name}`,
+          ? `Free Assessment - ${clientName}`
+          : `Therapy Session - ${clientName} with ${psychologistDetails?.first_name}`,
         description: isFreeAssessment
           ? `Rescheduled free 20-minute assessment session`
-          : `Rescheduled therapy session between ${clientDetails?.child_name || clientDetails?.first_name} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
+          : `Rescheduled therapy session between ${clientName} and ${psychologistDetails?.first_name} ${psychologistDetails?.last_name}`,
         startDate: new_date,
         startTime: newTime24Hour,
         endTime: isFreeAssessment 
@@ -2556,7 +2457,7 @@ const rescheduleSession = async (req, res) => {
       } else {
         await emailService.sendRescheduleNotification(
           {
-            clientName: clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim(),
+            clientName: clientName,
             psychologistName: `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim(),
             clientEmail: clientEmail,
             psychologistEmail: psychologistEmail,
@@ -2581,7 +2482,7 @@ const rescheduleSession = async (req, res) => {
         console.log('📱 Sending WhatsApp notifications for reschedule...');
         const { sendRescheduleConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
         
-        const clientName = clientDetails?.child_name || `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim();
+        const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
         const psychologistName = `${psychologistDetails?.first_name || ''} ${psychologistDetails?.last_name || ''}`.trim();
         
         // Check if this is a free assessment session
@@ -2762,12 +2663,11 @@ const createRescheduleRequest = async (session, newDate, newTime, clientId, reas
     // Get client details
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name')
+      .select('first_name, last_name')
       .eq('id', clientId)
       .single();
 
-    const clientName = clientDetails?.child_name || 
-                      `${clientDetails?.first_name || 'Client'} ${clientDetails?.last_name || ''}`.trim();
+    const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
 
     // Create reschedule request notification
     const notificationData = {
@@ -2820,12 +2720,11 @@ const createRescheduleNotification = async (originalSession, updatedSession, cli
     // Get client and psychologist details
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name')
+      .select('first_name, last_name')
       .eq('id', clientId)
       .single();
 
-    const clientName = clientDetails?.child_name || 
-                      `${clientDetails?.first_name || 'Client'} ${clientDetails?.last_name || ''}`.trim();
+    const clientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
 
     // Get psychologist user_id (required for notifications table)
     // Psychologists can exist standalone or with a linked user_id
@@ -2920,7 +2819,7 @@ const sendRescheduleEmails = async (originalSession, updatedSession, psychologis
     // Get client and psychologist details for email
     const { data: clientDetails } = await supabaseAdmin
       .from('clients')
-      .select('first_name, last_name, child_name, user:users(email)')
+      .select('first_name, last_name, user:users(email)')
       .eq('id', originalSession.client_id)
       .single();
 
@@ -2933,7 +2832,7 @@ const sendRescheduleEmails = async (originalSession, updatedSession, psychologis
     if (clientDetails && psychologistDetails) {
       const emailService = require('../utils/emailService');
       
-      const clientName = clientDetails.child_name || 
+      const clientName = 
                         `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
       const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
@@ -3644,7 +3543,6 @@ const bookRemainingSession = async (req, res) => {
       .select(`
         first_name, 
         last_name, 
-        child_name,
         phone_number,
         user:users(email)
       `)
@@ -3747,8 +3645,7 @@ const bookRemainingSession = async (req, res) => {
     }
 
     // Prepare names for notifications
-    const clientName = clientDetails.child_name || 
-                      `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+    const clientName = `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client';
     const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
     // Package information for notifications
@@ -3780,8 +3677,8 @@ const bookRemainingSession = async (req, res) => {
         console.log('🔄 Creating real Google Meet link for package session (async)...');
         
         const meetSessionData = {
-          summary: `Therapy Session - ${clientDetails?.child_name || clientDetails?.first_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
-          description: `Therapy session between ${clientDetails?.child_name || clientDetails?.first_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'} ${psychologistDetails?.last_name || ''}`,
+          summary: `Therapy Session - ${clientName} with ${psychologistDetails?.first_name || 'Psychologist'}`,
+          description: `Therapy session between ${clientName} and ${psychologistDetails?.first_name || 'Psychologist'} ${psychologistDetails?.last_name || ''}`,
           startDate: scheduled_date,
           startTime: scheduled_time,
           endTime: addMinutesToTime(scheduled_time, 50) // 50-minute session
@@ -3867,15 +3764,8 @@ const bookRemainingSession = async (req, res) => {
           // Send WhatsApp to client
           const clientPhone = clientDetails.phone_number || null;
           if (clientPhone && fallbackMeetLink) {
-            // Only include childName if child_name exists and is not empty/null/'Pending'
-            const childName = clientDetails.child_name && 
-              clientDetails.child_name.trim() !== '' && 
-              clientDetails.child_name.toLowerCase() !== 'pending'
-              ? clientDetails.child_name 
-              : null;
-            
             const clientDetails_wa = {
-              childName: childName,
+              clientName: clientName,
               date: scheduled_date,
               time: scheduled_time,
               meetLink: fallbackMeetLink, // Will be updated async if real link is created
@@ -4416,7 +4306,6 @@ const bookSessionWithCredit = async (req, res) => {
       .select(`
         first_name, 
         last_name, 
-        child_name,
         phone_number,
         user:users(email)
       `)
@@ -4447,9 +4336,10 @@ const bookSessionWithCredit = async (req, res) => {
     // Create Google Meet link (same as normal booking)
     let meetData = null;
     try {
+      const meetClientName = `${clientDetails?.first_name || ''} ${clientDetails?.last_name || ''}`.trim() || 'Client';
       const sessionData = {
-        summary: `Therapy Session - ${clientDetails?.child_name || 'Client'} with ${psychologistDetails?.first_name || 'Psychologist'}`,
-        description: `Therapy session between ${clientDetails?.child_name || 'Client'} and ${psychologistDetails?.first_name || 'Psychologist'}`,
+        summary: `Therapy Session - ${meetClientName} with ${psychologistDetails?.first_name || 'Psychologist'}`,
+        description: `Therapy session between ${meetClientName} and ${psychologistDetails?.first_name || 'Psychologist'}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
         endTime: addMinutesToTime(scheduled_time, 50)

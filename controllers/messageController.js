@@ -50,7 +50,7 @@ const getConversations = async (req, res) => {
         .from('conversations')
         .select(`
           *,
-          client:clients(first_name, last_name, child_name, child_age),
+          client:clients(first_name, last_name),
           session:sessions(scheduled_date, scheduled_time, status),
           messages:messages(count)
         `)

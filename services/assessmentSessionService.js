@@ -26,7 +26,6 @@ async function fetchAssessmentSession(sessionId) {
         id,
         first_name,
         last_name,
-        child_name,
         phone_number,
         user:users(email)
       ),
@@ -126,7 +125,7 @@ async function sendAssessmentWhatsapps({ session, clientName, meetLink }) {
         : null;
       
       await sendBookingConfirmation(clientPhone, {
-        childName: session.client?.child_name || clientName,
+        clientName: clientName,
         date: scheduledDate,
         time: scheduledTime,
         meetLink,
@@ -234,9 +233,7 @@ async function finalizeAssessmentSessionBooking(sessionId, options = {}) {
     typeof options.durationMinutes === 'number' ? options.durationMinutes : 50
   );
 
-  const clientName = session.client?.child_name ||
-    buildDisplayName(session.client?.first_name, session.client?.last_name) ||
-    'Client';
+  const clientName = buildDisplayName(session.client?.first_name, session.client?.last_name) || 'Client';
   const psychologistName = buildDisplayName(
     session.psychologist?.first_name,
     session.psychologist?.last_name

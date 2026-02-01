@@ -86,7 +86,6 @@ class SessionReminderService {
             id,
             first_name,
             last_name,
-            child_name,
             phone_number,
             email
           ),
@@ -158,7 +157,7 @@ class SessionReminderService {
           // Parse directly in IST timezone to avoid UTC conversion issues
           const sessionTime = dayjs.tz(`${session.scheduled_date} ${session.scheduled_time}`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata');
           const timeDiffMinutes = sessionTime.diff(now, 'minute');
-          const clientName = session.client?.child_name || `${session.client?.first_name || ''} ${session.client?.last_name || ''}`.trim() || 'Unknown';
+          const clientName = `${session.client?.first_name || ''} ${session.client?.last_name || ''}`.trim() || 'Unknown';
           console.log(`   ${index + 1}. Session ${session.id} for ${clientName}: ${session.scheduled_date} ${session.scheduled_time} (${timeDiffMinutes} minutes from now)`);
         });
       }
@@ -178,7 +177,6 @@ class SessionReminderService {
             id,
             first_name,
             last_name,
-            child_name,
             phone_number,
             email,
             user_id
@@ -305,7 +303,7 @@ class SessionReminderService {
       const formattedDate = sessionDateTime.format('DD MMM YYYY');
       const formattedTime = sessionDateTime.format('h:mm A');
 
-      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      const clientName = `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologist.first_name} ${psychologist.last_name}`.trim();
 
       // Send reminders to both client and psychologist
@@ -477,7 +475,7 @@ class SessionReminderService {
       const formattedDate = assessmentDateTime.format('DD MMM YYYY');
       const formattedTime = assessmentDateTime.format('h:mm A');
 
-      const clientName = client.child_name || `${client.first_name} ${client.last_name}`.trim();
+      const clientName = `${client.first_name || ''} ${client.last_name || ''}`.trim() || 'Client';
       const psychologistName = psychologist ? `${psychologist.first_name} ${psychologist.last_name}`.trim() : 'our specialist';
 
       // Send reminders to both client and psychologist (if psychologist exists)
@@ -640,7 +638,6 @@ class SessionReminderService {
             id,
             first_name,
             last_name,
-            child_name,
             phone_number,
             email
           ),
@@ -731,7 +728,6 @@ class SessionReminderService {
             id,
             first_name,
             last_name,
-            child_name,
             phone_number,
             email
           ),

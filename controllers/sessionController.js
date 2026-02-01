@@ -60,7 +60,6 @@ const bookSession = async (req, res) => {
       .select(`
         first_name, 
         last_name, 
-        child_name,
         user:users(email)
       `)
       .eq('id', clientId)
@@ -93,8 +92,8 @@ const bookSession = async (req, res) => {
       
       // Prepare session data for Meet link creation
       const sessionData = {
-        summary: `Therapy Session - ${clientDetails.child_name || clientDetails.first_name} with ${psychologistDetails.first_name}`,
-        description: `Online therapy session between ${clientDetails.child_name || clientDetails.first_name} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
+        summary: `Therapy Session - ${`${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client'} with ${psychologistDetails.first_name}`,
+        description: `Online therapy session between ${`${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client'} and ${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
         startDate: scheduled_date,
         startTime: scheduled_time,
         endTime: addMinutesToTime(scheduled_time, 60) // 60-minute session
@@ -192,7 +191,7 @@ const bookSession = async (req, res) => {
     // Send confirmation emails to all parties
     try {
       await emailService.sendSessionConfirmation({
-        clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+        clientName: `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client',
         psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
         clientEmail: clientDetails.user?.email,
         psychologistEmail: psychologistDetails.email,
@@ -212,21 +211,14 @@ const bookSession = async (req, res) => {
       console.log('📱 Sending WhatsApp notifications via UltraMsg API...');
       const { sendBookingConfirmation, sendWhatsAppTextWithRetry } = require('../utils/whatsappService');
       
-      const clientName = clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`.trim();
+      const clientName = `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client';
       const psychologistName = `${psychologistDetails.first_name} ${psychologistDetails.last_name}`.trim();
 
       // Send WhatsApp to client
       const clientPhone = clientDetails.phone_number || null;
       if (clientPhone && meetData?.meetLink) {
-        // Only include childName if child_name exists and is not empty/null/'Pending'
-        const childName = clientDetails.child_name && 
-          clientDetails.child_name.trim() !== '' && 
-          clientDetails.child_name.toLowerCase() !== 'pending'
-          ? clientDetails.child_name 
-          : null;
-        
         const clientDetails_wa = {
-          childName: childName,
+          clientName: clientName,
           date: scheduled_date,
           time: scheduled_time,
           meetLink: meetData.meetLink,
@@ -369,8 +361,6 @@ const getAllSessions = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           phone_number,
           user:users(
             email
@@ -535,8 +525,6 @@ const getAllSessions = async (req, res) => {
             id,
             first_name,
             last_name,
-            child_name,
-            child_age,
             phone_number,
             user:users(
               email
@@ -736,8 +724,6 @@ const getPsychologistSessions = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           phone_number
         )
       `)
@@ -792,8 +778,6 @@ const getSessionById = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           phone_number
         ),
         psychologist:psychologists(
@@ -966,7 +950,6 @@ const updateSessionStatus = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
           phone_number,
           email
         ),
@@ -1106,7 +1089,7 @@ const rescheduleSession = async (req, res) => {
       try {
         const { data: clientDetails } = await supabaseAdmin
           .from('clients')
-          .select('first_name, last_name, child_name')
+          .select('first_name, last_name')
           .eq('id', session.client_id)
           .single();
 
@@ -1118,7 +1101,7 @@ const rescheduleSession = async (req, res) => {
 
         if (clientDetails && psychologistDetails) {
           await googleCalendarService.updateSessionEvent(session.google_calendar_event_id, {
-            clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+            clientName: `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client',
             psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
             scheduledDate: new_date,
             scheduledTime: new_time,
@@ -1135,7 +1118,6 @@ const rescheduleSession = async (req, res) => {
           .select(`
             first_name, 
             last_name, 
-            child_name, 
             phone_number,
             user:users(email)
           `)
@@ -1151,7 +1133,7 @@ const rescheduleSession = async (req, res) => {
         // Send reschedule notification emails
         try {
           await emailService.sendRescheduleNotification({
-            clientName: clientDetails.child_name || `${clientDetails.first_name} ${clientDetails.last_name}`,
+            clientName: `${clientDetails.first_name || ''} ${clientDetails.last_name || ''}`.trim() || 'Client',
             psychologistName: `${psychologistDetails.first_name} ${psychologistDetails.last_name}`,
             clientEmail: clientDetails.user?.email,
             psychologistEmail: psychologistDetails.email,
@@ -1302,7 +1284,6 @@ const searchSessions = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name
         ),
         psychologist:psychologists(
           id,
@@ -1354,7 +1335,6 @@ const searchSessions = async (req, res) => {
       filteredSessions = sessions.filter(session => 
         session.client?.first_name?.toLowerCase().includes(query) ||
         session.client?.last_name?.toLowerCase().includes(query) ||
-        session.client?.child_name?.toLowerCase().includes(query) ||
         session.psychologist?.first_name?.toLowerCase().includes(query) ||
         session.psychologist?.last_name?.toLowerCase().includes(query) ||
         session.package?.package_type?.toLowerCase().includes(query)
@@ -1784,8 +1764,6 @@ const completeSession = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           user_id,
           phone_number,
           user:users(email)
@@ -1864,8 +1842,6 @@ const completeSession = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           user_id,
           user:users(email)
         )
@@ -2074,8 +2050,6 @@ const markSessionAsNoShow = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           user_id,
           phone_number,
           user:users(email)
@@ -2136,8 +2110,6 @@ const markSessionAsNoShow = async (req, res) => {
           id,
           first_name,
           last_name,
-          child_name,
-          child_age,
           user_id,
           phone_number,
           user:users(email)

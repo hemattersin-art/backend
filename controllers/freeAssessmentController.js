@@ -1270,29 +1270,20 @@ const bookFreeAssessment = async (req, res) => {
             // Get client phone number
             const { data: clientDetails } = await supabaseAdmin
               .from('clients')
-              .select('phone_number, child_name, first_name, last_name')
+              .select('phone_number, first_name, last_name')
               .eq('id', client.id)
               .single();
             
             const clientPhone = clientDetails?.phone_number || null;
-            // Only include childName if child_name exists and is not empty/null/'Pending'
-            const childName = clientDetails?.child_name && 
-              clientDetails.child_name.trim() !== '' && 
-              clientDetails.child_name.toLowerCase() !== 'pending'
-              ? clientDetails.child_name 
-              : null;
-            
-            // Define clientName for WhatsApp messages (same logic as email)
-            const clientName = clientDetails?.child_name || 
-                              (clientDetails?.first_name && clientDetails?.last_name 
-                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
-                                : clientDetails?.first_name || 'Client');
+            const clientName = (clientDetails?.first_name && clientDetails?.last_name 
+                              ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
+                              : clientDetails?.first_name || 'Client');
             
             // Send WhatsApp to client with the real meet link
             if (clientPhone && finalMeetLink) {
               try {
                 await sendBookingConfirmation(clientPhone, {
-                  childName: childName,
+                  clientName: clientName,
                   date: scheduledDate,
                   time: scheduledTime,
                   meetLink: finalMeetLink,
@@ -1351,14 +1342,13 @@ const bookFreeAssessment = async (req, res) => {
             // Get client details for email
             const { data: clientDetails } = await supabaseAdmin
               .from('clients')
-              .select('child_name, first_name, last_name')
+              .select('first_name, last_name')
               .eq('id', client.id)
               .single();
 
-            const clientName = clientDetails?.child_name || 
-                              (clientDetails?.first_name && clientDetails?.last_name 
-                                ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
-                                : clientDetails?.first_name || 'Client');
+            const clientName = (clientDetails?.first_name && clientDetails?.last_name 
+                              ? `${clientDetails.first_name} ${clientDetails.last_name}`.trim()
+                              : clientDetails?.first_name || 'Client');
 
             console.log('📧 Sending free assessment confirmation email with Meet link:', finalMeetLink);
             await emailService.sendFreeAssessmentConfirmation({
